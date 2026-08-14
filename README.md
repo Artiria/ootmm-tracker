@@ -1,9 +1,9 @@
 # OoTMM Autotracker
 
 > **0.1.0-beta — still being refined.** Single player is tested and measured;
-> **multiworld has never been run** (see below). It has only ever been built on
-> one machine. Expect rough edges, and please report what you find — that is
-> exactly what this stage is for.
+> multiworld has had one session and works with a caveat (see below). It has
+> only ever been built on one machine. Expect rough edges, and please report
+> what you find — that is exactly what this stage is for.
 
 Reads the state of an OoTMM run from Project64-EM and turns it into names:
 inventory, songs, masks, equipment, upgrades and checks.
@@ -19,9 +19,9 @@ seed ROM itself.
 | ✅ 5,981 of 6,043 checks | the missing 62 are `caughtFishFlags` and MM stray fairies |
 | ✅ Item placement and names from the ROM | no spoiler log, on v32.0 and dev builds |
 | ✅ OBS overlay, one URL per panel | transparent background, five standalone panels |
-| ❓ Multiworld | **never run.** Two Lua scripts at once is question P4, open since day one |
+| ⚠️ Multiworld | tracks **your own** world correctly, one session in. It cannot see your partner's, and it only tells you whose an item is where the ROM says so |
 | ❓ Emulators other than Project64-EM | the tracker only needs `read` and `read_block`; BizHawk is a five-step task in the backlog |
-| ❌ Entrance tracking, logic and maps | not attempted — [The Last Tracker](https://www.thelasttracker.org) does that well |
+| ❌ Entrance tracking, logic and maps | not attempted |
 
 The **how and why** are in
 [`ootmm-autotracker-poc.md`](ootmm-autotracker-poc.md): addresses, offsets,
@@ -53,32 +53,29 @@ What it generates does **not** sit next to the executable — it goes to
 > time — "More info → Run anyway". If you would rather not trust a binary, the
 > source is right here and does exactly the same thing.
 
-### In multiworld (not tested yet)
+### In multiworld (one session in)
 
 Every player runs **their own** ROM, save and tracker: each `.exe` finds its
-own things and never talks to anyone else's. The tracker already understands
-that an item can belong to another world — it reads that from the ROM's table
-and records it as `player`.
+own things and never talks to anyone else's. Set it up exactly as in single
+player.
 
-**Before you sit down for a long session, please run this two-minute test**,
-because it decides whether this works at all and it has never been checked:
+What the first real session showed:
 
-> With the ROM loaded, open **Debugger > Scripts** and start the MultiClient's
-> `adapter.lua` **and** `tracker.lua`, in that order. See whether both stay
-> alive and whether the overlay reaches `ready`.
+- **It tracks your own world correctly.** Checks are picked up as you do them,
+  the same as in single player.
+- **It cannot see your partner's world.** It reads your machine's memory, and
+  their progress is not in it. Nothing is going to change that short of talking
+  to the multiworld server.
+- **It says whose an item is where the ROM knows.** A spot can hold someone
+  else's item, and the placement table records that as `player`; those show a
+  `world N` marker in the feed and in the remaining list. Where the table does
+  not say, there is no marker — so no marker means "yours, as far as the ROM
+  says", not a guarantee.
 
-- **If both hold**: nothing else to do. The tracker behaves exactly as in
-  single-player.
-- **If the emulator only allows one**: then today you **cannot** run the
-  tracker and the multiworld client at the same time, and the session has to
-  be played without the tracker. There is no workaround: `proxy` mode is
-  **not** one — it is a diagnostic tool that sits in the middle to log which
-  addresses the multiworld client uses, and it does not feed the overlay. What
-  would be needed is a Lua script doing both jobs, and it is not written.
-
-Either way, **write down what the emulator said**: this is question P4 in the
-POC, it has been open since the beginning of the project, and that two-minute
-test closes it.
+Still open: whether a session survives hours with both Lua scripts loaded, and
+the co-op mailbox (question **P6** in the POC). If you run a long multiworld
+session, what breaks — and what does not — is the single most useful thing you
+can report.
 
 ### From source
 
