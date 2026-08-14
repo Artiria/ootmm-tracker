@@ -5,6 +5,35 @@ Lo pedido y aún no hecho. El estado de lo que sí está hecho vive en
 
 ## Lo siguiente (pedido el 13 ago 2026)
 
+### A0. (resuelto) La página no se servía hasta que conectaba el Lua
+
+Encontrado el 14 ago 2026 montando la QA del `.exe`, y era de los peores: no
+se rompía, se callaba.
+
+`cmd_overlay` hacía `listen_for_lua()` —que es un `accept()` y **bloquea**— y
+sólo después levantaba el hilo de sondeo y el servidor HTTP. Medido con
+`netstat`: el puerto del enlace escuchando y el HTTP en nada.
+
+Para quien lo descarga: abre el `.exe`, apunta una fuente de OBS a
+`http://127.0.0.1:8013/` y le sale **conexión rechazada** hasta que arranca
+`tracker.lua` en el emulador. La fuente se queda en blanco sin decir por qué,
+y el README decía «either order works», que era cierto para el enlace pero no
+para la página.
+
+Arreglado: el `Tracker` se construye con `link=None`, la espera del Lua se va
+a un hilo y el HTTP sube desde el principio. El estado lleva `waiting` y la
+página dice **«Waiting for the emulator. In Project64-EM open Debugger >
+Scripts and run tracker.lua»**, y pasa a `ready` sola al conectar.
+
+**El cuidado que casi lo convierte en otro fallo silencioso:** `handshake()`
+avisa con `sys.exit(...)`, y desde un hilo eso mata el hilo y nada más — la
+página se habría quedado esperando para siempre mientras la consola explicaba
+por qué nunca iba a llegar. Por eso hay un `except SystemExit` que lo lleva a
+`tracker.fail()`, que lo escribe en el estado.
+
+De paso: `version` sólo aparecía en `/state.json` tras el primer sondeo bueno,
+así que la chapa no salía mientras esperaba. Ahora va en el estado inicial.
+
 ### A. (resuelto) La localización exacta del jugador
 
 **Hecho el 14 ago 2026.** La escena sale del `PlayState`

@@ -1017,10 +1017,25 @@ def cmd_overlay(args):
     if spoiler_path:
         print(f"[overlay] spoiler: {len(spoiler)} locations")
 
-    sock = listen_for_lua(args.host, args.port, "overlay")
-    link = handshake(sock, "overlay")
+    # The page goes up FIRST, before the emulator side has connected. Waiting
+    # for the Lua here used to mean no HTTP server at all until the script was
+    # running, so anyone who opened the tracker before the emulator got a
+    # refused connection and an OBS Browser Source that stayed blank without
+    # saying why.
+    tracker = overlay.Tracker(None, table, spoiler=spoiler, locate=locate_saves)
 
-    tracker = overlay.Tracker(link, table, spoiler=spoiler, locate=locate_saves)
+    def wait_for_lua():
+        try:
+            sock = listen_for_lua(args.host, args.port, "overlay")
+            tracker.attach(handshake(sock, "overlay"))
+        except SystemExit as ex:
+            # handshake reports with sys.exit, which from a thread kills only
+            # the thread: without catching it the page would wait for ever.
+            tracker.fail(str(ex.code) if ex.code else "the Lua handshake failed")
+        except Exception as ex:
+            tracker.fail(f"{type(ex).__name__}: {ex}")
+
+    threading.Thread(target=wait_for_lua, daemon=True).start()
     threading.Thread(target=tracker.run, args=(args.interval,), daemon=True).start()
 
     try:
