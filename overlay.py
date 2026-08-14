@@ -441,6 +441,23 @@ class Tracker:
             # hand-loaded spoiler covering only what the ROM did not give
             "items_n": len(self.items),
             "rom_items_n": len(self.rom_items),
+            # How much of this seed the ROM's placement table actually covered.
+            # A current seed lands around 90%; an older one lower but usable;
+            # anything tiny means checks.json was built from a DIFFERENT seed,
+            # which happens when the ROM is changed without restarting the
+            # tracker, because discovery only runs at startup. Without this the
+            # page reports "991 items from the ROM" as a plain fact and the run
+            # looks fine while every item shown belongs to another world.
+            "placement_ratio": round(
+                len(self.rom_items) / max(1, sum(
+                    1 for c in table["checks"] if c["addr"] is not None)), 3),
+            "rom_of_table": table.get("rom"),
+            # The seed is from another OoTMM version than data/. Addresses hold
+            # —they come from the ROM— but every check NAME comes from the
+            # v32.0 CSVs, so a bit can be marked under the wrong name and the
+            # wrong region. This is the one the user cannot possibly work out
+            # on their own, which is why it gets said out loud.
+            "same_version_as_data": table.get("same_version_as_data"),
         }
         self._done = set()
         self._seeded = False

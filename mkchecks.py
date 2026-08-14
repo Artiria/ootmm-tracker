@@ -1116,12 +1116,13 @@ def main(argv=None):
     # spoiler log used to be needed for, and here it comes out of nowhere but
     # the ROM you are already playing.
     colocacion = None
+    misma_version = None
     if args.rom:
         import placement
 
         print()
         try:
-            ok, sin_clave, no_estan = placement.resolve(rom_bytes, checks)
+            ok, sin_clave, no_estan, misma_version = placement.resolve(rom_bytes, checks)
         except Exception as ex:
             # missing placement does not invalidate checks.json: the overlay
             # keeps working and a spoiler can still be loaded by hand
@@ -1135,6 +1136,18 @@ def main(argv=None):
             if ok < activos * 0.9:
                 print("  warning: under 90% of the checks with an address have an item;")
                 print("           the overlay will need a spoiler to filter")
+            if not misma_version:
+                # The names disagreeing means this seed is from another OoTMM
+                # version than data/. The addresses can still be right —the
+                # xflag tables are found in the ROM— but the pool CSVs, which
+                # is where every check NAME comes from, are v32.0's. So the
+                # tracker can mark a bit that belongs to a different actor and
+                # call it by the wrong name, in the wrong region. It has to say
+                # so: this is not something the user can work out from looking.
+                print("  WARNING: this seed is from a different OoTMM version than")
+                print("           data/. Addresses come from the ROM and hold, but")
+                print("           the check names and regions come from the v32.0")
+                print("           CSVs and can be wrong for this seed.")
 
     resolved = [c for c in checks if c["addr"] is not None]
     import collections
@@ -1145,6 +1158,9 @@ def main(argv=None):
         "rom": args.rom,
         # where each row's item came from; null when generated without a ROM
         "placement": colocacion,
+        # False when the ROM's item names disagree with data/gi.yml, i.e. the
+        # seed is from another OoTMM version. Null when built without a ROM.
+        "same_version_as_data": misma_version,
         "layout": LAYOUT,
         "custom_save": {
             # gSharedCustomSave with the game running OoT. It is one single

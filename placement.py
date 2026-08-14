@@ -269,9 +269,14 @@ def names_from_rom(rom_bytes, gi, verbose=True):
 def resolve(rom_bytes, checks, gi_path=None, verbose=True):
     """Fill in `item` and `item_id` on every check that shows up in the table.
 
-    Returns (resolved, no_key, not_found). Checks that do not show up are left
-    alone: they end up without `item`, and whoever consumes them can tell that
-    it is unknown rather than empty.
+    Returns (resolved, no_key, not_found, names_aligned). Checks that do not
+    show up are left alone: they end up without `item`, and whoever consumes
+    them can tell that it is unknown rather than empty.
+
+    `names_aligned` is False when `gi.yml` no longer matches this ROM, and that
+    is worth carrying upwards: it means the seed comes from a different OoTMM
+    version than the bundled `data/`, so the pool CSVs may not line up either
+    and the check names —which do come from those CSVs— can be wrong.
     """
     tabla = read_tables(rom_bytes)
     gi = load_gi(gi_path)
@@ -299,4 +304,4 @@ def resolve(rom_bytes, checks, gi_path=None, verbose=True):
         if player and player != 1:
             c["player"] = player   # multiworld: the item belongs to someone else
         resueltos += 1
-    return resueltos, sin_clave, no_estan
+    return resueltos, sin_clave, no_estan, alineado

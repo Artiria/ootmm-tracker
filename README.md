@@ -21,6 +21,11 @@ seed ROM itself.
 
 That is all. There is nothing to configure and no paths to type in.
 
+> **Changing seed? Restart the tracker.** It works out which seed you are on
+> once, when it starts. Swap the ROM without restarting and it keeps building on
+> the previous seed's tables — every item it names is then from the wrong game.
+> It now says so on the page when it notices, but restarting is the fix.
+
 > **Windows will warn you.** The `.exe` is not signed, so SmartScreen shows
 > *"unknown publisher"*: click **More info → Run anyway**. Some browsers also
 > refuse the download, which is why the release ships a `.zip`. Every release

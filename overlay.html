@@ -1111,7 +1111,24 @@ function render(s) {
     setHTML('build', `OoTMM Tracker <b>${esc(s.version)}</b> — early beta:
       single player is tested, multiworld is not.`);
   }
-  if (s.waiting) {
+  /* Tables from another seed. Discovery only runs when the tracker starts, so
+     changing the ROM without restarting leaves the old seed's checks.json in
+     place — and every item shown is then someone else's. The ratio is the tell:
+     a current seed covers ~90%, an older one less but usable, a wrong one
+     almost nothing. */
+  if (s.same_version_as_data === false) {
+    setHTML('alert', `<div class="warn"><b>This seed is from a different OoTMM version.</b>
+      The addresses come from the ROM and hold, but every check <i>name</i> comes from
+      the bundled v32.0 tables — so a check can be marked under the wrong name, in the
+      wrong region. If you are seeing progress in places you have never been, that is
+      this. Counts and completed totals are still meaningful; names are not.</div>`);
+  } else if (s.placement_ratio !== undefined && s.placement_ratio < 0.4 && s.rom_items_n) {
+    setHTML('alert', `<div class="warn"><b>These tables look like another seed's.</b>
+      Only ${Math.round(s.placement_ratio * 100)}% of the checks have an item, which
+      usually means the ROM was changed without restarting the tracker — it works out
+      which seed you are on once, at startup. Close it and open it again.
+      ${s.rom_of_table ? `Built from: <code>${esc(s.rom_of_table)}</code>` : ''}</div>`);
+  } else if (s.waiting) {
     setHTML('alert', `<div class="warn"><b>Waiting for the emulator.</b>
       In Project64-EM open <b>File &gt; Lua Scripts…</b> and run <b>tracker.lua</b>,
       which is already in the emulator's <b>Scripts</b> folder.
