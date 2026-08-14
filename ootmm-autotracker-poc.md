@@ -22,11 +22,11 @@ BizHawk is optional and only as a development convenience: since 2.9 it carries 
 - [x] **P1** — Can I read the game's memory from Lua? **Yes.** Directly in P64-EM, without going through BizHawk.
 - [x] **P2** — Where is the save context's base, and can it be located? **Yes, and by signature.** OoT at `0x8011A5D0`, MM at `0x8044BE18`.
 - [x] **P3** — Is there a bitfield of completed checks? **Yes**, the per-scene flag table, with the mapping verified against the spoiler.
-- [ ] **P4** — Does P64-EM allow loading my script **at the same time** as the multiworld script? Signs point to yes; unconfirmed.
+- [x] **P4** — Does P64-EM allow loading my script **at the same time** as the multiworld script? **Yes.** A real multiworld session on 14 Aug 2026 tracked the player's own world throughout. What it cannot do is see the partner's world, which is not a limitation of the emulator: their progress is not in this machine's memory. See "Multiworld, first session" below.
 - [x] **P5** — Does P64-EM's Lua have sockets? **Yes.** `socket.tcp`, `send`, `recv`, `sleep`.
 - [ ] **P6** (optional) — In co-op mode, does the mailbox also carry local items or only crossed ones?
 
-**P1, P2, P3 and P5 answered: the project is viable in single player.** P4/P6 are left, and they only constrain the multiworld side.
+**P1, P2, P3 and P5 answered: the project is viable in single player.** P4 was closed on 14 Aug 2026 by a real session; **P6 is the only one left**, and it only constrains co-op.
 
 > Everything below was verified on **OoTMM v32.0** (seed `f5PCTnhD`), on Project64-EM 1.0.3, with the Expansion Pak. Without touching BizHawk at any point.
 
@@ -2121,3 +2121,42 @@ second barrier, which is the right behaviour.
 And along the way: a ROM that is not OoTMM's gave a `struct.error` about buffer
 sizes. Now `rom.extra_dma()` checks once and says
 `it does not look like an OoTMM seed`.
+
+---
+
+## Multiworld, first session
+
+**14 Aug 2026, and it closes P4** — the question that had been open since the
+first day of the project.
+
+It works. Through a real multiworld session the tracker picked up the player's
+own checks exactly as in single player, which means the emulator does run
+`tracker.lua` alongside the multiworld client's `adapter.lua`. The fallback plan
+in the backlog —forking the multiworld script to carry the emitter inside— is
+not needed.
+
+Two limits, and only one of them was fixable:
+
+- **It cannot see the partner's world**, and nothing here will change that. The
+  tracker reads this machine's RAM; the other player's progress is not in it.
+  Seeing it would mean talking to the multiworld server, which is a different
+  program.
+- **It did not say whose an item was.** This one was pure oversight: the ROM's
+  placement table carries `player` per entry, `placement.py` was already reading
+  it and `mkchecks` was already writing it into `checks.json` —2,821 rows in the
+  seed being played— and then **neither `overlay.py` nor `overlay.html` ever
+  looked at it**. The data had been sitting in the file all along.
+
+Fixed: `Tracker.worlds` maps `(game, name) -> player`, the feed and the
+remaining list carry `world`, and the page draws a `world N` marker. Measured on
+`ram-en-oot.bin` with a multiworld seed's tables: of 8 remaining checks in
+Kokiri Shop, 4 come out marked `world 2` and 4 unmarked.
+
+> **What the absence of a marker means.** `mkchecks` only writes `player` when
+> it is not yours, so no marker means "yours, as far as the ROM says" — not a
+> guarantee. In a plain single-player seed the field is never set and nothing is
+> drawn, which is the behaviour you want.
+
+Still open: **P6**, whether the co-op mailbox carries local items or only
+crossed ones, and whether a session survives hours with both scripts loaded. One
+session is not a soak test.

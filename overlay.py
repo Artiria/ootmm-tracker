@@ -408,6 +408,13 @@ class Tracker:
         self.rom_items = {
             (c["game"], c["name"]): c["item"] for c in table["checks"] if c.get("item")
         }
+        # Multiworld: whose item sits in each spot. It comes from the `player`
+        # field of the ROM's placement table, which mkchecks only writes when it
+        # is not yours, so a plain seed leaves this empty. Without it the feed
+        # announces a Megaton Hammer that is really going to your partner.
+        self.worlds = {
+            (c["game"], c["name"]): c["player"] for c in table["checks"] if c.get("player")
+        }
         self._rebuild_items()
         self.lock = threading.Lock()
         self.state = {
@@ -511,6 +518,10 @@ class Tracker:
 
     def item_de(self, game, name):
         return self.items.get((game, name))
+
+    def world_de(self, game, name):
+        """Which world the item in that spot belongs to, or None if it is yours."""
+        return self.worlds.get((game, name))
 
     def set_spoiler(self, spoiler):
         """Swap the spoiler without restarting anything.
@@ -847,6 +858,7 @@ class Tracker:
                         "check": name,
                         "game": self.check_game.get(name),
                         "item": self.item_de("oot", name) or self.item_de("mm", name),
+                        "world": self.world_de("oot", name) or self.world_de("mm", name),
                         "t": time.time(),
                     }
                 )
@@ -946,6 +958,7 @@ class Tracker:
                 lista.append({
                     "name": c["name"],
                     "item": self.item_de(c["game"], c["name"]),
+                    "world": self.world_de(c["game"], c["name"]),
                     "type": c["type"],
                     "junk": self.junk.get(c["name"], False),
                     "room": croom,

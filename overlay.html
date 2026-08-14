@@ -267,6 +267,11 @@ ul.feed li, ul.pend li {
 ul.feed li:first-child, ul.pend li:first-child { border-top: 0; }
 .feed .item { font-weight: 600; }
 .feed .from, .pend .from { color: var(--muted); font-size: 12px; }
+.world {
+  font-size: 10px; font-weight: 700; letter-spacing: .04em;
+  padding: 1px 5px; border-radius: 4px; white-space: nowrap;
+  color: var(--warning); border: 1px solid var(--warning);
+}
 .pend .name { color: var(--ink-2); }
 /* what is in the very room you are standing in, which the server puts first */
 .pend li.here .name { color: var(--ink); font-weight: 600; }
@@ -1008,11 +1013,19 @@ function renderItems(items) {
   </div>`).join('');
 }
 
+/* Multiworld: a spot can hold someone else's item. The ROM's placement table
+   says whose, and without showing it the feed announces a Megaton Hammer that
+   is really going to your partner. Nothing is drawn in a plain seed, where the
+   field is never set. */
+function world(n) {
+  return n ? ` <span class="world">world ${esc(String(n))}</span>` : '';
+}
+
 function renderFeed(all) {
   const feed = all.filter(f => keepGame(f.game));
   // with spoilers off the feed says you completed something, not what it was
   return feed.map(f => showGot
-    ? `<li><span class="item">${esc(f.item || '?')}</span>
+    ? `<li><span class="item">${esc(f.item || '?')}</span>${world(f.world)}
            <span class="from">← ${esc(f.check)}</span></li>`
     : `<li><span class="item">${esc(f.check)}</span></li>`
   ).join('');
@@ -1027,7 +1040,7 @@ function renderPend(here) {
   const shown = list.slice(0, 25);
   let html = shown.map(p => `<li${p.here ? ' class="here"' : ''}>
     <span class="name">${esc(p.name)}</span>
-    ${showPending && p.item ? `<span class="from">→ ${esc(p.item)}</span>` : ''}
+    ${showPending && p.item ? `<span class="from">→ ${esc(p.item)}</span>${world(p.world)}` : ''}
     ${p.here ? '<span class="room">this room</span>' : ''}
   </li>`).join('');
   const notes = [];
