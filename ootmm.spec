@@ -28,7 +28,7 @@ a = Analysis(
         ("data", "data"),                  # pool CSVs, scenes/npc/gi, ref/
         ("overlay.html", "."),             # the page the server serves
         ("Scripts/tracker.lua", "Scripts"),  # goes into the emulator on first run
-        ("icons/LEEME.md", "icons"),       # how to replace an icon by hand
+        ("icons/README.md", "icons"),      # how to replace an icon by hand
         ("README.md", "."),
         # MIT requires the notice to travel with every copy, and `data/` above
         # is OoTMM's. Both files must stay in the exe, not just in the repo.
