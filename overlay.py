@@ -392,6 +392,9 @@ class Tracker:
     """Live state. One thread refreshes it, the HTTP server serves it."""
 
     def __init__(self, link, table, spoiler=None, locate=None):
+        # `link` may be None: the page is served before the emulator side has
+        # connected, so that a Browser Source pointed at it shows "waiting for
+        # the emulator" instead of a refused connection. attach() fills it in.
         self.link = link
         self.table = table
         self.spoiler = spoiler or {}
@@ -408,8 +411,11 @@ class Tracker:
         self._rebuild_items()
         self.lock = threading.Lock()
         self.state = {
+            # from the very first request, so the badge is there while waiting
+            "version": __version__,
             "ready": False,
             "error": None,
+            "waiting": link is None,
             "active": None,
             "trusted": True,
             "confidence": 1.0,
@@ -957,7 +963,6 @@ class Tracker:
             s = self.state
             s["ready"] = True
             s["error"] = None
-            s["version"] = __version__
             s["active"] = active
             s["confidence"] = round(conf, 3)
             s["trusted"] = conf >= CONFIDENCE_MIN
@@ -983,8 +988,30 @@ class Tracker:
             s["pending_here"] = here
             s["uptime"] = int(time.time() - self._started)
 
+    def attach(self, link):
+        """The emulator side connected: start polling through it."""
+        with self.lock:
+            self.link = link
+            self.state["waiting"] = False
+            self.state["error"] = None
+
+    def fail(self, msg):
+        """The emulator side will not be coming. Say so on the page too.
+
+        The handshake reports its problems with sys.exit, and from a thread
+        that kills nothing: without this the page would sit on "waiting for
+        the emulator" for ever while the console explained why it never would.
+        """
+        print(f"[overlay] {msg}")
+        with self.lock:
+            self.state["waiting"] = False
+            self.state["error"] = msg
+
     def run(self, interval=POLL_SECONDS):
         while True:
+            if self.link is None:
+                time.sleep(0.5)      # nothing to poll until the Lua connects
+                continue
             try:
                 self.refresh()
             except Exception as ex:  # the Lua link drops when the ROM is reloaded

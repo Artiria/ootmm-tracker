@@ -28,6 +28,11 @@ The **how and why** are in
 what was verified and how, and the loose ends. Read it before changing
 anything.
 
+If you are writing a tracker yourself, start with
+[**Placement Without the Spoiler**](placement-without-the-spoiler.md) — how the
+item placement, the names and the xflag bit positions come straight out of the
+seed ROM. It is the part most worth stealing.
+
 ## Getting started
 
 ### With the `.exe` (no Python needed)

@@ -1098,7 +1098,11 @@ function render(s) {
     setHTML('build', `OoTMM Tracker <b>${esc(s.version)}</b> — early beta:
       single player is tested, multiworld is not.`);
   }
-  if (s.error) {
+  if (s.waiting) {
+    setHTML('alert', `<div class="warn"><b>Waiting for the emulator.</b>
+      In Project64-EM open <b>Debugger &gt; Scripts</b> and run <b>tracker.lua</b>.
+      This page updates on its own as soon as it connects.</div>`);
+  } else if (s.error) {
     setHTML('alert', `<div class="warn"><b>No connection to the game.</b> ${esc(s.error)}</div>`);
   } else if (!s.trusted) {
     setHTML('alert', `<div class="warn"><b>Checks not trustworthy.</b>
