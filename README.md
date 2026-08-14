@@ -37,6 +37,15 @@ seed ROM. It is the part most worth stealing.
 
 ### With the `.exe` (no Python needed)
 
+**[Download the latest release](../../releases/latest)** — one file, nothing to
+install.
+
+> It is **not signed**, so SmartScreen will warn you the first time: *More info
+> → Run anyway*. Signing costs money and this is a hobby project. Every release
+> lists the binary's SHA-256 so you can check what you downloaded is what was
+> built, and if you would rather not trust a binary at all, the source is right
+> here and does exactly the same thing.
+
 Double-click `ootmm-tracker.exe` and that is it: it finds the ROM, generates
 its tables and icons the first time, drops `tracker.lua` into the emulator's
 `Scripts\` folder and opens the overlay. In the emulator, with the ROM loaded:
