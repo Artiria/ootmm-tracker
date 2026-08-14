@@ -1,98 +1,98 @@
-# POC — Autotracker OoTMM
+# POC — OoTMM Autotracker
 
-**Timebox: 4–6 h.** El objetivo no es construir nada usable, es responder a las preguntas binarias que bloquean el diseño. Si algo se alarga, anótalo y sigue.
-
----
-
-## Nota sobre el emulador
-
-**La plataforma destino es Project64-EM, también para single player.** La comunidad de OoTMM está ahí (la wiki recomienda P64-EM, el P64 preconstruido de Maro, RetroArch y Ares; BizHawk no aparece). Un overlay para BizHawk sería un overlay para nadie.
-
-Dos consecuencias:
-
-- **Los offsets son independientes del emulador.** La base del save context es una propiedad de la ROM. Lo que descubras en cualquier emulador que la ejecute vale en todos. Lo único específico es la API de Lua y el orden de bytes del dominio de memoria.
-- **La API de Lua de P64-EM la sacas del script del multi.** No hay documentación pública. Ese script es tu referencia y hay que leerlo antes de escribir una sola línea.
-
-BizHawk es opcional y solo como comodidad de desarrollo: desde la 2.9 lleva el core Ares64 y OoTMM recomienda Ares, así que la ROM debería arrancar. Si en 15 minutos no lo consigues, no insistas y haz todo en P64-EM.
+**Timebox: 4–6 h.** The goal is not to build anything usable, it is to answer the binary questions that block the design. If something drags on, write it down and move on.
 
 ---
 
-## Preguntas que este spike debe responder
+## A note on the emulator
 
-- [x] **P1** — ¿Puedo leer memoria del juego desde Lua? **Sí.** Directamente en P64-EM, sin pasar por BizHawk.
-- [x] **P2** — ¿Dónde está la base del save context, y es localizable? **Sí, y por firma.** OoT en `0x8011A5D0`, MM en `0x8044BE18`.
-- [x] **P3** — ¿Existe un bitfield de checks completados? **Sí**, la tabla de flags por escena, con mapeo verificado contra el spoiler.
-- [ ] **P4** — ¿P64-EM permite cargar mi script **a la vez** que el script del multi? Indicios de que sí; sin confirmar.
-- [x] **P5** — ¿El Lua de P64-EM tiene sockets? **Sí.** `socket.tcp`, `send`, `recv`, `sleep`.
-- [ ] **P6** (opcional) — En modo coop, ¿el buzón transporta también items locales o solo cruzados?
+**The target platform is Project64-EM, single player included.** The OoTMM community is there (the wiki recommends P64-EM, Maro's prebuilt P64, RetroArch and Ares; BizHawk does not appear). An overlay for BizHawk would be an overlay for nobody.
 
-**P1, P2, P3 y P5 resueltas: el proyecto es viable en single player.** Queda P4/P6, que solo condicionan la parte multi.
+Two consequences:
 
-> Todo lo de abajo se verificó sobre **OoTMM v32.0** (seed `f5PCTnhD`), en Project64-EM 1.0.3, con Expansion Pak. Sin tocar BizHawk en ningún momento.
+- **The offsets are emulator-independent.** The save context's base is a property of the ROM. Whatever you find on any emulator that runs it holds on all of them. The only specific parts are the Lua API and the byte order of the memory domain.
+- **P64-EM's Lua API you get from the multiworld script.** There is no public documentation. That script is your reference and it has to be read before writing a single line.
+
+BizHawk is optional and only as a development convenience: since 2.9 it carries the Ares64 core and OoTMM recommends Ares, so the ROM should boot. If you cannot manage it in 15 minutes, do not push it and do everything in P64-EM.
 
 ---
 
-## Preparación (30 min)
+## Questions this spike has to answer
 
-1. Genera **dos seeds single player con la misma versión de OoTMM**, distinta semilla. Guarda ambos spoiler logs.
-2. Anota la versión exacta del generador. Todo lo que descubras a partir de aquí está atado a ella.
-3. Clona `github.com/OoTMM/OoTMM`. Busca en el código las definiciones de save:
+- [x] **P1** — Can I read the game's memory from Lua? **Yes.** Directly in P64-EM, without going through BizHawk.
+- [x] **P2** — Where is the save context's base, and can it be located? **Yes, and by signature.** OoT at `0x8011A5D0`, MM at `0x8044BE18`.
+- [x] **P3** — Is there a bitfield of completed checks? **Yes**, the per-scene flag table, with the mapping verified against the spoiler.
+- [ ] **P4** — Does P64-EM allow loading my script **at the same time** as the multiworld script? Signs point to yes; unconfirmed.
+- [x] **P5** — Does P64-EM's Lua have sockets? **Yes.** `socket.tcp`, `send`, `recv`, `sleep`.
+- [ ] **P6** (optional) — In co-op mode, does the mailbox also carry local items or only crossed ones?
+
+**P1, P2, P3 and P5 answered: the project is viable in single player.** P4/P6 are left, and they only constrain the multiworld side.
+
+> Everything below was verified on **OoTMM v32.0** (seed `f5PCTnhD`), on Project64-EM 1.0.3, with the Expansion Pak. Without touching BizHawk at any point.
+
+---
+
+## Preparation (30 min)
+
+1. Generate **two single-player seeds on the same OoTMM version**, different seed. Keep both spoiler logs.
+2. Write down the generator's exact version. Everything you find from here on is tied to it.
+3. Clone `github.com/OoTMM/OoTMM`. Search the code for the save definitions:
    - `grep -rn "gOotSave\|gMmSave\|gSharedCustomSave\|CustomSave" --include=*.h`
-   - Mira si el build genera un `.map` o fichero de símbolos. Si lo hay, **has terminado la P2 sin tocar el emulador**.
-4. Descomprime el release del `multi-client` y localiza el script Lua. Léelo entero antes de escribir nada tuyo — es tu documentación de la API real de P64-EM.
+   - See whether the build produces a `.map` or a symbol file. If it does, **you have finished P2 without touching the emulator**.
+4. Unpack the `multi-client` release and find the Lua script. Read it end to end before writing anything of your own — it is your documentation for P64-EM's real API.
 
 ---
 
-## Fase 1 — Leer algo (1 h)
+## Phase 1 — Read something (1 h)
 
-> **RESUELTA.** Se hizo directamente en P64-EM. El ejemplo con `gui.text` de más abajo no es aplicable: no hay API gráfica. La verificación se hizo leyendo `osMemSize` en `0x80000318`, cuyo valor correcto (`0x00800000`) se conoce de antemano.
+> **ANSWERED.** It was done directly in P64-EM. The `gui.text` example below does not apply: there is no graphics API. The check was done by reading `osMemSize` at `0x80000318`, whose correct value (`0x00800000`) is known in advance.
 
-Objetivo: cerrar el bucle completo *dirección → lectura desde Lua → valor correcto en pantalla* con algo trivial como las rupias. Sin esto, nada de lo demás importa.
+Goal: close the whole loop *address → read from Lua → correct value on screen* with something trivial like rupees. Without this, none of the rest matters.
 
-**Localizar las rupias.** Project64 arrastra un debugger con búsqueda en memoria, gestión de símbolos y breakpoints de lectura/escritura. La mecánica es la misma en cualquier herramienta:
+**Locating the rupees.** Project64 drags along a debugger with memory search, symbol management and read/write breakpoints. The mechanics are the same in any tool:
 
-1. Anota tu contador de rupias y busca ese valor exacto (2 bytes).
-2. Gasta o recoge rupias y vuelve a filtrar por el nuevo valor.
-3. Tres o cuatro iteraciones y te quedan pocos candidatos.
-4. Escribe en uno de ellos y mira si cambia el HUD. Ese es el bueno.
+1. Note your rupee counter and search for that exact value (2 bytes).
+2. Spend or pick up rupees and filter again by the new value.
+3. Three or four iterations and few candidates are left.
+4. Write to one of them and see whether the HUD changes. That is the one.
 
-> **Atajo:** los breakpoints de escritura son mejor herramienta que la búsqueda iterativa. Pon un watchpoint sobre un candidato, recoge una rupia, y ves directamente qué código toca qué dirección. Te será aún más útil en la fase 3.
+> **Shortcut:** write breakpoints are a better tool than iterative searching. Put a watchpoint on a candidate, pick up a rupee, and you see directly which code touches which address. It will be even more useful in phase 3.
 
-**Leerlo desde Lua.** Saca las funciones exactas del script del multi. El equivalente en BizHawk, solo como referencia de la forma que debe tener el bucle:
+**Reading it from Lua.** Take the exact functions from the multiworld script. The BizHawk equivalent, purely as a reference for the shape the loop should have:
 
 ```lua
--- REFERENCIA (API de BizHawk, NO de P64-EM)
+-- REFERENCE (BizHawk's API, NOT P64-EM's)
 local ADDR = 0x000000
 
 while true do
   local v = memory.read_u16_be(ADDR, "RDRAM")
-  gui.text(10, 10, "Rupias: " .. v)
+  gui.text(10, 10, "Rupees: " .. v)
   emu.frameadvance()
 end
 ```
 
-Anota en la plantilla de resultados los nombres reales de las funciones de P64-EM. Son la base de todo lo que escribas después.
+Write P64-EM's real function names into the results template. They are the foundation of everything you write afterwards.
 
-**Conversión de direcciones:** las direcciones virtuales del juego (`0x80xxxxxx`) se traducen a offset físico con `addr & 0x00FFFFFF`.
+**Address conversion:** the game's virtual addresses (`0x80xxxxxx`) translate to a physical offset with `addr & 0x00FFFFFF`.
 
-> **Gotcha de endianness:** el dominio RDRAM puede exponer los bytes intercambiados en grupos de 4, y esto varía entre emuladores y cores. Si las lecturas de 16/32 bits cuadran pero las de 8 bits salen desplazadas, prueba `XOR 3` sobre la dirección para lecturas de byte. Confírmalo aquí, no más adelante.
+> **Endianness gotcha:** the RDRAM domain may expose bytes swapped in groups of 4, and this varies between emulators and cores. If 16/32-bit reads line up but 8-bit ones come out shifted, try `XOR 3` on the address for byte reads. Confirm it here, not later.
 
-✅ **P1 resuelta** cuando el número en pantalla siga al del juego en tiempo real.
+✅ **P1 answered** once the number on screen follows the game's in real time.
 
 ---
 
-## Fase 2 — Base del save context (1,5–2 h)
+## Phase 2 — The save context's base (1.5–2 h)
 
-> **RESUELTA por una vía que no estaba prevista:** buscar la firma `ZELDAZ` en un volcado de RAM, y validarla contra el fichero `.fla`. No hizo falta ni la búsqueda iterativa de rupias ni el debugger.
+> **ANSWERED through a route that was not planned:** searching for the `ZELDAZ` signature in a RAM dump, and validating it against the `.fla` file. Neither the iterative rupee search nor the debugger were needed.
 
-Este es el riesgo real del proyecto.
+This is the project's real risk.
 
-**Vía A (preferida): desde la fuente.** Si sacaste la dirección del `.map` en la preparación, valídala leyendo un campo conocido (rupias, corazones) y comparando con lo que ves en juego.
+**Route A (preferred): from the source.** If you got the address from the `.map` during preparation, validate it by reading a known field (rupees, hearts) and comparing against what you see in game.
 
-**Vía B: por búsqueda.** La dirección de las rupias que ya tienes está *dentro* del save context. Dumpea el entorno a fichero y busca la cabecera:
+**Route B: by searching.** The rupee address you already have is *inside* the save context. Dump the surroundings to a file and look for the header:
 
 ```lua
--- REFERENCIA. Sustituye la lectura por la API real de P64-EM.
+-- REFERENCE. Replace the read with P64-EM's real API.
 local BASE = 0x000000
 local f = io.open("dump.bin", "wb")
 for i = 0, 4095 do
@@ -101,269 +101,270 @@ end
 f:close()
 ```
 
-Ábrelo en un editor hex y busca la estructura: nombre de fichero, magic, contadores. Cruza con las structs del código.
+Open it in a hex editor and look for the structure: file name, magic, counters. Cross-reference with the structs in the code.
 
-**Validación obligatoria — no te saltes esto:**
-- [ ] Lee 4–5 campos distintos (rupias, corazones, un upgrade, una canción) y verifica cada uno contra el juego.
-- [ ] Repite con la **segunda seed**. Si la base cambia entre seeds de la misma versión, tu estrategia de offsets estáticos no vale y hay que localizar por firma en RAM.
-- [ ] Guarda estado, recarga, comprueba que sigue valiendo.
-- [ ] Comprueba qué hay en esa dirección en el **title screen**. Necesitas un chequeo de validez antes de emitir nada.
+**Mandatory validation — do not skip this:**
+- [ ] Read 4–5 different fields (rupees, hearts, an upgrade, a song) and verify each one against the game.
+- [ ] Repeat with the **second seed**. If the base changes between seeds of the same version, your static-offset strategy is no good and you have to locate by signature in RAM.
+- [ ] Save state, reload, check it still holds.
+- [ ] Check what is at that address on the **title screen**. You need a validity check before emitting anything.
 
-✅ **P2 resuelta** cuando leas correctamente en dos seeds distintas.
-
----
-
-## Fase 3 — Bitfield de checks (1 h)
-
-> **RESUELTA.** Existe, es la tabla de flags por escena, y el mapeo bit → check está verificado contra el spoiler. El paso 2 de abajo (diffear dos volcados) es lo que funcionó, pero solo tras acotar a las regiones que se persisten al fichero de save.
-
-Es lo que separa un tracker de items de un tracker de progreso de verdad.
-
-1. En el código, busca cómo marca OoTMM un check como recogido. Términos: `checks`, `locations`, `SAVE_BIT`, `setCheck`.
-2. Pon un breakpoint de escritura sobre la zona candidata y abre un cofre: verás exactamente qué dirección se toca. Alternativa sin debugger: dumpea antes y después de abrir el cofre y diffea los dos ficheros. Buscas un bit que se pone a 1 y no vuelve.
-3. Con el spoiler log delante, verifica que el índice del bit corresponde al check que has abierto.
-
-Si aparece: el tracking de checks te sale casi gratis y el proyecto sube mucho de valor.
-Si no aparece: sigues teniendo tracker de items perfectamente válido. No es bloqueante.
+✅ **P2 answered** once you read correctly on two different seeds.
 
 ---
 
-## Fase 4 — Convivencia con el script del multi (1 h)
+## Phase 3 — The check bitfield (1 h)
 
-> **PENDIENTE.** Único bloque sin tocar. No condiciona el single player.
+> **ANSWERED.** It exists, it is the per-scene flag table, and the bit → check mapping is verified against the spoiler. Step 2 below (diffing two dumps) is what worked, but only after narrowing to the regions that get persisted to the save file.
 
-Esto solo aplica a sesiones multi: en single player no hay script del multi corriendo y el problema no existe.
+This is what separates an item tracker from a real progress tracker.
 
-- [ ] Carga tu script mientras el script del multi está corriendo. ¿Conviven o se pisan?
-- [ ] ¿Hay sockets en la API? Si no: escribe a fichero y que un watcher local lo siga.
-- [ ] Si has usado BizHawk en las fases 1–3, revalida la base del save en P64-EM. Debería ser idéntica —misma ROM— pero confírmalo antes de darlo por bueno.
+1. In the code, look for how OoTMM marks a check as collected. Terms: `checks`, `locations`, `SAVE_BIT`, `setCheck`.
+2. Put a write breakpoint on the candidate area and open a chest: you will see exactly which address is touched. Alternative without a debugger: dump before and after opening the chest and diff the two files. You are looking for a bit that goes to 1 and does not come back.
+3. With the spoiler log in front of you, verify that the bit's index corresponds to the check you opened.
 
-**Si no admite dos scripts:** no es fatal. La versión multi pasa a ser un fork del script del multi con tu emisor dentro, y mantienes un script propio e independiente para single player. Dos artefactos en vez de uno, mismo parseo detrás.
+If it turns up: check tracking comes almost for free and the project gains a lot of value.
+If it does not: you still have a perfectly valid item tracker. Not a blocker.
 
 ---
 
-## Gotchas a verificar durante el spike
+## Phase 4 — Coexisting with the multiworld script (1 h)
 
-| Situación | Estado |
+> **PENDING.** The only block left untouched. It does not constrain single player.
+
+This only applies to multiworld sessions: in single player there is no multiworld script running and the problem does not exist.
+
+- [ ] Load your script while the multiworld script is running. Do they coexist or step on each other?
+- [ ] Are there sockets in the API? If not: write to a file and have a local watcher follow it.
+- [ ] If you used BizHawk in phases 1–3, revalidate the save base in P64-EM. It should be identical —same ROM— but confirm it before calling it done.
+
+**If it does not allow two scripts:** not fatal. The multiworld version becomes a fork of the multiworld script with your emitter inside, and you keep a separate script of your own for single player. Two artifacts instead of one, the same parsing behind them.
+
+---
+
+## Gotchas to verify during the spike
+
+| Situation | Status |
 |---|---|
-| Title screen / file select | **Confirmado**: la memoria es basura antes de arrancar. Se vio `0x00C8083C` → `0` → `0x00800000`. Flag de validez: `osMemSize` más la firma. |
-| Cambio OoT ↔ MM | **El gotcha más peligroso de todos, y la primera respuesta que dimos era incompleta.** Es verdad que hay dos save contexts vivos a la vez. Pero al **cruzar** de un juego al otro, la RAM se reorganiza entera: el juego activo pasa a la zona baja y el otro a la alta. Con offsets fijos el tracker funcionaría perfectamente en OoT y empezaría a leer basura al entrar en MM, **sin dar ningún error**. La localización por firma lo resuelve sola, y de paso dice en qué juego está el jugador: el que tenga su firma en la zona baja. <br><br>`Jugando OoT:` OoT `0x8011A5D0` · MM `0x8044BE18`<br>`Jugando MM:` MM `0x801C6954` · OoT `0x8076C4F0` |
-| **Latencia de los flags de check** | **Gotcha nuevo, no estaba en la lista, y es el que más afecta al diseño.** El flag de cofre no se escribe al abrirlo: se vuelca al save context **al salir de la escena** o al guardar. Un tracker que solo lea la tabla ve los checks con retraso. Para reacción inmediata hay que leer además los flags temporales de la escena activa (`+0x1357`–`+0x137B`). |
-| Reset de ciclo de 3 días (MM) | Sin probar. El *latch* sigue siendo buena idea. |
-| Save & quit + recarga | Parcialmente visto: los flags persisten entre volcados y sobreviven al guardado. Falta probar la recarga completa. |
-| Frecuencia de polling | No aplica tal cual: **no hay callback de frame**. El bucle es libre, con `socket.sleep`. Un sondeo cada 100–250 ms sobra. |
-| Lecturas a medias | Al no haber sincronía de frame, se puede pillar una estructura a medio escribir. No ha dado problemas leyendo el save context, pero conviene el *latch*. |
+| Title screen / file select | **Confirmed**: memory is garbage before boot. Saw `0x00C8083C` → `0` → `0x00800000`. Validity flag: `osMemSize` plus the signature. |
+| OoT ↔ MM switch | **The most dangerous gotcha of all, and our first answer to it was incomplete.** It is true that there are two save contexts alive at once. But when you **cross** from one game to the other, RAM is reorganised entirely: the active game moves to the low area and the other to the high one. With fixed offsets the tracker would work perfectly in OoT and start reading garbage on entering MM, **without raising any error**. Locating by signature solves it on its own, and as a bonus it tells you which game the player is in: whichever has its signature in the low area. <br><br>`Playing OoT:` OoT `0x8011A5D0` · MM `0x8044BE18`<br>`Playing MM:` MM `0x801C6954` · OoT `0x8076C4F0` |
+| **Check flag latency** | **A new gotcha, not on the list, and the one that affects the design most.** A chest's flag is not written when you open it: it is flushed to the save context **when you leave the scene** or when you save. A tracker that only reads the table sees checks late. For immediate reaction you also have to read the active scene's temporary flags (`+0x1357`–`+0x137B`). |
+| 3-day cycle reset (MM) | Untested. The *latch* is still a good idea. |
+| Save & quit + reload | Partially seen: the flags persist across dumps and survive saving. A full reload is still untested. |
+| Polling frequency | Does not apply as written: **there is no frame callback**. The loop is free-running, with `socket.sleep`. Polling every 100–250 ms is more than enough. |
+| Torn reads | With no frame synchronisation, you can catch a structure half-written. It has caused no problems reading the save context, but the *latch* is advisable. |
 
 ---
 
-## Resultados
+## Results
 
-Esto es la entrada del `offsets/v32.0.json` del futuro demonio.
+This is the future daemon's `offsets/v32.0.json` entry.
 
 ```
-Versión OoTMM:        v32.0  (seed f5PCTnhD)
-Emulador:             Project64-EM 1.0.3, Lua 5.4, RDRAM 8 MB (Expansion Pak)
-u8 necesita XOR 3:    NO. read_u8 es coherente con read_u32.
-Endianness protocolo: binary.pack_* es LITTLE endian, y la memoria del N64
-                      es big endian. Los valores sueltos salen bien si
-                      empaquetas y desempaquetas igual, pero los bloques de
-                      bytes hay que invertirlos por palabras de 4.
+OoTMM version:        v32.0  (seed f5PCTnhD)
+Emulator:             Project64-EM 1.0.3, Lua 5.4, RDRAM 8 MB (Expansion Pak)
+u8 needs XOR 3:       NO. read_u8 is consistent with read_u32.
+Protocol endianness:  binary.pack_* is LITTLE endian, and N64 memory is
+                      big endian. Individual values come out right if you
+                      pack and unpack the same way, but blocks of bytes
+                      have to be reversed in 4-byte words.
 
-Base save context:    OoT  0x8011A5D0      MM  0x8044BE18
-  Método:             firma en RAM. "ZELDAZ" (OoT) / "ZELDA3" (MM) en base+0x1C.
-  Copias estáticas:   OoT  0x800FBFB8      MM  0x80442248   (no usar: no cambian)
-  Estable entre seeds:        SIN VALIDAR con una segunda seed.
-                              Da igual: con búsqueda por firma deja de importar.
-  Válida en title screen:     NO. Antes de arrancar hay basura.
-                              Flag de validez: osMemSize en 0x80000318 == 0x00800000,
-                              más la presencia de la firma.
+Save context base:    OoT  0x8011A5D0      MM  0x8044BE18
+  Method:             signature in RAM. "ZELDAZ" (OoT) / "ZELDA3" (MM) at base+0x1C.
+  Static copies:      OoT  0x800FBFB8      MM  0x80442248   (do not use: they never change)
+  Stable across seeds:        NOT VALIDATED with a second seed.
+                              Does not matter: with signature search it stops mattering.
+  Valid on title screen:      NO. Before boot there is garbage.
+                              Validity flag: osMemSize at 0x80000318 == 0x00800000,
+                              plus the presence of the signature.
 
-Campos verificados (offsets relativos a la base de OoT):
-  dayTime             +0x00C   u16   reloj del día; corre siempre, es ruido
+Verified fields (offsets relative to OoT's base):
+  dayTime             +0x00C   u16   time of day; always running, it is noise
   deathCount          +0x022   u16
   healthCapacity      +0x02E   u16
-  health              +0x030   u16   16 por corazón; visto curar 44 -> 48
+  health              +0x030   u16   16 per heart; saw a heal 44 -> 48
   magicLevel/magic    +0x032   s8+s8
   rupees              +0x034   s16
-  swordHealth         +0x036   u16   durabilidad del Giant's Knife; sale a 8
-  naviTimer           +0x038   u16   sube solo; también ruido
-  items[24]           +0x074   ---   id del item por slot, 0xFF = vacío
+  swordHealth         +0x036   u16   Giant's Knife durability; comes out as 8
+  naviTimer           +0x038   u16   counts up on its own; also noise
+  items[24]           +0x074   ---   item id per slot, 0xFF = empty
   ammo[15]            +0x08C   ---
   beans               +0x09B   u8
-  equipment           +0x09C   u16   4 nibbles: espadas/escudos/túnicas/botas
-  upgrades            +0x0A0   u32   8 campos de 2-3 bits
-  questItems          +0x0A4   u32   canciones, medallones, piedras
+  equipment           +0x09C   u16   4 nibbles: swords/shields/tunics/boots
+  upgrades            +0x0A0   u32   8 fields of 2-3 bits
+  questItems          +0x0A4   u32   songs, medallions, stones
   dungeonItems[20]    +0x0A8
   dungeonKeys[19]     +0x0BC
   goldTokens          +0x0D0   u16
-  flags de escena     +0x0D4   ---   ver abajo
-  flags temporales    +0x1357..+0x137B   escena activa; cambian al cambiar de sala
+  scene flags         +0x0D4   ---   see below
+  temporary flags     +0x1357..+0x137B   active scene; they change on room change
   checksum            +0x1352   u16
 
-  La estructura cierra exactamente en +0xD4, que es `perm`, verificado aparte
-  con los cofres. Eso hace consistente el bloque de principio a fin.
+  The structure closes exactly at +0xD4, which is `perm`, verified separately
+  with the chests. That makes the block consistent from end to end.
 
-  CORRECCIÓN de una versión anterior de este documento: +0x38 no es el reloj
-  del día sino naviTimer (el reloj es +0x0C), y +0x537 NO es la magia (está
-  en +0x33). Aquel +0x537 sigue sin identificar.
+  CORRECTION to an earlier version of this document: +0x38 is not the time of
+  day but naviTimer (the clock is +0x0C), and +0x537 is NOT magic (that is at
+  +0x33). That +0x537 is still unidentified.
 
-Bitfield de checks:  SÍ
-  base    +0xD4 + escena*0x1C,  124 escenas de 0x1C bytes
-  campos  +0x00 chest   +0x04 swch   +0x08 clear   +0x0C collect
+Check bitfield:  YES
+  base    +0xD4 + scene*0x1C,  124 scenes of 0x1C bytes
+  fields  +0x00 chest   +0x04 swch   +0x08 clear   +0x0C collect
           +0x10 unk     +0x14 rooms  +0x18 floors
-  tamaño  0xD90 bytes en total
-  Mapeo bit → check confirmado contra spoiler: SÍ
-    escena 40 (0x28) chest = 0x0F  -> los 4 cofres de Mido's House
-    escena 85 (0x55) chest = 0x01  -> Kokiri Sword Chest
-  El campo `unk` no se usa en OoT vanilla y aquí sí lleva datos: es el
-  candidato a que OoTMM guarde ahí los checks que no son cofres.
+  size    0xD90 bytes in total
+  Bit → check mapping confirmed against the spoiler: YES
+    scene 40 (0x28) chest = 0x0F  -> the 4 chests in Mido's House
+    scene 85 (0x55) chest = 0x01  -> Kokiri Sword Chest
+  The `unk` field is unused in vanilla OoT and here it does carry data: it is
+  the candidate for OoTMM storing non-chest checks there.
 
-Regiones que se persisten al .fla (todo lo demás es volátil):
-  0x800FBF00-0x800FC000   copia de OoT
-  0x8011A5C0-0x8011BA20   save de OoT
-  0x8044BE10-0x8044CE10   save de MM
-  El .fla está word-swapped y el save de OoT empieza en su offset 0x20.
+Regions persisted to the .fla (everything else is volatile):
+  0x800FBF00-0x800FC000   OoT's copy
+  0x8011A5C0-0x8011BA20   OoT's save
+  0x8044BE10-0x8044CE10   MM's save
+  The .fla is word-swapped and OoT's save starts at its offset 0x20.
 
 P64-EM:
-  Dos scripts simultáneos:  SIN CONFIRMAR (el diálogo de Scripts es una lista
-                            y el error es "script is already running", por
-                            script y no global: apunta a que sí)
-  Sockets en Lua:           SÍ, pero solo como cliente. El daemon tiene que
-                            ser el que escucha.
-  Lectura:      memory.read_u8/s8/u16/s16/u32/s32/f32/f64  (dirección 0x80xxxxxx
-                cruda, sin dominio y sin máscara). Escritura: memory.write_*
-  Empaquetado:  binary.pack_u8/../f64 y binary.unpack_u8/../f64
-  Callback por frame:   NO EXISTE. Tampoco hay API gráfica (ni gui.text).
-                        El script corre en su propio hilo, con bucle libre.
-  Base del save igual que en BizHawk:  n.a., BizHawk descartado.
+  Two simultaneous scripts:  UNCONFIRMED (the Scripts dialog is a list and the
+                             error is "script is already running", per script
+                             rather than global: points to yes)
+  Sockets in Lua:            YES, but only as a client. The daemon has to be
+                             the one listening.
+  Reading:      memory.read_u8/s8/u16/s16/u32/s32/f32/f64  (raw 0x80xxxxxx
+                address, no domain and no mask). Writing: memory.write_*
+  Packing:      binary.pack_u8/../f64 and binary.unpack_u8/../f64
+  Per-frame callback:   DOES NOT EXIST. Nor is there a graphics API (no gui.text).
+                        The script runs on its own thread, with a free loop.
+  Save base same as in BizHawk:  n/a, BizHawk dropped.
 ```
 
 ---
 
-## Criterio de decisión
+## Decision criteria
 
-**Veredicto: adelante, y el spike se pasó de largo.** P1, P2, P3 y P5 resueltas, y encima salió de aquí un tracker que ya lee el inventario de los dos juegos en vivo. Lo que queda es diseño de overlay, no ingeniería inversa.
+**Verdict: go ahead, and the spike overshot.** P1, P2, P3 and P5 answered, and on top of that it produced a tracker that already reads both games' inventory live. What is left is overlay design, not reverse engineering.
 
-> **Estado en una línea:** se lee y se traduce a nombre, en vivo y para ambos juegos, el inventario completo (325 ids), canciones, medallones, piedras, máscaras, equipo bit a bit, mejoras, contadores y 713 checks. Sobrevive al cambio de juego. Lo que no se reconoce se reporta en crudo con su dirección.
+> **Status in one line:** the full inventory (325 ids), songs, medallions, stones, masks, equipment bit by bit, upgrades, counters and 713 checks are read and translated to names, live and for both games. It survives the game switch. Anything unrecognised is reported raw with its address.
 
-P3 salió bien, así que el proyecto es un tracker de progreso de verdad y no solo de items.
+P3 worked out, so the project is a real progress tracker and not just an item one.
 
-El riesgo que se marcaba como letal —que la base del save se moviera de forma impredecible dentro de una misma versión— ha quedado cubierto por partida doble, y ni siquiera hizo falta esperar a que fallara:
+The risk flagged as lethal —the save base moving unpredictably within a single version— is now covered twice over, and it did not even take waiting for it to fail:
 
-- **Localización por firma**, que era el plan B, resultó ser trivial y es ahora el método principal. Los offsets son relativos a la base, así que un cambio de versión que mueva la estructura no rompe nada mientras la firma siga ahí.
-- **Validación cruzada contra el fichero de save.** Los bytes de la RAM en `0x8011A5D0` son idénticos uno a uno a los del `.fla`. Eso convierte cualquier duda sobre la base en algo comprobable en segundos y sin emulador.
+- **Locating by signature**, which was plan B, turned out to be trivial and is now the main method. The offsets are relative to the base, so a version change that moves the structure breaks nothing as long as the signature is still there.
+- **Cross-validation against the save file.** The RAM bytes at `0x8011A5D0` are identical one by one to the `.fla`'s. That turns any doubt about the base into something checkable in seconds and without an emulator.
 
-Queda pendiente validar con una segunda seed, pero con búsqueda por firma ha dejado de ser un riesgo de proyecto.
+Validating with a second seed is still pending, but with signature search it has stopped being a project risk.
 
-### Cosas del plan original que resultaron ser falsas
+### Things in the original plan that turned out to be false
 
-Vale la pena anotarlas, porque desviaron trabajo:
+Worth writing down, because they diverted work:
 
-- **El `XOR 3` no aplica.** Es un gotcha de BizHawk. En P64-EM las lecturas de byte son coherentes con las de 32 bits. Sí hay un word-swap, pero está en el empaquetado del protocolo (`binary.pack_*` es little endian), no en la memoria.
-- **La Fase 1 no se puede hacer como estaba escrita.** No hay `gui.text` ni ninguna API gráfica: el overlay no puede dibujarse dentro del emulador y tiene que ser una ventana externa. Para un overlay de streamer da igual, pero condiciona el diseño desde el principio.
-- **No hay callback de frame.** El script corre en su propio hilo y el bucle es libre.
-- **BizHawk era una pérdida de tiempo.** API distinta y un gotcha de endianness que no existe en el destino.
-- **El bitfield no estaba donde se buscó primero.** Buscarlo con dumps de RAM completa da 22% de bytes distintos y es inviable. Lo que funciona es acotar a lo que se persiste al fichero de save: ahí el mismo experimento pasa de 46.000 bytes candidatos a 2.
+- **`XOR 3` does not apply.** It is a BizHawk gotcha. In P64-EM byte reads are consistent with 32-bit ones. There is a word swap, but it is in the protocol's packing (`binary.pack_*` is little endian), not in memory.
+- **Phase 1 cannot be done as written.** There is no `gui.text` or any graphics API: the overlay cannot be drawn inside the emulator and has to be an external window. For a streamer overlay that makes no difference, but it shapes the design from the start.
+- **There is no frame callback.** The script runs on its own thread and the loop is free-running.
+- **BizHawk was a waste of time.** A different API and an endianness gotcha that does not exist on the target.
+- **The bitfield was not where it was first looked for.** Hunting it with full RAM dumps gives 22% of bytes differing and is unworkable. What works is narrowing to what gets persisted to the save file: there the same experiment goes from 46,000 candidate bytes to 2.
 
 ---
 
-## Siguiente paso si sale bien
+## Next step if it works out
 
-El incremento que se propuso —Lua tonto que emite bytes, Python que parsea— **ya está construido y es lo que se usó para todo lo de arriba**. Con una diferencia: en vez de escribir a fichero va por socket, porque el Lua de P64-EM tiene sockets.
+The increment proposed —a dumb Lua that emits bytes, Python that parses— **is already built and is what was used for everything above**. With one difference: instead of writing to a file it goes over a socket, because P64-EM's Lua has sockets.
 
-### Herramientas
+### Tools
 
-**`Scripts/tracker.lua`** — servidor de memoria, independiente del script del multi. Puerto propio (13251) para poder correr los dos a la vez. Habla el mismo protocolo que `adapter.lua` en los opcodes 2/3/4/6/7/8, y añade `PING` (identifica el script y fija el orden de bytes) y `READ_BLOCK` (vuelca una región en una petición). Reconecta solo, así que se puede reiniciar el daemon sin tocar el emulador ni la ROM.
+**`Scripts/tracker.lua`** — a memory server, independent of the multiworld script. Its own port (13251) so both can run at once. It speaks the same protocol as `adapter.lua` on opcodes 2/3/4/6/7/8, and adds `PING` (identifies the script and pins the byte order) and `READ_BLOCK` (dumps a region in one request). It reconnects on its own, so the daemon can be restarted without touching the emulator or the ROM.
 
-> **Vive en el proyecto, en `Scripts/tracker.lua`.** El emulador lo carga de su
-> propia carpeta `Scripts\`, así que ahí hay un **enlace duro** al del
-> proyecto: un solo fichero con dos nombres, sin copias que se desincronicen.
-> Si alguna vez deja de estar enlazado —un editor que reescriba creando fichero
-> nuevo en vez de truncar rompe el enlace— se rehace con
-> `New-Item -ItemType HardLink -Path <ruta del emulador> -Target <ruta del proyecto>`,
-> que no pide permisos de administrador porque los dos están en C:.
+> **It lives in the project, at `Scripts/tracker.lua`.** The emulator loads it from
+> its own `Scripts\` folder, so there is a **hard link** there to the project's
+> copy: a single file with two names, with no copies that drift apart.
+> If it ever stops being linked —an editor that rewrites by creating a new file
+> instead of truncating breaks the link— it is remade with
+> `New-Item -ItemType HardLink -Path <emulator path> -Target <project path>`,
+> which does not need administrator rights because both are on C:.
 >
-> Cuidado al tocarlo desde PowerShell: `Set-Content -Encoding utf8` en la 5.1
-> escribe **BOM**, y tres bytes `EF BB BF` al principio le revientan el parser
-> a Lua. Pasó al montar el enlace; se ve mirando los primeros bytes.
+> Careful editing it from PowerShell: `Set-Content -Encoding utf8` on 5.1
+> writes a **BOM**, and three `EF BB BF` bytes at the start blow up Lua's
+> parser. It happened while setting up the link; you can see it by looking at
+> the first bytes.
 
-**`ootmm.py`** — siete subcomandos:
+**`ootmm.py`** — seven subcommands:
 
 | | |
 |---|---|
-| `items` | **lee el inventario de ambos juegos en bucle y canta cada cambio** |
-| `checks` | **lista los checks completados, por nombre**; en vivo o desde un volcado |
-| `watch ADDR:SIZE,…` | sondea direcciones e imprime solo lo que cambia |
-| `dump ADDR:LEN` | vuelca una región (acepta nombres: `oot`, `mm`) |
-| `find dump.bin PATRÓN` | busca una firma; `--swapped` prueba las dos vistas |
-| `diff a.bin b.bin` | compara volcados |
-| `proxy` | captura qué direcciones usa el MultiClient |
+| `items` | **reads both games' inventory in a loop and reports every change** |
+| `checks` | **lists the completed checks, by name**; live or from a dump |
+| `watch ADDR:SIZE,…` | polls addresses and prints only what changes |
+| `dump ADDR:LEN` | dumps a region (accepts names: `oot`, `mm`) |
+| `find dump.bin PATTERN` | searches for a signature; `--swapped` tries both views |
+| `diff a.bin b.bin` | compares dumps |
+| `proxy` | captures which addresses the MultiClient uses |
 
-**`mkchecks.py`** — genera `checks.json` cruzando los datos de OoTMM en `data/`. Con `--rom <seed.z64>` resuelve además los 4.751 xflags leyendo las tres tablas de lookup de la ROM; con `--spoiler` sabe qué mazmorras son Master Quest.
+**`mkchecks.py`** — generates `checks.json` by cross-referencing OoTMM's data in `data/`. With `--rom <seed.z64>` it also resolves the 4,751 xflags by reading the ROM's three lookup tables; with `--spoiler` it knows which dungeons are Master Quest.
 
-**`overlay.py` + `overlay.html`** — el tracker mirable. `ootmm.py overlay` levanta un hilo de sondeo, un servidor HTTP y una ventana propia. Ver la sección de abajo.
+**`overlay.py` + `overlay.html`** — the tracker you actually look at. `ootmm.py overlay` starts a polling thread, an HTTP server and a window of its own. See the section below.
 
-**`inventory.py`** — el mapa del inventario de los dos juegos, con la tabla de ids.
+**`inventory.py`** — both games' inventory map, with the id table.
 
-**`data/ref/`** — copias de los ficheros del repo de OoTMM en los que se apoya todo: `mark.c`, `xflags.c`, `items.h`.
+**`data/ref/`** — copies of the files from the OoTMM repo that everything leans on: `mark.c`, `xflags.c`, `items.h`.
 
-**`Scripts/adapter-tracker.lua`** — clon del adapter con el puerto cambiado, solo para el modo `proxy`.
+**`Scripts/adapter-tracker.lua`** — a clone of the adapter with the port changed, only for `proxy` mode.
 
-### El método que encontró el bitfield
+### The method that found the bitfield
 
-Los filtros de `diff` importan más que la herramienta, porque el problema real es el ruido: un volcado de RAM completa da 22% de bytes distintos.
+`diff`'s filters matter more than the tool, because the real problem is noise: a full RAM dump gives 22% of bytes differing.
 
 ```
---exclude ruido.bin   descarta lo que cambia por sí solo (tiempo, RNG, actores)
---bits-set            solo bytes que ganan bits sin perder ninguno
---one-bit             solo bytes que encienden exactamente un bit
---max-run N           descarta rachas anchas, que son buffers
---range               acota a una región
+--exclude noise.bin   discards what changes on its own (time, RNG, actors)
+--bits-set            only bytes that gain bits without losing any
+--one-bit             only bytes that turn on exactly one bit
+--max-run N           discards wide runs, which are buffers
+--range               narrows to a region
 ```
 
-El que de verdad resuelve es **acotar a las regiones que se persisten al `.fla`**. Todo lo demás es volátil por definición, así que un check no puede estar ahí. Con eso, el experimento del Recovery Heart pasó de 46.626 bytes candidatos a **2**.
+The one that actually solves it is **narrowing to the regions persisted to the `.fla`**. Everything else is volatile by definition, so a check cannot be there. With that, the Recovery Heart experiment went from 46,626 candidate bytes to **2**.
 
-Procedimiento reproducible para localizar un check nuevo:
+A reproducible procedure for locating a new check:
 
-1. Volcado `a`, con la partida cargada y el jugador quieto.
-2. Volcado `ruido` diez segundos después, **sin tocar nada**.
-3. Coger el item, **salir de la escena** (esto es imprescindible: el flag no se escribe hasta entonces) y volcado `b`.
-4. `diff a b --exclude ruido` acotado a las tres regiones persistidas.
+1. Dump `a`, with the save loaded and the player standing still.
+2. Dump `noise` ten seconds later, **without touching anything**.
+3. Take the item, **leave the scene** (this is essential: the flag is not written until then) and dump `b`.
+4. `diff a b --exclude noise` narrowed to the three persisted regions.
 
-### Mapeo bit → nombre de check: **hecho** (para cofres)
+### Bit → check name mapping: **done** (for chests)
 
-La tabla no hubo que deducirla. Está en el repo de OoTMM, en tres ficheros:
+The table did not have to be deduced. It is in the OoTMM repo, across three files:
 
-| Fichero | Qué aporta |
+| File | What it contributes |
 |---|---|
-| `data/pool/pool_oot.csv` | `location, type, hint, scene, id, item` para 3236 ubicaciones |
-| `data/pool/pool_mm.csv` | lo mismo para 2807 de MM |
-| `data/defs/scenes.yml` | nombre de escena → índice numérico |
+| `data/pool/pool_oot.csv` | `location, type, hint, scene, id, item` for 3236 locations |
+| `data/pool/pool_mm.csv` | the same for MM's 2807 |
+| `data/defs/scenes.yml` | scene name → numeric index |
 
-**El campo `id` del CSV es directamente el número de bit.** Y encaja con lo medido en RAM sin tocar nada:
+**The CSV's `id` field is the bit number directly.** And it matches what was measured in RAM without touching anything:
 
 ```
 Mido's House Top Left/Right/Bottom L/R   chest  KOKIRI_MIDO    id 0x00-0x03
 Kokiri Forest Kokiri Sword Chest         chest  KOKIRI_FOREST  id 0x00
-OOT_KOKIRI_MIDO:   0x28   -> escena 40, chest = 0x0F   ✓
-OOT_KOKIRI_FOREST: 0x55   -> escena 85, chest = 0x01   ✓
+OOT_KOKIRI_MIDO:   0x28   -> scene 40, chest = 0x0F   ✓
+OOT_KOKIRI_FOREST: 0x55   -> scene 85, chest = 0x01   ✓
 ```
 
-`mkchecks.py` cruza los tres ficheros y genera `checks.json` con la dirección y el bit de cada ubicación. `ootmm.py checks` lee el estado y lo resuelve a nombres, cruzando con el spoiler para mostrar qué item hay en cada uno:
+`mkchecks.py` cross-references the three files and generates `checks.json` with the address and bit for each location. `ootmm.py checks` reads the state and resolves it to names, cross-referencing the spoiler to show what item is in each one:
 
 ```
-COFRES DE OoT: 5 / 305  (1.6%)
+OoT CHESTS: 5 / 305  (1.6%)
 
-  KOKIRI_MIDO  (escena 0x28)
+  KOKIRI_MIDO  (scene 0x28)
     [x] bit  1  Mido's House Top Right     ->  Minuet of Forest
     [x] bit  3  Mido's House Bottom Right  ->  Blast Mask
-  KOKIRI_FOREST  (escena 0x55)
+  KOKIRI_FOREST  (scene 0x55)
     [x] bit  0  Kokiri Forest Kokiri Sword Chest  ->  Recovery Heart
 ```
 
-### Dónde va cada tipo de check
+### Where each type of check goes
 
-`packages/generator/src/common/mark.c` (copia en `data/ref/`) tiene el switch completo:
+`packages/generator/src/common/mark.c` (copy in `data/ref/`) has the full switch:
 
 ```c
 OV_CHEST        perm[scene].chests       |= 1 << id
@@ -374,512 +375,516 @@ OV_NPC/SHOP/SCRUB/SR/FISH   BITMAP8_SET(gSharedCustomSave…, id)
 default         xflags → BITMAP8_SET(gSharedCustomSave.oot.xflags, bitPos)
 ```
 
-**`gSharedCustomSave` (con el juego en OoT): `0x8044B570`.** Se despejó de un solo dato medido: al comprar el `Kokiri Shop Item 2` (id 1) se encendió el bit 1 del byte `0x8044B88A`, que es `shops[0]`. Restando el layout de `OotCustomSave` y `XFLAGS_COUNT_OOT = 0x2FA` sale la base.
+**`gSharedCustomSave` (with the game in OoT): `0x8044B570`.** It fell out of a single measured fact: buying `Kokiri Shop Item 2` (id 1) turned on bit 1 of byte `0x8044B88A`, which is `shops[0]`. Subtracting the `OotCustomSave` layout and `XFLAGS_COUNT_OOT = 0x2FA` gives the base.
 
 ```
 oot.xflags[0x2FA]  0x8044B570      oot.scrubs[8]  0x8044B892
 oot.npc[32]        0x8044B86A      oot.sr[16]     0x8044B89A
-oot.shops[8]       0x8044B88A  ← medido
+oot.shops[8]       0x8044B88A  ← measured
 ```
 
-### Los xflags: las tres tablas de la ROM
+### The xflags: the ROM's three tables
 
-El `bitPos` de un xflag no está en el CSV, sale de tres tablas encadenadas que viven en la ROM (`xflags.c`):
+An xflag's `bitPos` is not in the CSV, it comes from three chained tables that live in the ROM (`xflags.c`):
 
 ```c
-setupIndex = tablaEscenas[sceneId] + setupId
-roomIndex  = tablaSetups[setupIndex] + roomId*12 + sliceId
-bitPos     = tablaRooms[roomIndex] + actorId     // tablaRooms es s16
+setupIndex = sceneTable[sceneId] + setupId
+roomIndex  = setupTable[setupIndex] + roomId*12 + sliceId
+bitPos     = roomTable[roomIndex] + actorId     // roomTable is s16
 ```
 
-**Cómo se llega a las tablas.** `custom.h` de v32.0 da sus VROM; como son `>= 0x08000000`, `comboDmaLookup` las manda a la *extra DMA*: un `u32` en `COMBO_META_ROM = 0x03FFF000` da la dirección física de una tabla de `DmaEntry`, y el `u32` siguiente su número de entradas. Las seis salen sin comprimir (`pend == 0`), así que `pstart` es el offset directo dentro del `.z64`:
+**How you get to the tables.** v32.0's `custom.h` gives their VROMs; since they are `>= 0x08000000`, `comboDmaLookup` sends them to the *extra DMA*: a `u32` at `COMBO_META_ROM = 0x03FFF000` gives the physical address of a `DmaEntry` table, and the next `u32` its entry count. All six come out uncompressed (`pend == 0`), so `pstart` is the direct offset inside the `.z64`:
 
-| Tabla | VROM | ROM (esta seed) | Entradas |
+| Table | VROM | ROM (this seed) | Entries |
 |---|---|---|---|
-| OoT escenas | `0x80B0F00` | `0x3D2F280` | 101 |
+| OoT scenes | `0x80B0F00` | `0x3D2F280` | 101 |
 | OoT setups | `0x80B0FD0` | `0x3D2F350` | 142 |
 | OoT rooms | `0x80B10F0` | `0x3D2F470` | 6252 |
-| MM escenas | `0x80B41D0` | `0x3D32550` | 114 |
+| MM scenes | `0x80B41D0` | `0x3D32550` | 114 |
 | MM setups | `0x80B42C0` | `0x3D32640` | 118 |
 | MM rooms | `0x80B43B0` | `0x3D32730` | 4524 |
 
-**El `id` del CSV era una clave empaquetada, no un número de bit.** Lo genera `packages/generator/scripts/xsanity.ts`, que es también quien construye las tablas:
+**The CSV's `id` was a packed key, not a bit number.** It is generated by `packages/generator/scripts/xsanity.ts`, which is also what builds the tables:
 
 ```
 key = (sliceId << 16) | ((setupId & 3) << 14) | (roomId << 8) | actorId
 ```
 
-Por eso los ids de las filas xflag tienen cinco dígitos hex y los de cofres cuatro. El `roomId` de 6 bits da sitio de sobra al truco de las grutas (`0x20 | grottoData`) que hace `comboXflagInit`.
+That is why the xflag rows' ids have five hex digits and the chests' have four. The 6-bit `roomId` leaves plenty of room for the grotto trick (`0x20 | grottoData`) that `comboXflagInit` does.
 
-**Vanilla y MQ comparten bit.** De los 2336 xflags de OoT, 149 pares colisionan en `bitPos`, y los 149 son exactamente un check vanilla contra su equivalente `MQ …`: las tablas no distinguen las dos versiones porque en una seed dada sólo existe una. Cero colisiones dentro del mismo grupo, y cero en MM (2415 de 2415 distintos). El spoiler dice cuál toca (`Master Quest Dungeons:`); esta seed es `none`. `mkchecks.py` marca esas filas con `"mq": true` y deja la decisión al consumidor.
+**Vanilla and MQ share a bit.** Of OoT's 2336 xflags, 149 pairs collide on `bitPos`, and all 149 are exactly a vanilla check against its `MQ …` equivalent: the tables do not distinguish the two versions because in a given seed only one exists. Zero collisions within the same group, and zero in MM (2415 out of 2415 distinct). The spoiler says which one applies (`Master Quest Dungeons:`); this seed is `none`. `mkchecks.py` marks those rows with `"mq": true` and leaves the decision to the consumer.
 
-**Verificado con el save.** De los 12 bits encendidos en `oot.xflags`, los 12 mapean a un check con nombre y todos caen en Kokiri Forest y la casa de Saria, que es justo donde va la partida. Ni un bit huérfano. Cruzado por dos vías independientes: el volcado de RAM y el `.fla`.
+**Verified against the save.** Of the 12 bits set in `oot.xflags`, all 12 map to a named check and all of them fall in Kokiri Forest and Saria's house, which is exactly where the save is. Not one orphan bit. Cross-checked two independent ways: the RAM dump and the `.fla`.
 
-### El custom save de MM: estaba pegado detrás del de OoT
+### MM's custom save: it was sitting right behind OoT's
 
-`MmCustomSave` va justo después de `OotCustomSave` dentro de `SharedCustomSave`. `OotCustomSave` acaba en `0x377` (`sr` acaba en `0x33A`, padding a `0x33C`, dos `OotRespawnData` de `0x1C`, `powderKegTimer` s16 en `0x374`, bitfield en `0x376`) y lleva `ALIGNED(16)`, así que **`MmCustomSave` empieza en `+0x380`**.
+`MmCustomSave` goes right after `OotCustomSave` inside `SharedCustomSave`. `OotCustomSave` ends at `0x377` (`sr` ends at `0x33A`, padding to `0x33C`, two `OotRespawnData` of `0x1C`, `powderKegTimer` s16 at `0x374`, bitfield at `0x376`) and carries `ALIGNED(16)`, so **`MmCustomSave` starts at `+0x380`**.
 
 ```
 mm.xflags[0x350]  0x8044B8F0      mm.shops[4]    0x8044BC60
 mm.npc[32]        0x8044BC40      mm.halfDays    0x8044BC64
 ```
 
-Confirmado por partida doble contra el `.fla`: el bitfield de cola de `OotCustomSave` aparece exactamente en `+0x376`, y `mm.halfDays` vale `0x3F` exactamente en `+0x6F4`, que es donde este layout lo coloca. De propina, `mm.npc` byte 12 bit 0 encendido = `Initial Song of Healing`, que es el primer check de MM de la partida.
+Confirmed twice over against the `.fla`: `OotCustomSave`'s trailing bitfield shows up exactly at `+0x376`, and `mm.halfDays` reads `0x3F` exactly at `+0x6F4`, which is where this layout puts it. As a bonus, `mm.npc` byte 12 bit 0 set = `Initial Song of Healing`, which is the save's first MM check.
 
-> Por qué falló la caza anterior: se buscaba el byte en la RAM, y `gSharedCustomSave` está en una dirección distinta según qué mitad del juego corre. Con OoT corriendo la base es `0x8044B570` y desde ahí se leen **también** los flags de MM, porque el bloque es compartido. Con MM corriendo la base es otra y sigue sin localizar.
+> Why the previous hunt failed: the byte was being searched for in RAM, and `gSharedCustomSave` sits at a different address depending on which half of the game is running. With OoT running the base is `0x8044B570` and from there you read MM's flags **too**, because the block is shared. With MM running the base is a different one and is still unlocated.
 
-**Tercera vía de lectura, sin emulador.** `save.c` guarda el bloque entero en flash: `Flash_ReadWrite(0x18000 + 0x4000 * fileIndex, &gSharedCustomSave, …)`. Los mismos offsets valen sobre un `.fla` desword-swapeado.
+**A third way to read it, without an emulator.** `save.c` stores the whole block in flash: `Flash_ReadWrite(0x18000 + 0x4000 * fileIndex, &gSharedCustomSave, …)`. The same offsets work on an unswapped `.fla`.
 
-### El layout de escenas de MM
+### MM's scene layout
 
-Sale entero de la cuenta de estructura, sin cazar nada. **Cuidado con la base de MM**: la que usa el proyecto (`0x8044BE18`) se fijó por la firma, con la convención de OoT de que `newf` está en `base+0x1C`. En `MmSave` el `newf` está en `+0x24`, así que esa base es en realidad `MmSave+0x08`. No se toca: todos los offsets de `inventory.py` son relativos a ella y están medidos en juego.
+It comes out entirely from walking the structure, with nothing hunted. **Careful with MM's base**: the one the project uses (`0x8044BE18`) was pinned by the signature, using OoT's convention that `newf` is at `base+0x1C`. In `MmSave`, `newf` is at `+0x24`, so that base is really `MmSave+0x08`. It is not being changed: every offset in `inventory.py` is relative to it and measured in game.
 
-De ahí `info = base+0x1C`, y `MmSaveInfo` se recorre solo:
+From there `info = base+0x1C`, and `MmSaveInfo` walks itself:
 
 ```
 playerData   0x00  (0x28)      inventory  0x4C  (0x88)
 itemEquips   0x28  (0x22)      perm       0xD4  <- permanentSceneFlags[120]
 ```
 
-**`permanentSceneFlags` de MM = `base+0xF0` = `0x8044BF08`** con OoT corriendo. El orden de campos **no** es el de OoT: MM tiene dos `switch`, así que `collectible` cae en `+0x10` y no en `+0x0C`.
+**MM's `permanentSceneFlags` = `base+0xF0` = `0x8044BF08`** with OoT running. The field order is **not** OoT's: MM has two `switch` fields, so `collectible` lands at `+0x10` and not at `+0x0C`.
 
 ```c
 chest 0x00   switch0 0x04   switch1 0x08   clearedRoom 0x0C
 collectible 0x10   clearedFloors 0x14   rooms 0x18
 ```
 
-**Estado de la verificación: derivado, no medido.** La tabla está entera a cero en los dos volcados, porque de MM sólo hay un check hecho (`Initial Song of Healing`) y ningún cofre abierto. Lo que sí está medido en juego son los seis offsets que produce exactamente la misma cuenta —`items 0x68`, `ammo 0x98`, `upgrades 0xB0`, `quest 0xB4`, `strayFairies 0xCC` y `skullCountSwamp 0xEB8`, este último ya **detrás** de la tabla—, y con esos seis anclados no queda holgura para colocar `perm` en otro sitio.
+**Verification status: derived, not measured.** The table is all zeros in both dumps, because MM has only one check done (`Initial Song of Healing`) and no chest opened. What *is* measured in game are the six offsets that the very same arithmetic produces —`items 0x68`, `ammo 0x98`, `upgrades 0xB0`, `quest 0xB4`, `strayFairies 0xCC` and `skullCountSwamp 0xEB8`, this last one already **behind** the table— and with those six anchored there is no slack left to put `perm` anywhere else.
 
-> **Predicción falsable, para la próxima sesión de juego.** El primer cofre que abras en Termina debe encender un bit en `0x8044BF08 + escena*0x1C`. Los de gruta (escena 0x07) van todos al u32 de `0x8044BFCC`: p. ej. `Termina Field Dodongo Grotto` → bit 0, `Deku Palace Grotto Chest` → bit 5. Recuerda que el flag no se escribe al abrir el cofre sino al salir de la escena.
+> **A falsifiable prediction, for the next play session.** The first chest you open in Termina must set a bit at `0x8044BF08 + scene*0x1C`. The grotto ones (scene 0x07) all go to the u32 at `0x8044BFCC`: e.g. `Termina Field Dodongo Grotto` → bit 0, `Deku Palace Grotto Chest` → bit 5. Remember the flag is not written when the chest is opened but when you leave the scene.
 
-### Las gold skulltulas
+### The gold skulltulas
 
-No son custom save, son un campo más de `OotSaveInfo`, así que salen de la misma cuenta de estructura:
+They are not custom save, they are one more field of `OotSaveInfo`, so they come out of the same structure arithmetic:
 
 ```c
 OV_GS   BITMAP32_SET(gOotSave.info.gsFlags, id - 8)
 #define BITMAP32_SET(m,b)  ((m)[(b) >> 5] |= (1 << ((b) & 0x1f)))
 ```
 
-**`gsFlags[6]` = `base+0xE9C` = `0x8011B46C`.** LSB primero dentro del u32, sin trampa. Los ids del CSV aquí **sí** son números de bit de verdad, a diferencia de los xflags; van en bloques de 8 por grupo de escena (el bloque 0 está reservado, de ahí el `−8`) y llegan a 179, o sea bits 0..171 de los 192 disponibles.
+**`gsFlags[6]` = `base+0xE9C` = `0x8011B46C`.** LSB first within the u32, no tricks. The CSV's ids here really **are** bit numbers, unlike the xflags; they go in blocks of 8 per scene group (block 0 is reserved, hence the `−8`) and reach 179, i.e. bits 0..171 of the 192 available.
 
-Las 144 filas son **100 vanilla + 44 Master Quest**, y los 44 MQ colisionan uno a uno con un vanilla, igual que en los xflags. Las 100 vanilla dan 100 pares `(addr, bit)` distintos.
+The 144 rows are **100 vanilla + 44 Master Quest**, and the 44 MQ ones collide one to one with a vanilla, just like in the xflags. The 100 vanilla give 100 distinct `(addr, bit)` pairs.
 
-El recorrido de la estructura **cierra por los dos lados**, que es lo que lo hace fiable sin medirlo: hacia delante `perm` acaba en `0xE64`, `fw` ocupa `0x28` → `0xE8C` (que es literalmente el nombre del campo siguiente, `unk_e8c`), `+0x10` → `0xE9C`; hacia atrás, `unk_EB4` fija el final de `gsFlags[6]` en `0xEB4 − 0x18 = 0xE9C`. Y siguiendo desde ahí se cae exactamente en `eventsMisc = 0xEF8`, que sí tiene `ASSERT_OFFSET`.
+Walking the structure **closes from both ends**, which is what makes it reliable without measuring it: forwards, `perm` ends at `0xE64`, `fw` takes `0x28` → `0xE8C` (which is literally the name of the next field, `unk_e8c`), `+0x10` → `0xE9C`; backwards, `unk_EB4` pins the end of `gsFlags[6]` at `0xEB4 − 0x18 = 0xE9C`. And carrying on from there lands exactly on `eventsMisc = 0xEF8`, which does have an `ASSERT_OFFSET`.
 
-> **Predicción falsable, y cómo se resolvió.** Se predijo: si el jugador ha matado 3 skulltulas, deben salir 3 bits; si tiene 3 *tokens* pero no ha matado ninguna, cero bits, porque en OoTMM los tokens son items que caen de cualquier ubicación. Salió **cero bits con 3 tokens en el inventario**: la segunda rama. El cruce de los 88 checks completados contra el spoiler da exactamente `3 Gold Skulltula Token`, todos procedentes de otras ubicaciones. El offset no queda confirmado, pero tampoco falsado. Sigue pendiente de la primera skulltula que se mate: la de Kokiri Forest enciende un bit en `0x8011B478` (`GS Soil` → bit 0, `GS Night Child` → bit 1), las del Deku Tree van al `0x8011B46C`.
+> **A falsifiable prediction, and how it resolved.** The prediction was: if the player has killed 3 skulltulas, 3 bits must show; if they have 3 *tokens* but have killed none, zero bits, because in OoTMM the tokens are items that drop from any location. The result was **zero bits with 3 tokens in the inventory**: the second branch. Cross-referencing the 88 completed checks against the spoiler gives exactly `3 Gold Skulltula Token`, all of them from other locations. The offset is not confirmed, but neither is it falsified. It is still waiting on the first skulltula actually killed: the one in Kokiri Forest sets a bit at `0x8011B478` (`GS Soil` → bit 0, `GS Night Child` → bit 1), the Deku Tree ones go to `0x8011B46C`.
 
-### El overlay, en vivo sobre la partida real
+### The overlay, live over the real save
 
-La sesión del 13 de agosto con el overlay corriendo en OBS dio **96 de 4.995**, y confirma con datos dos cosas que hasta ahora eran derivaciones:
+The 13 August session with the overlay running in OBS gave **96 out of 4,995**, and it confirms with data two things that until then were derivations:
 
-- **Los xflags de MM se leen con OoT corriendo.** `TERMINA_FIELD 28/277`, `GROTTOS 26/450`, `SOUTHERN_SWAMP 12/45`, `MILK_ROAD`, `CLOCK_TOWN_SOUTH`… todo en su color, mientras el juego activo es Ocarina. Eso valida el **rebase del ancla `custom`** y de paso el `+0x380` del custom save de MM.
-- La **medida de confianza** se mantuvo por encima del umbral toda la sesión, que es la comprobación continua de que las bases están donde creemos.
+- **MM's xflags are read with OoT running.** `TERMINA_FIELD 28/277`, `GROTTOS 26/450`, `SOUTHERN_SWAMP 12/45`, `MILK_ROAD`, `CLOCK_TOWN_SOUTH`… all in their colour, while the active game is Ocarina. That validates the **rebasing of the `custom` anchor** and, with it, MM's custom save `+0x380`.
+- The **confidence measure** stayed above the threshold for the whole session, which is the continuous check that the bases are where we think they are.
 
-Siguen sin confirmar, y siguen esperando el mismo gesto: `gsFlags` hasta que se mate una gold skulltula de verdad (las de Kokiri Forest seguían en la lista de pendientes), y el `perm` de MM hasta que se abra un cofre en Termina.
+Still unconfirmed, and still waiting on the same gesture: `gsFlags` until a gold skulltula is actually killed (the Kokiri Forest ones were still on the pending list), and MM's `perm` until a chest is opened in Termina.
 
-### Validación en vivo: 88 checks sobre partida real
+### Live validation: 88 checks on a real save
 
-La lectura en vivo del 13 de agosto, con la partida ya en Termina, dio **88 checks completados de 5.963**, y es la mejor validación que tiene el proyecto:
+The live read of 13 August, with the save already in Termina, gave **88 completed checks out of 5,963**, and it is the best validation the project has:
 
-- **Los 88 nombres existen los 88 en el spoiler.** Ni un huérfano, ni un nombre inventado.
-- **Los items que suman cuadran con el inventario real**: Powder Keg, Blast Mask, Hover Boots, Bombchu Bag, Cojiro, Minuet of Forest, Bolero of Fire, Zelda's Lullaby, Progressive Sword, Deku Stick Upgrade…
-- **Los xflags de MM disparan sobre progreso real** y agrupados donde el jugador ha estado: Termina Field, Southern Swamp, Milk Road, Clock Town South, la cow grotto de Termina Field. Si el mapeo estuviera mal saldrían bits sueltos por escenas donde nunca se ha entrado, que es justo lo que no pasa.
-- **`Initial Song of Healing` sale marcado**, y eso es el custom save de MM (`mm.npc` byte 12 bit 0) leído en vivo desde la base derivada `+0x380`. Coincide con lo que ya se veía en el `.fla`. El `+0x380` deja de ser sólo una cuenta de estructura.
-- **`perm` de MM sigue sin confirmar**: no hay ningún cofre de MM abierto todavía. El de OoT sí se confirma, con los cuatro de Mido's House y el Kokiri Sword Chest.
+- **All 88 names exist in the spoiler, all 88.** Not one orphan, not one invented name.
+- **The items that add up match the real inventory**: Powder Keg, Blast Mask, Hover Boots, Bombchu Bag, Cojiro, Minuet of Forest, Bolero of Fire, Zelda's Lullaby, Progressive Sword, Deku Stick Upgrade…
+- **MM's xflags fire on real progress** and grouped where the player has been: Termina Field, Southern Swamp, Milk Road, Clock Town South, Termina Field's cow grotto. If the mapping were wrong there would be stray bits in scenes never entered, which is exactly what does not happen.
+- **`Initial Song of Healing` shows as marked**, and that is MM's custom save (`mm.npc` byte 12 bit 0) read live from the derived base `+0x380`. It matches what was already visible in the `.fla`. The `+0x380` stops being just structure arithmetic.
+- **MM's `perm` is still unconfirmed**: no MM chest has been opened yet. OoT's is confirmed, with the four in Mido's House and the Kokiri Sword Chest.
 
-> Gotcha de presentación que salió de aquí: los ids de escena **se repiten entre juegos** (0x2D es `KOKIRI_SHOP` en OoT y `TERMINA_FIELD` en MM). Agrupar por `scene_id` sin el juego junta dos escenas distintas bajo la misma cabecera. `cmd_checks` ya agrupa por `(game, scene_id, scene)` y prefija `[OOT]` / `[MM]`.
+> A presentation gotcha that came out of this: scene ids **repeat across games** (0x2D is `KOKIRI_SHOP` in OoT and `TERMINA_FIELD` in MM). Grouping by `scene_id` without the game merges two different scenes under one heading. `cmd_checks` already groups by `(game, scene_id, scene)` and prefixes `[OOT]` / `[MM]`.
 
-### Estado del mapeo: 5963 de 6043
+### Mapping status: 5963 of 6043
 
-| Destino | Checks | Resueltos | Estado |
+| Destination | Checks | Resolved | Status |
 |---|---|---|---|
-| `xflags` | 4751 | 4751 | ✅ tablas de la ROM, verificado contra el save |
-| `scene` (chest + collectible) | 562 | 562 | ✅ OoT medido; MM derivado, pendiente de un cofre |
-| `gs_flags` | 144 | 144 | ✅ `gsFlags[6]`; derivado, pendiente de una skulltula |
-| `custom` (shop, scrub, sr, npc, fish) | 539 | 506 | faltan los 33 `fish` (`caughtFishFlags`) |
-| `mm_stray_fairy` | 29 | 0 | falta localizar |
-| `cow_flags` | 18 | 0 | `SAVE_EXTRA_RECORD(u32, 9)`, hay que resolver el macro |
+| `xflags` | 4751 | 4751 | ✅ ROM tables, verified against the save |
+| `scene` (chest + collectible) | 562 | 562 | ✅ OoT measured; MM derived, pending a chest |
+| `gs_flags` | 144 | 144 | ✅ `gsFlags[6]`; derived, pending a skulltula |
+| `custom` (shop, scrub, sr, npc, fish) | 539 | 506 | the 33 `fish` (`caughtFishFlags`) are missing |
+| `mm_stray_fairy` | 29 | 0 | still to be located |
+| `cow_flags` | 18 | 0 | `SAVE_EXTRA_RECORD(u32, 9)`, the macro has to be resolved |
 
-`mkchecks.py --rom <seed.z64> --spoiler <spoiler.txt>` es lo que produce esta tabla.
+`mkchecks.py --rom <seed.z64> --spoiler <spoiler.txt>` is what produces this table.
 
-### Lo que falta del sistema de checks
+### What is missing from the check system
 
-Quedan **80 checks, el 1,3%**, y los tres bloques son de los que cuestan un experimento en la partida real. No merece la pena ir a por ellos de frente: cógelos oportunistamente, con savestate, cuando pases por uno.
+**80 checks are left, 1.3%**, and the three blocks are the kind that cost an experiment in the real save. It is not worth going at them head-on: pick them up opportunistically, with a savestate, when you happen to pass one.
 
-- **Confirmar en juego** el `perm` de MM y el `gsFlags` de OoT. No es trabajo, es mirar un byte cuando toque; las predicciones concretas están arriba.
-- **`caughtFishFlags`** (33): está en `SharedCustomSave`, detrás de los dos custom saves y de los bloques de souls. Es una cuenta de estructura más, pero con bitfields por medio.
-- **`cow_flags`** (18): `SAVE_EXTRA_RECORD(u32, 9)`, hay que ver qué es ese macro.
-- **stray fairies de MM** (29).
-- **P4 y P6**, la parte multi.
-- Validar con una segunda seed. Hay tres cosas nuevas que validar: que las tablas de xflags estén en los mismos VROM (deberían: son constantes de `custom.h`, no dependen de la seed), que el `+0x380` del custom save de MM aguante, y el `+0xF0` de `perm`.
+- **Confirm in game** MM's `perm` and OoT's `gsFlags`. It is not work, it is looking at a byte when the moment comes; the concrete predictions are above.
+- **`caughtFishFlags`** (33): it is in `SharedCustomSave`, behind both custom saves and the soul blocks. It is one more piece of structure arithmetic, but with bitfields in the way.
+- **`cow_flags`** (18): `SAVE_EXTRA_RECORD(u32, 9)`, we need to see what that macro is.
+- **MM's stray fairies** (29).
+- **P4 and P6**, the multiworld side.
+- Validate with a second seed. There are three new things to validate: that the xflag tables are at the same VROMs (they should be: they are `custom.h` constants and do not depend on the seed), that MM's custom save `+0x380` holds, and `perm`'s `+0xF0`.
 
-## El overlay
+## The overlay
 
-`python ootmm.py overlay` levanta tres cosas: un hilo que sondea la memoria por `tracker.lua`, un servidor HTTP en `127.0.0.1:8013`, y una ventana propia en modo app (`--app=` de Edge o Chrome, sin barras de navegador).
+`python ootmm.py overlay` starts three things: a thread that polls memory through `tracker.lua`, an HTTP server on `127.0.0.1:8013`, and a window of its own in app mode (Edge or Chrome's `--app=`, with no browser chrome).
 
-Para OBS hay dos caminos y los dos salen de ahí: capturar esa ventana, o apuntar un **Browser Source** al mismo URL, que es lo que conviene porque permite fondo transparente y escalado limpio.
+For OBS there are two routes and both come from there: capture that window, or point a **Browser Source** at the same URL, which is the one to prefer because it allows a transparent background and clean scaling.
 
-### ROMs comprimidas, y por qué `checks.json` es de una versión concreta
+### Compressed ROMs, and why `checks.json` belongs to one specific version
 
-Salió al arrancar el overlay con otra seed, una de mayo: `ValueError: la tabla 0x80b0f00 esta comprimida`. Dos suposiciones mías que no valen en general, las dos en el mismo sitio:
+It came up when starting the overlay with another seed, one from May: `ValueError: table 0x80b0f00 is compressed`. Two assumptions of mine that do not hold in general, both in the same place:
 
-- **OoTMM puede generar la seed comprimida**, y entonces las entradas de la DMA llevan Yaz0.
-- **Las seis tablas de xflags pueden compartir una única entrada** de la DMA, en vez de tener una cada una. Hay que quedarse con el trozo que empieza en el VROM pedido, no con el fichero entero.
+- **OoTMM can generate the seed compressed**, and then the DMA entries carry Yaz0.
+- **The six xflag tables can share a single DMA entry**, instead of having one each. You have to keep the slice that starts at the requested VROM, not the whole file.
 
-Las dos viven ahora en `rom.py`, que usan `mkchecks.py` y `mkicons.py`.
+Both now live in `rom.py`, used by `mkchecks.py` and `mkicons.py`.
 
-**Pero arreglarlo destapó lo de debajo**: con esa ROM las tablas se leen y salen **3.414 de 4.751 xflags con bit imposible**, negativos incluso. Las VROM de `custom.h` son constantes **de v32.0**, así que con una seed de otra versión apuntan a datos que no son.
+**But fixing it uncovered what was underneath**: with that ROM the tables are read and out come **3,414 of 4,751 xflags with an impossible bit**, negative ones included. The `custom.h` VROMs are constants **of v32.0**, so with a seed from another version they point at data that is not the data.
 
-Y lo grave: `mkchecks` escribía el `checks.json` igualmente. Como esto lo dispara el overlay solo al arrancar, machacaba un fichero bueno con uno inservible sin que nadie se enterara. Ahora hay una barrera: si más del 2% de los xflags da un bit imposible, **aborta sin tocar nada** y dice por qué, y el overlay avisa de que los checks que va a usar son de otra ROM.
+And the serious part: `mkchecks` wrote `checks.json` anyway. Since the overlay triggers this on its own at startup, it was clobbering a good file with a useless one without anyone noticing. Now there is a barrier: if more than 2% of the xflags give an impossible bit, it **aborts without touching anything** and says why, and the overlay warns that the checks it is about to use come from a different ROM.
 
-> Los **iconos sí valen entre versiones**: `icon_item_static` está en el mismo índice de la dmadata de OoT en todas, así que `mkicons.py` funciona con cualquier seed. Lo que está atado a v32.0 son las tablas de xflags.
+> The **icons do work across versions**: `icon_item_static` is at the same index of OoT's dmadata in all of them, so `mkicons.py` works with any seed. What is tied to v32.0 are the xflag tables.
 
-### No hay que decirle nada: la ROM se detecta sola
+### Nothing has to be told to it: the ROM is detected on its own
 
-`discover.py`. Antes había que pasar `--rom` y `--spoiler` a mano y acordarse de regenerar `checks.json` e `icons.json` al cambiar de seed. Ahora sale de lo que el emulador ya sabe.
+`discover.py`. Before, you had to pass `--rom` and `--spoiler` by hand and remember to regenerate `checks.json` and `icons.json` when changing seed. Now it falls out of what the emulator already knows.
 
-**La clave está en el nombre de la carpeta de partidas.** Project64 guarda en `Save/OOT+MM COMBO-<hash>/`, y ese hash es el **MD5 de la ROM con las palabras de 4 bytes invertidas**, que es el orden en que el emulador la guarda por dentro. Medido, no supuesto: el MD5 del fichero tal cual da `5DFC2740…` y no casa con nada; el de la versión swap4 da `7EE74762…`, que es exactamente la carpeta de esta seed.
+**The key is the save folder's name.** Project64 saves into `Save/OOT+MM COMBO-<hash>/`, and that hash is the **MD5 of the ROM with its 4-byte words swapped**, which is the order the emulator stores it in internally. Measured, not assumed: the MD5 of the file as it is gives `5DFC2740…` and matches nothing; the one of the swap4 version gives `7EE74762…`, which is exactly this seed's folder.
 
-De ahí sale una cadena que no depende de adivinar:
+From there comes a chain that does not depend on guessing:
 
-1. la carpeta de save escrita más recientemente dice **qué seed estás jugando**
-2. su hash identifica la ROM **sin ambigüedad**
-3. se busca esa ROM entre las recientes de `Project64.cfg` (`Recent Rom N`)
-4. el spoiler se coge de al lado de la ROM: para `OoTMM-<id>.z64` se prefiere `OoTMM-Spoiler-<id>.txt`
+1. the most recently written save folder says **which seed you are playing**
+2. its hash identifies the ROM **unambiguously**
+3. that ROM is looked up among `Project64.cfg`'s recent ones (`Recent Rom N`)
+4. the spoiler is taken from next to the ROM: for `OoTMM-<id>.z64` it prefers `OoTMM-Spoiler-<id>.txt`
 
-Si nada casa se cae a `Recent Rom 0`, que es la última que se abrió. `checks.json` e `icons.json` guardan de qué ROM salieron, así que se regeneran solos cuando cambias de seed y no se tocan cuando ya están al día. El hash se cachea por `(ruta, mtime, tamaño)` para no releer 64 MB en cada arranque.
+If nothing matches it falls back to `Recent Rom 0`, which is the last one opened. `checks.json` and `icons.json` record which ROM they came from, so they regenerate themselves when you change seed and are left alone when they are already current. The hash is cached by `(path, mtime, size)` so as not to re-read 64 MB on every start.
 
-Se puede saltar todo con `--rom` / `--spoiler` explícitos, o desactivarlo con `--no-auto`.
+All of it can be bypassed with explicit `--rom` / `--spoiler`, or turned off with `--no-auto`.
 
-> Se miró antes si el Lua podía dar la ruta de la ROM directamente, que era lo primero que uno intenta. La API de P64-EM que usa `tracker.lua` sólo expone `memory`, `socket`, `binary` y `print`, y no hay documentación; la config del emulador resultó ser un camino mejor y, sobre todo, verificable sin tener el emulador abierto.
+> It was looked into first whether Lua could give the ROM's path directly, which is the first thing anyone tries. The P64-EM API that `tracker.lua` uses only exposes `memory`, `socket`, `binary` and `print`, and there is no documentation; the emulator's config turned out to be a better route and, above all, one verifiable without having the emulator open.
 
-### Un URL por panel
+### One URL per panel
 
-`/` es la **vista de director**, con todo junto, para el monitor del que juega. Cada panel se sirve además suelto en `/p/<nombre>`, sin cromo y ocupando la fuente entera, para añadirlo como su propio Browser Source y colocarlo donde se quiera. Así el streamer enseña sólo lo que le interesa.
+`/` is the **director view**, with everything together, for the player's own monitor. Each panel is also served on its own at `/p/<name>`, with no chrome and filling the whole source, so it can be added as its own Browser Source and placed wherever you like. That way the streamer shows only what they care about.
 
 | Panel | URL |
 |---|---|
-| Resumen y cifras | `/p/summary` |
-| Progreso por región | `/p/regions` |
-| Rejilla de items | `/p/items` |
-| Feed de actividad | `/p/activity` |
-| Pendientes de la zona | `/p/remaining` |
+| Summary and counts | `/p/summary` |
+| Progress by region | `/p/regions` |
+| Item grid | `/p/items` |
+| Activity feed | `/p/activity` |
+| Remaining in the area | `/p/remaining` |
 
-> Los nombres viejos en español (`/p/resumen`, `/p/regiones`, `/p/actividad`,
-> `/p/pendientes`) **siguen respondiendo**, con un 301 al nuevo y conservando
-> el query. Es lo que apunta cualquier Browser Source montado antes del cambio
-> de idioma, y renombrar un URL rompe una escena de OBS en silencio: la fuente
-> se queda en blanco y no dice por qué.
+> The old Spanish names (`/p/resumen`, `/p/regiones`, `/p/actividad`,
+> `/p/pendientes`) **still respond**, with a 301 to the new one and keeping the
+> query string. They are what any Browser Source set up before the language
+> change points at, and renaming a URL breaks an OBS scene silently: the source
+> goes blank and does not say why.
 
-Es una sola página: el servidor sirve el mismo `overlay.html` para `/` y para `/p/*`, y la página mira su propia ruta, borra del DOM los bloques que no son suyos y se queda con uno. La vista de director lleva un desplegable que genera los URLs de los paneles ya con las opciones puestas, y un botón de copiar por cada uno.
+It is a single page: the server serves the same `overlay.html` for `/` and for `/p/*`, and the page looks at its own path, removes the blocks that are not its own from the DOM and keeps one. The director view carries a dropdown that generates the panels' URLs with the options already applied, and a copy button for each.
 
-### Filtrar el relleno
+### Filtering out the junk
 
-`?junk=hide`, o el selector **Mostrar** de la vista de director. Deja el progreso por región y los pendientes con **sólo lo que importa**: de 4.995 checks a **612**, y la lista de pendientes de una zona baja de 73 a 2.
+`?junk=hide`, or the **Show** selector in the director view. It leaves progress-by-region and the remaining list with **only what matters**: from 4,995 checks down to **612**, and an area's remaining list drops from 73 to 2.
 
-Dos cosas que había que resolver, las dos anotadas en su día en el `BACKLOG.md`:
+Two things had to be solved, both written down at the time in `BACKLOG.md`:
 
-- **El filtro va por el item que hay dentro, no por el tipo de ubicación.** Con el pool barajado, una mata de hierba puede llevar las Hover Boots; en esta partida `Kokiri Forest Rupee Child 2` daba un Swamp Skulltula Token.
-- **Y por tanto necesita el spoiler**, lo que chocaba con `?spoiler=off`. Se resuelve **clasificando en el servidor**: la página recibe un `junk: true/false` por check y filtra con eso, sin ver nunca el nombre del item. Sin spoiler el filtro se desactiva solo en vez de dejarlo todo a cero.
+- **The filter goes by the item inside, not by the location's type.** With the pool shuffled, a patch of grass can hold the Hover Boots; in this save `Kokiri Forest Rupee Child 2` held a Swamp Skulltula Token.
+- **And therefore it needs the spoiler**, which clashed with `?spoiler=off`. It is solved by **classifying on the server**: the page receives a `junk: true/false` per check and filters on that, without ever seeing the item's name. With no spoiler the filter disables itself instead of leaving everything at zero.
 
-La regla es por nombre, no por frecuencia, y eso fue una decisión medida: `Gold Skulltula Token` sale **100 veces** y no es relleno, ni las Stray Fairy. Contrastando la lista con el spoiler aparecieron además dos trampas:
+The rule goes by name, not by frequency, and that was a measured decision: `Gold Skulltula Token` appears **100 times** and is not junk, nor are the Stray Fairies. Cross-referencing the list with the spoiler turned up two more traps:
 
-- Las **rupias de puzle** van entre paréntesis —`Silver Rupee (Shadow Temple - Scythe)`— y **no son relleno**: pueden hacer falta para progresar. El patrón de rupias tuvo que pasar a ser exacto y sin sufijo.
-- La **munición puede llevar el juego detrás** (`5 Arrows (OoT)`), y se colaba como importante.
+- **Puzzle rupees** come in parentheses —`Silver Rupee (Shadow Temple - Scythe)`— and **are not junk**: they can be needed to progress. The rupee pattern had to become exact and suffix-free.
+- **Ammo can carry the game behind it** (`5 Arrows (OoT)`), and was slipping through as important.
 
-### Los selectores aplican a lo que estás mirando
+### The selectors apply to what you are looking at
 
-Los tres selectores de la vista de director —Mostrar, Spoiler, Fondo— sólo
-llamaban a `renderUrls()`. Componían los enlaces de los paneles con la opción
-puesta, pero **la vista de al lado seguía igual**: cambiabas a «sólo lo
-importante» y los números no se movían. Eso no se lee como «este control es
-para otra cosa», se lee como un filtro roto, y con razón.
+The director view's three selectors —Show, Spoiler, Background— only called
+`renderUrls()`. They composed the panels' links with the option applied, but
+**the view right next to them stayed the same**: you switched to "only what
+matters" and the numbers did not move. That does not read as "this control is
+for something else", it reads as a broken filter, and rightly so.
 
-Ahora aplican en el sitio. Tres cambios pequeños y uno que no era obvio:
+Now they apply in place. Three small changes and one that was not obvious:
 
-- Las opciones eran `const` leídas de la URL una vez. Son **estado**, no
-  constantes: la URL sólo dice cómo se arranca.
-- **Pintar va aparte de sondear.** `tick()` hacía las dos cosas, así que la
-  única forma de repintar era esperar al siguiente sondeo. Partido en `tick()`
-  (busca y guarda en `lastState`) y `render(s)`, que es lo que llama
-  `applyOpts()` para repintar al instante.
-- La opción elegida se escribe en la barra de direcciones con
-  `history.replaceState`, así que **recargar no la pierde** y la URL de arriba
-  sirve igual que las de los paneles.
+- The options were `const`s read from the URL once. They are **state**, not
+  constants: the URL only says how it starts up.
+- **Painting is separate from polling.** `tick()` did both, so the only way to
+  repaint was to wait for the next poll. Split into `tick()` (fetches and
+  stores into `lastState`) and `render(s)`, which is what `applyOpts()` calls
+  to repaint instantly.
+- The chosen option is written into the address bar with
+  `history.replaceState`, so **reloading does not lose it** and the URL at the
+  top works just like the panels'.
 
-> **El que no era obvio: aplicar el fondo en vivo escondía los propios
-> controles.** Existe `body.chroma-none .director { display: none }` —
-> deliberado, porque `/?chroma=green` se usa para capturar la ventana entera y
-> ahí los controles estorban. Pero al aplicarse en vivo, elegir
-> «transparente» hacía desaparecer el selector con el que acabas de elegirlo, y
-> no había vuelta atrás salvo editando la URL a mano. Se distingue por origen:
-> si el fondo viene de la URL el director se esconde como siempre; si lo
-> acabas de tocar tú, el `body` lleva `opts-live` y se queda.
+> **The one that was not obvious: applying the background live hid the controls
+> themselves.** There is a `body.chroma-none .director { display: none }` —
+> deliberate, because `/?chroma=green` is used to capture the whole window and
+> the controls get in the way there. But applied live, choosing "transparent"
+> made the very selector you had just used disappear, with no way back short of
+> editing the URL by hand. It is told apart by origin: if the background comes
+> from the URL the director hides as always; if you have just touched it, the
+> `body` carries `opts-live` and it stays.
 
-De paso, la misma clase de trampa un escalón más abajo: **sin spoiler cargado
-el filtro de relleno no puede funcionar** (`can_filter` del servidor) y se
-desactivaba solo, en silencio. Ahora la opción sale deshabilitada y dice por
-qué, «sólo lo importante (hace falta el spoiler)» — y hay un botón para
-cargarlo sin reiniciar, que es la sección siguiente.
+While at it, the same class of trap one step down: **with no spoiler loaded the
+junk filter cannot work** (the server's `can_filter`) and it disabled itself,
+silently. Now the option comes out disabled and says why, "only what matters
+(needs the spoiler)" — and there is a button to load it without restarting,
+which is the next section.
 
-Verificado conduciendo Edge por CDP contra el overlay real servido sobre
-`ram-en-oot.bin` —el `Tracker` de verdad, `checks.json` de verdad y el spoiler
-de verdad, con un `link` que lee del volcado en vez de `tracker.lua`—:
+Verified by driving Edge over CDP against the real overlay served on top of
+`ram-en-oot.bin` —the real `Tracker`, the real `checks.json` and the real
+spoiler, with a `link` that reads from the dump instead of `tracker.lua`—:
 
-| | sin filtrar | «sólo lo importante» |
+| | unfiltered | "only what matters" |
 |---|---|---|
-| resumen | 18 / 4.995 | 4 / 612 |
-| regiones con datos | 4 | 3 |
-| pendientes de la zona | 25 (tope) | 2 |
+| summary | 18 / 4,995 | 4 / 612 |
+| regions with data | 4 | 3 |
+| remaining in the area | 25 (capped) | 2 |
 
-`spoiler=full` hace aparecer el `→ item` en los pendientes y `off` lo quita,
-las tres opciones sobreviven a una recarga, `/?chroma=green` sigue escondiendo
-el director, los paneles sueltos no cambian y la consola sale limpia.
+`spoiler=full` makes the `→ item` appear in the remaining list and `off`
+removes it, the three options survive a reload, `/?chroma=green` still hides
+the director, the standalone panels do not change and the console comes out
+clean.
 
-### Cargar el spoiler desde la página
+### Loading the spoiler from the page
 
-El spoiler sólo se cargaba al arrancar, con `--spoiler` o detectado al lado de
-la ROM. Si no aparecía, te quedabas sin filtro de relleno y sin saber qué hay
-en lo pendiente **hasta reiniciar el overlay**, que en mitad de un directo no
-es opción. Ahora hay un botón en la vista de director: `POST /spoiler` con el
-contenido del fichero, y `Tracker.set_spoiler` recalcula en caliente lo único
-que depende de él —la clasificación de relleno y los totales por región—.
+The spoiler was only loaded at startup, with `--spoiler` or detected next to
+the ROM. If it did not turn up, you were left with no junk filter and no way to
+know what is in the remaining checks **until you restarted the overlay**, which
+mid-stream is not an option. Now there is a button in the director view:
+`POST /spoiler` with the file's contents, and `Tracker.set_spoiler` recomputes
+on the fly the only things that depend on it —the junk classification and the
+per-region totals—.
 
-**Se sube el contenido, no la ruta.** Un endpoint que abriera la ruta que le
-pasen sería una lectura de fichero arbitraria, y el servidor puede acabar
-escuchando fuera de `127.0.0.1` con `--http-host`.
+**The contents are uploaded, not the path.** An endpoint that opened whatever
+path it was handed would be an arbitrary file read, and the server can end up
+listening outside `127.0.0.1` with `--http-host`.
 
-Cargar el spoiler equivocado es peor que no cargar ninguno: los nombres casan
-a medias y el filtro dice que sobran cosas que no sobran. Tres números lo
-vigilan, y el tercero salió de probarlo:
+Loading the wrong spoiler is worse than loading none: the names half-match and
+the filter claims things are junk that are not. Three numbers guard against it,
+and the third one came out of testing it:
 
-| Comprobación | Qué corta |
+| Check | What it catches |
 |---|---|
-| `Version:` de la cabecera contra la de `checks.json` | otra versión de OoTMM |
-| cuántas de sus ubicaciones existen en `checks.json` | no es un spoiler, o es de otra versión |
-| **cobertura**: cuántos de nuestros checks nombra | otra seed, o un spoiler que no da para clasificar |
+| the header's `Version:` against `checks.json`'s | a different OoTMM version |
+| how many of its locations exist in `checks.json` | not a spoiler, or from another version |
+| **coverage**: how many of our checks it names | another seed, or a spoiler that is not enough to classify with |
 
-> **La cobertura no estaba prevista y es la que importa.** El spoiler de otra
-> seed v32.0 traía 980 ubicaciones y **las 980 casaban**, así que pasaba las
-> dos primeras barreras tan campante. Pero cubría 934 de 4.995 checks, y de lo
-> que no nombra `is_junk` no puede decir nada: el filtro se quedaba sin
-> clasificar y «sólo lo importante» seguía enseñando los 4.995 — un filtro que
-> no filtra, que es exactamente el fallo que se acababa de arreglar arriba.
-> No se rechaza, porque una seed con otros ajustes tiene de verdad menos
-> ubicaciones, pero se avisa. El bueno cubre 4.939 de 4.995.
+> **Coverage was not planned for and it is the one that matters.** The spoiler
+> from another v32.0 seed brought 980 locations and **all 980 matched**, so it
+> sailed through the first two barriers. But it covered 934 of 4,995 checks,
+> and about what it does not name `is_junk` can say nothing: the filter was
+> left unclassified and "only what matters" went on showing all 4,995 — a
+> filter that does not filter, which is exactly the bug that had just been
+> fixed above. It is not rejected, because a seed with different settings
+> genuinely has fewer locations, but it warns. The right one covers 4,939 of
+> 4,995.
 
-Medido con el overlay servido sobre el volcado, subiendo cuatro ficheros por
-CDP (`DOM.setFileInputFiles`):
+Measured with the overlay served over the dump, uploading four files over CDP
+(`DOM.setFileInputFiles`):
 
-| Fichero | Resultado |
+| File | Result |
 |---|---|
-| spoiler v30.1 | rechazado, «es de v30.1 y checks.json de v32.0» |
-| `README.md` | rechazado, «ahí no hay ubicaciones» |
-| vacío | rechazado |
-| otra seed v32.0 | aceptado **con aviso**: cubre 934 / 4.995 |
-| el de la seed | aceptado: 5.018 ubicaciones, cubre 4.939 / 4.995 |
+| v30.1 spoiler | rejected, "it is from v30.1 and checks.json is from v32.0" |
+| `README.md` | rejected, "there are no locations in there" |
+| empty | rejected |
+| another v32.0 seed | accepted **with a warning**: covers 934 / 4,995 |
+| the seed's own | accepted: 5,018 locations, covers 4,939 / 4,995 |
 
-Y detrás, lo que se buscaba: con el bueno cargado, «sólo lo importante» pasa
-de 18 / 4.995 a **4 / 612** y los pendientes de la zona de 25 a 2, sin
-reiniciar nada. Un rechazo no toca el estado: la opción sigue deshabilitada.
+And behind it, what this was for: with the right one loaded, "only what
+matters" goes from 18 / 4,995 to **4 / 612** and the area's remaining from 25
+to 2, without restarting anything. A rejection does not touch the state: the
+option stays disabled.
 
-**Se aplica solo, porque cargarlo y que no cambie nada es la misma trampa.**
-El spoiler es justo lo que hace posible filtrar el relleno y decir qué hay en
-cada pendiente, así que al cargarlo se encienden las dos cosas —`junk=hide` y
-`spoiler=full`— y los selectores se mueven a la vista, que es el acuse de
-recibo. La casilla **aplicarlo a los paneles** lo desactiva para quien
-prefiera cargarlo sin que se le mueva nada.
+**It applies itself, because loading it and having nothing change is the same
+trap.** The spoiler is precisely what makes it possible to filter junk and to
+say what is in each remaining check, so loading it turns both on —`junk=hide`
+and `spoiler=full`— and the selectors move to match, which is the
+acknowledgement. The **apply to the panels** checkbox turns that off for anyone
+who would rather load it without anything moving.
 
-Medido, con la partida recién empezada del volcado:
+Measured, with the dump's freshly started save:
 
-| | antes | al cargar |
+| | before | on loading |
 |---|---|---|
-| resumen | 18 / 4.995 | 4 / 612 |
-| pendientes en Kokiri Forest | 25 (tope) | 2 |
-| primer pendiente | `GS Soil`, sin item | `Grass Adult 07 → Goron Lullaby` |
-| regiones con datos | 4 | 3 |
+| summary | 18 / 4,995 | 4 / 612 |
+| remaining in Kokiri Forest | 25 (capped) | 2 |
+| first remaining | `GS Soil`, with no item | `Grass Adult 07 → Goron Lullaby` |
+| regions with data | 4 | 3 |
 
-Con la casilla sin marcar, los cuatro números se quedan como estaban y sólo
-cambia el mensaje.
+With the box unchecked, the four numbers stay as they were and only the message
+changes.
 
-> **Y un cuidado que salió de aquí.** `spoiler=full` entra también en los
-> enlaces de los paneles, y esos van a OBS: enseñar lo pendiente es opción
-> legítima en el monitor del que juega, pero en una fuente de captura lo ve el
-> público. La vista de director avisa cuando el nivel es `full`.
+> **And a caution that came out of this.** `spoiler=full` also goes into the
+> panels' links, and those go to OBS: showing what is left is a legitimate
+> option on the player's own monitor, but in a capture source the audience sees
+> it. The director view warns when the level is `full`.
 
-### Un juego por overlay
+### One game per overlay
 
-`?game=oot` o `?game=mm` deja el overlay con un solo juego, para montar el tracker de Ocarina y el de Majora por separado. No es sólo un filtro visual de la rejilla: afecta a todo.
+`?game=oot` or `?game=mm` leaves the overlay with a single game, so the Ocarina tracker and the Majora one can be set up separately. It is not just a visual filter on the grid: it affects everything.
 
-- El **porcentaje del resumen** pasa a ser el de ese juego, no el de los dos juntos — hay totales por juego en el estado (`totals`, `done_by_game`).
-- La **chapa** identifica el overlay en vez del juego activo, y el medidor toma el color de ese juego.
-- El **feed** se filtra por juego (cada entrada lleva el suyo).
-- Los **pendientes** son los de la zona donde estás, así que un overlay filtrado por el otro juego dice «ahora mismo estás en …» en vez de quedarse mudo.
-- Con filtro se quita la cabecera repetida del juego dentro del panel, porque el título ya lo dice.
+- The **summary's percentage** becomes that game's, not both together — there are per-game totals in the state (`totals`, `done_by_game`).
+- The **badge** identifies the overlay instead of the active game, and the meter takes that game's colour.
+- The **feed** is filtered by game (each entry carries its own).
+- The **remaining** are those of the area you are in, so an overlay filtered to the other game says "you are currently in …" instead of going mute.
+- With a filter on, the repeated game heading inside the panel is dropped, because the title already says it.
 
-La vista de director genera también estos URLs: `/p/items?game=oot`, `/p/items?game=mm`, y lo mismo para regiones y resumen.
+The director view generates these URLs too: `/p/items?game=oot`, `/p/items?game=mm`, and the same for regions and summary.
 
-### Los iconos salen de la ROM
+### The icons come out of the ROM
 
-`mkicons.py --rom <seed.z64>` produce `icons.png` y `icons.json`. Nada viene de fuera: los iconos son los del juego.
+`mkicons.py --rom <seed.z64>` produces `icons.png` and `icons.json`. Nothing comes from outside: the icons are the game's own.
 
-- **`icon_item_static`** es el fichero 8 de la `dmadata` de OoT (en `0x7430`, según `combo/dma.h`), sin comprimir, con iconos de 32×32 RGBA32. **El índice del icono es el id del item**, así que `items.h` los nombra todos y no hay que contar posiciones a ojo.
-- El tramo válido se **midió**, no se supuso: se marca válido el icono con las cuatro esquinas transparentes y entre 80 y 1000 píxeles opacos, y sale un tramo limpio `0x00..0x58` seguido de ruido.
-- Medallones y piedras (`0x66..0x79`) no están ahí sino en **`icon_item_24_static`** (fichero 9), a 24×24, donde el índice es `id − 0x66`. Se centran en una celda de 32.
+- **`icon_item_static`** is file 8 of OoT's `dmadata` (at `0x7430`, per `combo/dma.h`), uncompressed, with 32×32 RGBA32 icons. **The icon's index is the item's id**, so `items.h` names them all and there is no counting positions by eye.
+- The valid range was **measured**, not assumed: an icon is marked valid if its four corners are transparent and it has between 80 and 1000 opaque pixels, and out comes a clean run `0x00..0x58` followed by noise.
+- Medallions and stones (`0x66..0x79`) are not there but in **`icon_item_24_static`** (file 9), at 24×24, where the index is `id − 0x66`. They are centred in a 32-pixel cell.
 
-Para los huecos `item:` no hace falta tabla: el valor leído **ya es el id**, o sea el índice de la hoja. Sí hace falta para lo que es booleano o nivel, y para saber qué icono enseñar **apagado**: un hueco vacío vale `0xFF` y no dice qué item le tocaba, así que sin eso todo lo que aún no tienes saldría como texto, que es lo contrario de lo que sirve una rejilla.
+For the `item:` slots no table is needed: the value read **is already the id**, i.e. the index into the sheet. One is needed for what is boolean or a level, and for knowing which icon to show **greyed out**: an empty slot reads `0xFF` and does not say which item belonged there, so without that everything you do not have yet would come out as text, which is the opposite of what a grid is for.
 
-### Los iconos de MM: un archivo CmpDma
+### MM's icons: a CmpDma archive
 
-Aquí me equivoqué a lo grande y conviene dejar escrito el porqué, que es más útil que el resultado.
+I got this badly wrong and it is worth writing down why, which is more useful than the result.
 
-Di por hecho que no estaban porque busqué **imágenes** y lo que hay son **datos comprimidos**. Los ficheros 8 y 9 de MM (`icon_item_static`, `icon_item_24_static`) sí están marcados como ausentes en la dmadata, y eso lo tomé como prueba. Pero MM no los carga por la dmadata: usa `CmpDma_LoadFile`, y el arte vive en un **archivo CmpDma**, una tabla de offsets seguida de los ficheros, **cada uno comprimido por separado con Yaz0**. En crudo eso no se parece a un icono en ningún formato, así que ningún barrido de píxeles —RGBA32, RGBA16, CI4, CI8, ventana deslizante— podía encontrarlo.
+I assumed they were not there because I searched for **images** and what is there is **compressed data**. MM's files 8 and 9 (`icon_item_static`, `icon_item_24_static`) really are marked as absent in the dmadata, and I took that as proof. But MM does not load them through the dmadata: it uses `CmpDma_LoadFile`, and the art lives in a **CmpDma archive**, a table of offsets followed by the files, **each one compressed separately with Yaz0**. Raw, that does not look like an icon in any format, so no pixel sweep —RGBA32, RGBA16, CI4, CI8, sliding window— could have found it.
 
-Lo que lo resolvió no fue seguir escaneando, sino **mirar la documentación**: el decomp de MM (`zeldaret/mm`) nombra el asset (`icon_item_static_yar`), el mecanismo (`sys_cmpdma.c`) y el formato de dibujo (`G_IM_FMT_RGBA, G_IM_SIZ_32b`).
+What solved it was not more scanning, but **reading the documentation**: MM's decomp (`zeldaret/mm`) names the asset (`icon_item_static_yar`), the mechanism (`sys_cmpdma.c`) and the drawing format (`G_IM_FMT_RGBA, G_IM_SIZ_32b`).
 
-El formato, de `src/code/sys_cmpdma.c`:
+The format, from `src/code/sys_cmpdma.c`:
 
 ```
-u32 dataStart      tamaño de la tabla; hay dataStart/4 - 1 ficheros
-u32 offs[...]      inicio de cada fichero, relativo a seg + dataStart
-                   (el fichero 0 empieza en 0; su fin es offs[1])
+u32 dataStart      the table's size; there are dataStart/4 - 1 files
+u32 offs[...]      each file's start, relative to seg + dataStart
+                   (file 0 starts at 0; its end is offs[1])
 ```
 
-Y `CmpDma_LoadFile(segmento, id, ...)` usa **el id del item como índice**, así que la entrada `i` es el icono de `ITEM_MM_* == i`. Verificado: la 0x32 es la Deku Mask, y de la 0x32 a la 0x49 salen las 24 máscaras en orden.
+And `CmpDma_LoadFile(segment, id, ...)` uses **the item's id as the index**, so entry `i` is the icon for `ITEM_MM_* == i`. Verified: 0x32 is the Deku Mask, and from 0x32 to 0x49 come the 24 masks in order.
 
-El archivo no está en un sitio fijo, así que se localiza **por su forma**: se parte de cada bloque `Yaz0` de la ROM y se prueba si `dataStart` bytes antes hay una cabecera que apunte justo ahí. De los siete archivos CmpDma que aparecen se coge el que más entradas tiene de 4096 bytes exactos, que es el de los iconos: **98**.
+The archive is not in a fixed place, so it is located **by its shape**: start from every `Yaz0` block in the ROM and test whether `dataStart` bytes earlier there is a header pointing exactly there. Of the seven CmpDma archives that turn up, take the one with the most entries of exactly 4096 bytes, which is the icons': **98**.
 
-Está en la ROM combinada igual que en la base, así que sale de la seed de cada uno.
+It is in the combined ROM just as it is in the base game, so it comes out of each person's own seed.
 
-**La lección**: «no lo encuentro» no es «no está», y cuando algo tiene que existir por fuerza —el juego lo dibuja— lo que falla es el método de búsqueda. Antes de la quinta pasada de heurísticas, leer la documentación del formato.
+**The lesson**: "I cannot find it" is not "it is not there", and when something must exist —the game draws it— what is failing is the search method. Before the fifth pass of heuristics, read the format's documentation.
 
-**Dónde deja de valer el índice.** El archivo va empaquetado y **las doce canciones no tienen entrada**: el juego las dibuja todas con una misma textura de nota que vive en `code`, no en el archivo (`gItemIconSongNoteTex`). Como faltan, todo lo que viene después queda desplazado — la entrada `0x61` es el cuaderno de los Bombers, no la Sonata. Por eso el mapa se corta en `0x60` (`ITEM_REMAINS_TWINMOLD`), que es el último que cuadra. Se descubrió al intentar usar la nota: salían manchas de color en vez de notas.
+**Where the index stops holding.** The archive is packed and **the twelve songs have no entry**: the game draws them all with a single note texture that lives in `code`, not in the archive (`gItemIconSongNoteTex`). Since they are missing, everything after them is shifted — entry `0x61` is the Bombers' Notebook, not the Sonata. That is why the map stops at `0x60` (`ITEM_REMAINS_TWINMOLD`), which is the last one that lines up. It was discovered when trying to use the note: colour smears came out instead of notes.
 
-Con eso, de la ROM salen las 24 máscaras, los cuatro restos de jefe y el resto de items de Termina. Las notas de canción siguen dibujadas, con los colores del juego, y con la forma de la del menú: **corchea simple** —cabeza inclinada abajo a la izquierda, plica a la derecha y banderola—, no la corchea doble con barra que había al principio.
+With that, out of the ROM come the 24 masks, the four boss remains and the rest of Termina's items. Song notes are still drawn, with the game's colours, and in the shape of the menu's: a **single eighth note** —head tilted down to the left, stem to the right and a flag—, not the double beamed one that was there at first.
 
-### Lo que hay en cada panel, y por qué
+### What is in each panel, and why
 
-- **Equipo de MM.** MM no tiene fuerza ni escama: esos campos están en la estructura porque `MmUpgrades` copia la de OoT, pero el juego no los usa. En su sitio va la progresión de **espada** (Kokiri, Razor, Gilded) y **escudo** (Héroe, Espejo), que salen de los nibbles de `MmItemEquips` en `base+0x64`. Verificado en los dos volcados: `0x0010` en ambos, o sea escudo 1 y ninguna espada, que es como empieza una seed.
-- **Los huecos vacíos de MM ya salen en gris.** El orden de huecos sale del decomp (`z64item.h`) y coincide con los ids de item: el hueco 0 es la ocarina, el 1 el arco, el 8 los palos. Los seis últimos son botellas y todos enseñan la vacía.
-- **Fuera las mejoras de palos y nueces**, en los dos juegos: ocupaban celda y no dicen gran cosa.
-- **La Nana de Zelda lleva una trifuerza** en vez de una nota, que la distingue de las demás de un vistazo.
-- **Pluma para la canción del vuelo**: la flecha hacia arriba no se leía.
-- **El progreso de MM va reordenado.** Sale en orden de bit, que mezcla restos y canciones y deja el cuaderno y la media de los Goron sueltos al final. Puestos los cuatro restos, el cuaderno y la media en la primera fila, las doce canciones ocupan **dos filas enteras** y en el orden canónico del juego, el de sus ids: Sonata, Nana Goron, Bossa Nova, Elegía, Juramento, Saria · Tiempo, Curación, Epona, Vuelo, Tormentas, Sol.
+- **MM's equipment.** MM has no strength and no scale: those fields are in the structure because `MmUpgrades` copies OoT's, but the game does not use them. In their place goes the **sword** (Kokiri, Razor, Gilded) and **shield** (Hero's, Mirror) progression, which come from the nibbles of `MmItemEquips` at `base+0x64`. Verified on both dumps: `0x0010` in each, i.e. shield 1 and no sword, which is how a seed starts.
+- **MM's empty slots now come out greyed.** The slot order comes from the decomp (`z64item.h`) and matches the item ids: slot 0 is the ocarina, 1 the bow, 8 the sticks. The last six are bottles and all show the empty one.
+- **Stick and nut upgrades removed**, in both games: they took up a cell and do not say much.
+- **Zelda's Lullaby carries a triforce** instead of a note, which tells it apart from the rest at a glance.
+- **A feather for the Song of Soaring**: the up arrow did not read.
+- **MM's progress is reordered.** It comes out in bit order, which mixes remains and songs and leaves the notebook and the Goron's half loose at the end. With the four remains, the notebook and the half placed in the first row, the twelve songs take up **two full rows** and in the game's canonical order, that of their ids: Sonata, Goron Lullaby, Bossa Nova, Elegy, Oath, Saria · Time, Healing, Epona, Soaring, Storms, Sun.
 
-De paso quedó escrito un descompresor **Yaz0** en 30 líneas, que hizo falta porque la mitad de MM viene comprimida.
+Along the way a **Yaz0** decompressor got written in 30 lines, needed because half of MM comes compressed.
 
-### Lo que la ROM no trae, se dibuja
+### What the ROM does not carry gets drawn
 
-Las canciones no son items y no tienen icono en ninguna parte de la ROM, así que se dibujan como SVG en un lienzo de 24×24, escalando con la celda.
+The songs are not items and have no icon anywhere in the ROM, so they are drawn as SVG on a 24×24 canvas, scaling with the cell.
 
-**Las seis canciones de teletransporte llevan su color, y el color es el dato**: verde bosque, rojo fuego, azul agua, naranja espíritu, morado sombras, amarillo luz. Son los del juego, no elegidos por gusto. Las otras seis el juego las pinta en blanco, así que ahí lo que distingue es el símbolo: rayo para las tormentas, herradura para Epona, hoja para Saria, sol, reloj de arena para el tiempo. En MM se añaden corazón (curación), flecha arriba (vuelo), onda (New Wave), cuaderno y una calavera para los restos de cada jefe, esta con el color del jefe.
+**The six warp songs carry their colour, and the colour is the data**: forest green, fire red, water blue, spirit orange, shadow purple, light yellow. They are the game's, not chosen by taste. The other six the game paints white, so there what distinguishes them is the symbol: a bolt for storms, a horseshoe for Epona, a leaf for Saria, a sun, an hourglass for time. In MM there are also a heart (healing), an up arrow (soaring), a wave (New Wave), a notebook and a skull for each boss's remains, this last one in the boss's colour.
 
-> **Las máscaras de MM sí están en la ROM, y se extraen.** Lo di por imposible tras varios barridos y me equivoqué: el usuario insistió con el argumento correcto —el juego las dibuja en su menú, luego el arte está ahí— y tenía razón. Ver la sección de abajo. Las siluetas dibujadas siguen en el código como respaldo, por si un día el archivo no se encuentra.
+> **MM's masks are in the ROM after all, and they are extracted.** I called it impossible after several sweeps and I was wrong: the user pushed back with the correct argument —the game draws them in its menu, therefore the art is there— and was right. See the section below. The drawn silhouettes are still in the code as a fallback, in case one day the archive is not found.
 
-### Iniciales que se distinguen
+### Initials that can be told apart
 
-Con etiquetas de dos letras chocaban: `RG` para «Restos de Goht» y «Restos de Gyorg», cuatro `SS` en las canciones de MM, tres `GM` entre las máscaras.
+With two-letter labels they clashed: `RG` for "Remains of Goht" and "Remains of Gyorg", four `SS` among MM's songs, three `GM` among the masks.
 
-La regla no es alargar la última palabra —en las máscaras siempre es «Mask», y alargarla da `KafMas` / `KamMas`, largo e ilegible—, sino **quitar lo que comparten todas las que chocan** y desambiguar con lo que queda: `Kaf`, `Kam`, `Gib`, `Gar`, `Gia`. Tope de cuatro caracteres, y el tamaño de letra baja con la longitud para que no se salga de la celda.
+The rule is not to extend the last word —in the masks it is always "Mask", and extending it gives `KafMas` / `KamMas`, long and unreadable— but to **strip what all the clashing ones share** and disambiguate with what is left: `Kaf`, `Kam`, `Gib`, `Gar`, `Gia`. A cap of four characters, and the font size drops with length so it does not spill out of the cell.
 
-### Imágenes puestas a mano
+### Hand-placed images
 
-Carpeta `icons/`, con su `README.md`. Lo que dejes ahí manda sobre el icono de la ROM, y está pensado para tapar lo que la ROM no tiene — las máscaras propias de MM. **No se descarga nada**: las imágenes las pone el usuario.
+The `icons/` folder, with its own `README.md`. Whatever you drop there overrides the ROM's icon, and it is meant for covering what the ROM does not have — MM's own masks. **Nothing is downloaded**: the user supplies the images.
 
-El nombre del fichero se compara normalizado, así que valen tanto el nombre que enseña el overlay (`deku-mask.png`) como el de `items.h` (`mask-deku.png`), y `icons/mm/` sólo aplica a Majora mientras que `icons/` vale para los dos.
+The file name is matched normalised, so both the name the overlay shows (`deku-mask.png`) and `items.h`'s (`mask-deku.png`) work, and `icons/mm/` only applies to Majora while `icons/` works for both.
 
-Dos detalles que salieron al probarlo, los dos con el mismo tipo de causa —la ruta y el nombre no son lo mismo escritos que en memoria:
+Two details that came up while testing it, both with the same kind of cause — a path and a name are not the same written down as in memory:
 
-- **El apóstrofe se quita, no separa.** `Garo's Mask` normalizaba a `garo-s-mask`, así que el fichero `garos-mask.png` —que es como lo escribiría cualquiera— no casaba.
-- **La URL hay que descodificarla.** Un fichero con espacios llega como `%20` y no casaba con lo que el escaneo había guardado.
+- **The apostrophe is dropped, it does not split.** `Garo's Mask` normalised to `garo-s-mask`, so the file `garos-mask.png` —which is how anyone would write it— did not match.
+- **The URL has to be decoded.** A file with spaces arrives as `%20` and did not match what the scan had stored.
 
-El servidor sólo sirve ficheros que estaban al escanear la carpeta, comparando la ruta exacta contra esa lista, así que no se puede pedir nada de fuera por URL: comprobado que `/usericon/../overlay.py` da 404.
+The server only serves files that were present when the folder was scanned, comparing the exact path against that list, so nothing outside can be requested by URL: verified that `/usericon/../overlay.py` gives a 404.
 
-### La rejilla tiene la forma del menú del juego
+### The grid has the shape of the game's menu
 
-No hizo falta buscar un layout por ahí: **ya está en los datos que leemos**.
+No layout had to be found anywhere: **it is already in the data we read**.
 
-| Rejilla | Columnas | De dónde sale |
+| Grid | Columns | Where it comes from |
 |---|---|---|
-| Items | 6 | `items[24]` y la pantalla del juego es de 6 columnas: el array **es** la rejilla, hueco por hueco |
-| Máscaras (MM) | 6 | MM guarda 48 huecos: los 24 primeros son items y los 24 siguientes máscaras, otra página de 6×4 |
-| Equipo | 3 | los nibbles de `OotEquipment` son espadas, escudos, túnicas y botas, tres de cada |
-| Progreso | 6 | con 6 columnas los 24 bits de OoT caen solos en sus filas: medallones, canciones de teletransporte, canciones de ocarina, y piedras con lo demás |
+| Items | 6 | `items[24]` and the game's screen is 6 columns wide: the array **is** the grid, slot by slot |
+| Masks (MM) | 6 | MM stores 48 slots: the first 24 are items and the next 24 masks, another 6×4 page |
+| Equipment | 3 | `OotEquipment`'s nibbles are swords, shields, tunics and boots, three of each |
+| Progress | 6 | with 6 columns OoT's 24 bits fall into their rows on their own: medallions, warp songs, ocarina songs, and stones with the rest |
 
-La consecuencia es que **las filas significan algo**: una fila de espadas, una de escudos, una de medallones. Y los huecos vacíos se quedan puestos, porque son parte del dibujo del menú y no ruido — un hueco sin nombrar y vacío se pinta como casilla libre, sin etiqueta.
+The consequence is that **the rows mean something**: a row of swords, a row of shields, a row of medallions. And the empty slots stay in place, because they are part of the menu's shape and not noise — an unnamed empty slot is painted as a free cell, with no label.
 
-### La cifra de la esquina
+### The number in the corner
 
-`ammo[]` está indexado por hueco de inventario igual que `items[]`, así que el número cae en la misma casilla en la que el juego lo pinta: 10 palos deku, 20 nueces, 40 flechas. En las mejoras la cifra es el nivel. En un booleano no se pone nada — un «1» encima del icono sólo estorba.
+`ammo[]` is indexed by inventory slot just like `items[]`, so the number falls in the same cell the game paints it in: 10 deku sticks, 20 nuts, 40 arrows. On upgrades the number is the level. On a boolean nothing is shown — a "1" on top of the icon only gets in the way.
 
-> **El bug que destapó pedirlo.** En un hueco de inventario el vacío es `0xFF`, y el **0 es un id de item legítimo**: Deku Stick en OoT, Ocarina of Time en MM. La comprobación de «lo tengo» trataba el 0 como vacío, que es lo natural en todos los demás campos, así que **el primer hueco de las dos rejillas salía apagado para siempre**. Se veía como una casilla gris más entre veinticuatro, y sólo apareció al cruzar el conteo de munición con los datos crudos.
+> **The bug that asking for it uncovered.** In an inventory slot, empty is `0xFF`, and **0 is a legitimate item id**: Deku Stick in OoT, Ocarina of Time in MM. The "I have it" check treated 0 as empty, which is the natural thing in every other field, so **the first slot of both grids came out greyed forever**. It looked like one more grey cell among twenty-four, and it only surfaced when cross-referencing the ammo counts against the raw data.
 
-### El puente de nombres a iconos de MM
+### The bridge from names to MM icons
 
-Emparejar por nombre exacto se queda corto: los dos juegos ordenan las palabras distinto (`MASK_KEATON` contra `KEATON_MASK`) y meten enlaces (`OCARINA_OF_TIME` contra `OCARINA_TIME`). Comparando el **conjunto de palabras** sin las de enlace, el puente pasa de 59 a 74 ids: entran las máscaras Keaton, Goron, Zora y Truth, la Ocarina del Tiempo, el Lente y el Escudo del Héroe.
+Matching by exact name falls short: the two games order the words differently (`MASK_KEATON` against `KEATON_MASK`) and insert linking words (`OCARINA_OF_TIME` against `OCARINA_TIME`). Comparing the **set of words** without the linking ones, the bridge goes from 59 to 74 ids: in come the Keaton, Goron, Zora and Truth masks, the Ocarina of Time, the Lens and the Hero's Shield.
 
-Lo que **no** se hace es parecido difuso. Emparejaría `BOMBS_10` con `BOMBCHU_10` y `LENS_OF_TRUTH` con `MASK_OF_TRUTH`, que son items distintos; lo que no cae por la regla de palabras va en una tabla de alias explícita.
+What is **not** done is fuzzy matching. It would pair `BOMBS_10` with `BOMBCHU_10` and `LENS_OF_TRUTH` with `MASK_OF_TRUTH`, which are different items; anything that does not fall out of the word rule goes in an explicit alias table.
 
-### La rejilla no scrollea
+### The grid does not scroll
 
-Una barra de scroll en una fuente de OBS es un defecto visible, y además mueve la composición según avanza la partida. Pero tampoco vale sólo con que quepa: **los grupos se colocan uno al lado de otro cuando hay ancho**. Apilados en una sola columna el alto manda, las celdas quedan diminutas y media fuente se queda vacía — que fue justo lo que se vio al montarlo en OBS de verdad. Por debajo de 420 px de ancho se vuelven a apilar, porque en una columna estrecha ponerlos en paralelo da un churro alto y fino.
+A scrollbar in an OBS source is a visible defect, and it also shifts the composition as the run goes on. But it is not enough for it merely to fit either: **the groups sit side by side when there is width**. Stacked in a single column the height dominates, the cells end up tiny and half the source is left empty — which is exactly what showed up when it was set up in OBS for real. Below 420 px of width they stack again, because in a narrow column putting them in parallel gives a tall thin mess.
 
-Con eso, la celda **se busca lo más grande posible** en tres escalones del más fiel al que siempre entra:
+With that, the cell **is made as large as possible** across three steps, from the most faithful to the one that always fits:
 
-1. layout del juego, con las columnas fijas, probando de 52 px hacia abajo
-2. lo mismo en compacto: las cabeceras, que en una columna estrecha pesan más que las celdas, se reducen
-3. flujo libre: se pierde la forma del menú pero entra en una columna estrecha
+1. the game's layout, with fixed columns, trying from 52 px downwards
+2. the same but compact: the headers, which in a narrow column weigh more than the cells, are shrunk
+3. free flow: the menu's shape is lost but it fits in a narrow column
 
-Con columnas fijas también puede desbordar **a lo ancho**, no sólo a lo alto, así que la comprobación mira las dos. El icono escala con la celda vía `background-size`, sin tamaños fijos.
+With fixed columns it can also overflow **horizontally**, not just vertically, so the check looks at both. The icon scales with the cell via `background-size`, with no fixed sizes.
 
-Medido: un panel dedicado de 400×600 cabe exacto (`scrollHeight 440 = clientHeight 440`). La **vista completa** con los dos juegos no cabe ni en el tercer escalón y scrollea; es aceptable porque es la superficie de control, no una fuente de captura — para capturar están los paneles sueltos.
+Measured: a dedicated 400×600 panel fits exactly (`scrollHeight 440 = clientHeight 440`). The **full view** with both games does not fit even at the third step and scrolls; that is acceptable because it is the control surface, not a capture source — for capturing there are the standalone panels.
 
-### Niveles de spoiler
+### Spoiler levels
 
-**Lo que ya has cogido no es un spoiler** —quien mira te ha visto cogerlo—, pero lo que hay en una ubicación sin abrir sí lo es. Por eso el nivel por defecto enseña lo conseguido y calla lo pendiente.
+**What you have already picked up is not a spoiler** —whoever is watching saw you pick it up— but what is in an unopened location is. That is why the default level shows what has been obtained and stays quiet about what is pending.
 
-| `?spoiler=` | Feed | Pendientes |
+| `?spoiler=` | Feed | Remaining |
 |---|---|---|
-| `off` | sólo el nombre del check | sólo el nombre |
-| `item` *(por defecto)* | item conseguido | sólo el nombre |
-| `full` | item conseguido | item que hay dentro |
+| `off` | only the check's name | only the name |
+| `item` *(default)* | item obtained | only the name |
+| `full` | item obtained | the item inside |
 
-| `?chroma=` | Para qué |
+| `?chroma=` | What for |
 |---|---|
-| `none` | fondo transparente, para Browser Source |
-| `green` | croma verde `#00b140`, para captura de ventana |
+| `none` | transparent background, for a Browser Source |
+| `green` | green chroma `#00b140`, for window capture |
 
-**Transparente quiere decir transparente.** Durante un tiempo `chroma=none` dejaba el `body` transparente pero las tarjetas al **82% de opacidad**, puesto por legibilidad: el resultado no era transparente, era un panel oscuro. Ahora la tarjeta no pinta nada, el texto se apoya en una sombra para leerse sobre cualquier escena, y queda un velo mínimo detrás de las rejillas para que los iconos apagados no se pierdan sobre fondos claros.
+**Transparent means transparent.** For a while `chroma=none` left the `body` transparent but the cards at **82% opacity**, put there for legibility: the result was not transparent, it was a dark panel. Now the card paints nothing, the text leans on a shadow to stay readable over any scene, and a minimal veil is left behind the grids so the greyed-out icons do not get lost on light backgrounds.
 
-Medido de dos formas: los estilos calculados dan `rgba(0, 0, 0, 0)` en `body` y en `.card`, y una captura con alfa sale **94% transparente**, 5% translúcido y 1% opaco.
+Measured two ways: the computed styles give `rgba(0, 0, 0, 0)` on `body` and on `.card`, and a capture with alpha comes out **94% transparent**, 5% translucent and 1% opaque.
 
-> **Sólo se ve transparente en OBS.** En una ventana de navegador —incluida la que abre `ootmm.py overlay`— siempre habrá un fondo oscuro detrás: el lienzo del navegador, que con `color-scheme: dark` es negro. La transparencia sólo la compone el Browser Source. Esto despistó también al comprobarlo: las capturas headless salían oscuras aunque la página fuese transparente.
+> **It only looks transparent in OBS.** In a browser window —including the one `ootmm.py overlay` opens— there will always be a dark background behind it: the browser's canvas, which with `color-scheme: dark` is black. The transparency is only composited by the Browser Source. This threw me off while checking it too: the headless captures came out dark even though the page was transparent.
 
-### (resuelto) La escena que leemos ahora es donde estás
+### (solved) The scene we read now is where you are
 
-**Hecho el 14 ago 2026.** El panel de pendientes salía del **save context**, y
-eso no es donde está el jugador:
+**Done 14 Aug 2026.** The remaining panel came out of the **save context**, and
+that is not where the player is:
 
 ```
 OoT:  info.sceneId              ASSERT_OFFSET(OotSave, info.sceneId, 0x66)
 MM:   playerData.savedSceneNum  info+0x26 -> base+0x42
 ```
 
-**El defecto era de los dos juegos, no sólo de MM.** Se midió contra los dos
-volcados, y el de OoT —que el backlog daba por «mejor»— también fallaba:
+**The defect was in both games, not just MM.** It was measured against both
+dumps, and OoT's —which the backlog had down as "better"— was failing too:
 
-| Volcado | PlayState | Save context | |
+| Dump | PlayState | Save context | |
 |---|---|---|---|
-| OoT | `0x2D` KOKIRI_SHOP | `0x55` KOKIRI_FOREST | una escena por detrás |
-| MM | `0x6F` CLOCK_TOWN_SOUTH | `0x08` | ni siquiera la anterior |
+| OoT | `0x2D` KOKIRI_SHOP | `0x55` KOKIRI_FOREST | one scene behind |
+| MM | `0x6F` CLOCK_TOWN_SOUTH | `0x08` | not even the previous one |
 
-O sea, el jugador estaba dentro de la tienda Kokiri y el overlay le enseñaba
-lo pendiente del bosque.
+That is, the player was inside the Kokiri shop and the overlay was showing them
+what was left in the forest.
 
-**Dónde está el dato vivo.** OoTMM guarda `PlayState* gPlay` (`combo.h:186`),
-así que la estructura es la del decomp y sus offsets salen de las cabeceras
-del propio repo, sin cazar nada:
+**Where the live value is.** OoTMM keeps `PlayState* gPlay` (`combo.h:186`),
+so the structure is the decomp's and its offsets come from the repo's own
+headers, with nothing hunted:
 
 ```
 GameState (0xA4, combo/game_state.h)
@@ -891,763 +896,777 @@ PlayState (combo/{oot,mm}/play.h)
   roomCtx.curRoom.num s8:  OoT +0x11CBC   MM +0x186E0
 ```
 
-> **La trampa: `running` está en `+0x9B`, no en `+0x98`.** `tha` acaba en
-> `0x84` y `unk_84` mide `0x17`, que lo deja en dirección impar. Con el offset
-> redondeado el barrido **no encuentra absolutamente nada**, y no hay ningún
-> otro síntoma que lo delate: parece que el PlayState no está.
+> **The trap: `running` is at `+0x9B`, not `+0x98`.** `tha` ends at `0x84` and
+> `unk_84` is `0x17` long, which leaves it at an odd address. With the rounded
+> offset the sweep finds **absolutely nothing**, and there is no other symptom
+> to give it away: it looks as though the PlayState is not there.
 
-**No hizo falta localizar `gPlay`.** El game state se reserva una vez por
-arranque y cae siempre en el mismo sitio, que resulta ser el que llevan usando
-las herramientas de práctica de los dos juegos desde siempre:
+**`gPlay` did not have to be located.** The game state is allocated once per
+boot and always lands in the same place, which turns out to be the one the
+practice tools for both games have been using forever:
 
 ```
 OoT  0x801C84A0      MM  0x803E6B20
 ```
 
-Los dos volcados los confirman, y con una prueba de propina que vale como
-firma: **`main` apunta dentro del payload de OoTMM** —`0x80430A90` en OoT,
-`0x80750488` en MM, contra `PAYLOAD_RAM` `0x80400000` y `0x80720000` de
-`combo/defs.h`—, o sea que es el `Play_Main` parcheado. No es una dirección
-cualquiera que se le parezca: es la de esta build.
+Both dumps confirm them, with a bonus test that works as a signature:
+**`main` points inside OoTMM's payload** —`0x80430A90` in OoT, `0x80750488` in
+MM, against `PAYLOAD_RAM` `0x80400000` and `0x80720000` from `combo/defs.h`—,
+i.e. it is the patched `Play_Main`. It is not just any address that happens to
+look right: it is this build's.
 
-**El embudo del barrido de respaldo**, por si la dirección conocida deja de
-valer. Ocho filtros que no cuestan nada, y sobre los dos volcados dejan
-**exactamente un candidato** cada uno:
+**The fallback sweep's funnel**, in case the known address stops holding. Eight
+filters that cost nothing, and over the two dumps they leave **exactly one
+candidate** each:
 
-| Filtro | OoT | MM |
+| Filter | OoT | MM |
 |---|---|---|
-| tres punteros a RDRAM | 10232 | 11058 |
-| y distintos entre sí | 5511 | 6179 |
-| `nextGameStateInit` y `Size` a cero | 148 | 132 |
+| three pointers into RDRAM | 10232 | 11058 |
+| and distinct from each other | 5511 | 6179 |
+| `nextGameStateInit` and `Size` zero | 148 | 132 |
 | `running == 1` | 4 | 3 |
 | `frameCount` < 2²⁸ | 2 | 3 |
-| `sceneId` plausible | 1 | 2 |
-| `sceneSegment` es puntero | 1 | 1 |
-| `curRoom.num` entre −1 y 30 | **1** | **1** |
+| plausible `sceneId` | 1 | 2 |
+| `sceneSegment` is a pointer | 1 | 1 |
+| `curRoom.num` between −1 and 30 | **1** | **1** |
 
-El de «distintos entre sí» es el que quita los buffers viejos llenos de un
-mismo puntero repetido, que pasan todo lo demás sin despeinarse.
+The "distinct from each other" one is what removes the stale buffers full of a
+single repeated pointer, which sail through everything else.
 
-**El barrido está con cuenta atrás, y esto no es un detalle.** Lee los 8 MB
-de RDRAM, y sin freno se dispararía en cada sondeo mientras estés en el title
-screen o cambiando de escena — que es exactamente el problema que ya tuvo
-`locate_saves`. `PLAY_RESCAN_SECONDS` lo limita a uno cada diez segundos. En
-la práctica corre **cero veces**: la dirección conocida acierta a la primera y
-el sondeo cuesta 12 lecturas, 0,02 MB.
+**The sweep is on a countdown, and that is not a detail.** It reads the 8 MB of
+RDRAM, and unchecked it would fire on every poll while you are on the title
+screen or changing scene — which is exactly the problem `locate_saves` already
+had. `PLAY_RESCAN_SECONDS` limits it to one every ten seconds. In practice it
+runs **zero times**: the known address hits first try and the poll costs 12
+reads, 0.02 MB.
 
-Si no hay PlayState —title screen, arranque— se cae al save context de antes,
-y el estado lleva `live: false` para que se sepa cuál de los dos está en uso.
+If there is no PlayState —title screen, boot— it falls back to the old save
+context, and the state carries `live: false` so it is known which of the two is
+in use.
 
-### La distancia al custom save es de la versión, no del proyecto
+### The distance to the custom save belongs to the version, not to the project
 
-**Hecho el 14 ago 2026**, del volcado de la seed experimental `dev-542a121`.
-Síntoma: la progresión por región y la actividad vacías, y lo pendiente sin
-marcarse al cogerlo, mientras el panel de pendientes iba bien.
+**Done 14 Aug 2026**, from the dump of the experimental seed `dev-542a121`.
+Symptom: per-region progress and activity empty, and pending checks not being
+marked when picked up, while the remaining panel worked fine.
 
-La causa, medida: **en la dev todo el bloque se ha movido**.
+The cause, measured: **in the dev build the whole block has moved**.
 
-| | buffer de MM | `gSharedCustomSave` | distancia |
+| | MM's buffer | `gSharedCustomSave` | distance |
 |---|---|---|---|
 | v32.0 | `0x8044BE18` | `0x8044B570` | `0x8A8` |
 | dev-542a121 | `0x8044CF78` | `0x8044C6A0` | **`0x8D8`** |
 
-Y con MM corriendo, medido después sobre `ram-dev-mm.bin`:
+And with MM running, measured afterwards on `ram-dev-mm.bin`:
 
-| | buffer de OoT | `gSharedCustomSave` | distancia |
+| | OoT's buffer | `gSharedCustomSave` | distance |
 |---|---|---|---|
 | v32.0 | `0x8076C4F0` | `0x8076BC50` | `0x8A0` |
 | dev-542a121 | `0x8076D400` | `0x8076CB30` | **`0x8D0`** |
 
-Los dos lados crecieron **exactamente `0x30`**, que es la predicción que salía
-de que el bloque engordara por la cola, y cierra el asunto: con la constante
-vieja ese volcado daba confianza **0.167** y 4 checks de basura; con `0x8D0`,
-**1.000** y los 18 reales.
+Both sides grew by **exactly `0x30`**, which is the prediction that followed
+from the block getting fatter at the tail, and it settles the matter: with the
+old constant that dump gave confidence **0.167** and 4 garbage checks; with
+`0x8D0`, **1.000** and the 18 real ones.
 
-La base de MM subió `0x1160` —que `locate_saves` absorbe sola, porque va por
-firma— pero la distancia al custom save creció `0x30`, y esa **era una
-constante**. Con ella el ancla caía en `0x8044C6D0`, `0x30` por delante:
-confianza **0.077**, por debajo del umbral, así que el ancla `custom` entera se
-descartaba y con ella **4.751 xflags y 506 bitmaps**. Exactamente el síntoma.
+MM's base moved up by `0x1160` —which `locate_saves` absorbs on its own,
+because it goes by signature— but the distance to the custom save grew by
+`0x30`, and that **was a constant**. With it the anchor landed at
+`0x8044C6D0`, `0x30` too early: confidence **0.077**, below the threshold, so
+the whole `custom` anchor was discarded and with it **4,751 xflags and 506
+bitmaps**. Exactly the symptom.
 
-> Lo que hay entre medias es el save del otro juego, así que la distancia mide
-> el tamaño de una estructura del generador. No hay razón para que no cambie:
-> lo raro es que aguantara.
+> What sits in between is the other game's save, so the distance measures the
+> size of a generator structure. There is no reason for it not to change: the
+> odd part is that it held for as long as it did.
 
-Ahora se **mide**: si las distancias conocidas no validan, se barre una
-ventana de `0x800`–`0x1000` hacia atrás desde el buffer del juego inactivo. Una
-sola lectura por juego cubre la ventana entera y los candidatos se puntúan en
-local —leer cada uno por el enlace sería un megabyte por sondeo—, y el
-resultado se cachea como distancia, así que el barrido corre una vez por
-sesión. Con las seeds de v32.0 no corre nunca: la constante acierta.
+Now it is **measured**: if the known distances do not validate, a window of
+`0x800`–`0x1000` backwards from the inactive game's buffer is swept. A single
+read per game covers the whole window and the candidates are scored locally
+—reading each one over the link would be a megabyte per poll— and the result is
+cached as a distance, so the sweep runs once per session. With v32.0 seeds it
+never runs: the constant is right.
 
-**Tres cosas hicieron falta para que eligiera bien, y las tres fallaron primero.**
+**Three things were needed for it to choose correctly, and all three failed first.**
 
-1. **`bits > 0`, no `bits >= 0`.** Una dirección que cae en ceros da confianza
-   1.0 por vacuidad. Con `mejor_bits` empezando en −1, un candidato con **cero
-   bits** validaba, ganaba, y el barrido no llegaba a correr nunca. Es la misma
-   trampa que ya está documentada más arriba, mordiendo por tercera vez.
-2. **Confianza primero, bits para desempatar.** Ordenando por número de bits,
-   ganó `0x8044C754` —14 bits con confianza 0.929— frente a la buena, 7 bits
-   con 1.000. El overlay pasó a reportar progreso en **Stone Tower y Spirit
-   Temple en una partida que no había salido de Link's House**. La confianza es
-   la que dice «esto es lo que creo que es»; los bits sólo desempatan entre
-   direcciones igual de creíbles.
-3. **Alineación a 16.** `gSharedCustomSave` es un global con `ALIGNED(16)`, y
-   las tres bases medidas lo cumplen (`…B570`, `…BC50`, `…C6A0`). Barriendo de
-   4 en 4 ganaba `0x8044C6B4`, que **también daba confianza 1.0 con los mismos
-   7 bits** — pero mapeados a Lair Gohma y Zora River en vez de Link's House y
-   Kokiri Forest. Con pocos bits encendidos la confianza sola no basta;
-   alinear quita tres cuartas partes de los candidatos y deja la buena primera,
-   1.000 contra 0.857 de la siguiente.
+1. **`bits > 0`, not `bits >= 0`.** An address that lands in zeros gives
+   confidence 1.0 vacuously. With `best_bits` starting at −1, a candidate with
+   **zero bits** validated, won, and the sweep never got to run. It is the same
+   trap already documented further up, biting for the third time.
+2. **Confidence first, bits as the tie-breaker.** Sorting by bit count,
+   `0x8044C754` won —14 bits at confidence 0.929— over the right one, 7 bits at
+   1.000. The overlay went on to report progress in **Stone Tower and Spirit
+   Temple in a save that had not left Link's House**. Confidence is what says
+   "this is what I think it is"; the bits only break ties between equally
+   credible addresses.
+3. **Alignment to 16.** `gSharedCustomSave` is a global with `ALIGNED(16)`, and
+   the three measured bases satisfy it (`…B570`, `…BC50`, `…C6A0`). Sweeping in
+   steps of 4, `0x8044C6B4` won, which **also gave confidence 1.0 with the same
+   7 bits** — but mapped to Lair Gohma and Zora River instead of Link's House
+   and Kokiri Forest. With few bits set, confidence alone is not enough;
+   aligning removes three quarters of the candidates and leaves the right one
+   first, 1.000 against 0.857 for the next.
 
-**Dos fallos más, que aparecieron al cruzar a Majora con la seed de la dev.**
+**Two more bugs, which turned up when crossing to Majora with the dev seed.**
 
-> **Antes, una falsa alarma que conviene no repetir.** Al ver
-> `MOUNTAIN_VILLAGE_WINTER 6/25` en una partida recién llegada a Termina lo di
-> por basura, razonando con la progresión de MM vanilla: esa zona está pasado
-> Snowhead. **Era correcto.** El jugador había cogido el item
-> `Owl Statue (Mountain Village)` en la hierba de Kokiri Forest, se
-> teletransportó, activó la estatua y rompió cinco bolas de nieve — y eso son
-> exactamente los seis checks. En un randomizer con los búhos en el pool no hay
-> zona tardía. **Los datos coherentes no son sospechosos por ser inesperados**;
-> lo que hay que mirar es la escena viva y el item que da cada check, que aquí
-> lo decían todo.
+> **First, a false alarm worth not repeating.** On seeing
+> `MOUNTAIN_VILLAGE_WINTER 6/25` in a save that had only just reached Termina I
+> wrote it off as garbage, reasoning from vanilla MM progression: that area is
+> past Snowhead. **It was correct.** The player had picked up the item
+> `Owl Statue (Mountain Village)` in Kokiri Forest's grass, warped there,
+> activated the statue and broke five snowballs — and that is exactly the six
+> checks. In a randomizer with the owls in the pool there is no late area.
+> **Coherent data is not suspicious for being unexpected**; what to look at is
+> the live scene and the item each check gives, which here said everything.
 >
-> Los dos fallos de abajo son reales y salieron de mirar eso a fondo, pero el
-> síntoma que los destapó no era un síntoma.
+> The two bugs below are real and came out of looking at that closely, but the
+> symptom that uncovered them was not a symptom.
 
-- **Las constantes no pueden ganar por ser suficientemente buenas.** Aceptar el
-  primer candidato que pasara el umbral significaba que, en una versión que
-  mueve la estructura, una dirección desviada podía valer —sus pocos bits
-  siguen cayendo en *algún* check conocido— y **la búsqueda que habría
-  encontrado la buena no llegaba a correr**. Ahora se mide siempre, y la
-  constante sólo ordena por dónde empezar a mirar. En v32.0 el barrido devuelve
-  exactamente `0x8A8` y `0x8A0`, así que las valida en vez de suponerlas.
-- **La distancia se cachea por el juego INACTIVO, que es del que cuelga.** La
-  medida mientras MM estaba parado no dice nada cuando MM es el que corre: su
-  buffer se ha ido a otro sitio. Reutilizarla al cruzar ponía el ancla en una
-  dirección sin ningún sentido. Y el barrido sólo mira el lado del juego
-  inactivo, porque una dirección colgando del que corre sólo puede ganar por
-  casualidad.
+- **Constants cannot win by being good enough.** Accepting the first candidate
+  that passed the threshold meant that, on a version that moves the structure, a
+  skewed address could pass —its few bits still land on *some* known check— and
+  **the search that would have found the right one never got to run**. Now it
+  is always measured, and the constant only orders where to start looking. On
+  v32.0 the sweep returns exactly `0x8A8` and `0x8A0`, so it validates them
+  instead of assuming them.
+- **The distance is cached per INACTIVE game, which is what it hangs off.** The
+  one measured while MM was idle says nothing when MM is the one running: its
+  buffer has moved elsewhere. Reusing it on crossing put the anchor at an
+  address with no meaning at all. And the sweep only looks at the inactive
+  game's side, because an address hanging off the running one can only win by
+  coincidence.
 
-Cruzar de juego además rearma la cuenta atrás del barrido: es un motivo
-legítimo para volver a mirar, y sin eso el overlay leería el ancla equivocada
-durante diez segundos justo después del cambio.
+Crossing between games also rearms the sweep's countdown: it is a legitimate
+reason to look again, and without it the overlay would read the wrong anchor
+for ten seconds right after the switch.
 
-**Y el agujero de fondo, que era el de verdad.** Todo esto se rompió en
-silencio, y eso es más grave que romperse. La segunda señal de la medida de
-confianza —«había bits y ahora no hay»— **necesita haber visto bits antes en la
-sesión** (`_xflag_peak > 8`), así que arrancando el overlay con la base ya mal
-nunca llegaba a armarse: el overlay enseñaba una partida vacía, tranquila y
-marcada como fiable. Ahora hay una segunda entrada a la misma alarma:
+**And the underlying hole, which was the real one.** All of this broke
+silently, and that is worse than breaking. The confidence measure's second
+signal —"there were bits and now there are none"— **needs to have seen bits
+earlier in the session** (`_xflag_peak > 8`), so starting the overlay with the
+base already wrong it never got armed: the overlay showed an empty save,
+calmly, and marked as trustworthy. Now there is a second way into the same
+alarm:
 
-> **Hay checks de escena hechos y ni un solo xflag.** Los de escena cuelgan de
-> otra ancla, localizada por firma, así que son de fiar **desde el primer
-> sondeo**, que es justo cuando la otra señal no puede saltar.
+> **There are scene checks done and not a single xflag.** The scene ones hang
+> off a different anchor, located by signature, so they are trustworthy **from
+> the very first poll**, which is exactly when the other signal cannot fire.
 
-Con un guardia para no gritar en falso: una seed generada **sin xsanity** no
-tiene xflags, y ahí «cero xflags» no es una anomalía, es la verdad. Se
-distingue porque esos checks sólo llevan `item` si están en la tabla de
-colocación de la ROM; sin xsanity no lo llevan, y la alarma se desactiva sola.
-Y el umbral es de 3 checks de escena, no 1, para que un solo cofre en una
-partida nueva no la dispare.
+With a guard against crying wolf: a seed generated **without xsanity** has no
+xflags, and there "zero xflags" is not an anomaly, it is the truth. It is told
+apart because those checks only carry `item` if they are in the ROM's placement
+table; without xsanity they do not, and the alarm disables itself. And the
+threshold is 3 scene checks, not 1, so a single chest in a new save does not
+trip it.
 
-Medido sobre `ram-en-mm.bin`, forzando la base a una zona de ceros:
+Measured on `ram-en-mm.bin`, forcing the base into a region of zeros:
 
-| Escenario | confianza | ¿avisa? |
+| Scenario | confidence | does it warn? |
 |---|---|---|
-| base mala + progreso de escena + xsanity | **0.000** | **sí** |
-| lo mismo, pero seed sin xsanity | 1.000 | no, y así debe ser |
-| todo bien, con progreso | 1.000 | no |
+| bad base + scene progress + xsanity | **0.000** | **yes** |
+| the same, but a seed without xsanity | 1.000 | no, and that is right |
+| everything fine, with progress | 1.000 | no |
 
-Antes del cambio, el primer caso daba confianza 1.0 y `trusted: true`.
+Before the change, the first case gave confidence 1.0 and `trusted: true`.
 
-**La comprobación que lo cierra**, y son dos vías independientes. Localizando
-por el patrón de bits del `.fla` de esa partida sale `0x8044C6A0` como única
-dirección con confianza 1.000; y con el overlay leyendo ahí, las regiones que
-salen son `LINK_HOUSE 1/1`, `KOKIRI_FOREST 5/85`, `HYRULE_FIELD 1/177` — los
-mismos 7 checks que el `.fla`, escena por escena.
+**The check that closes it**, and it is two independent routes. Locating by the
+bit pattern of that save's `.fla` gives `0x8044C6A0` as the only address with
+confidence 1.000; and with the overlay reading there, the regions that come out
+are `LINK_HOUSE 1/1`, `KOKIRI_FOREST 5/85`, `HYRULE_FIELD 1/177` — the same 7
+checks as the `.fla`, scene by scene.
 
-> Y de paso quedó descartado lo que parecía la causa obvia: **las tablas de
-> xflags de la dev son idénticas a las de v32.0**, 0 diferencias en los 4.751
-> `bitpos` y en todas las direcciones. El problema nunca estuvo ahí.
+> And along the way what looked like the obvious cause got ruled out: **the dev
+> build's xflag tables are identical to v32.0's**, 0 differences across the
+> 4,751 `bitpos` values and across every address. The problem was never there.
 
-### Dos menús, no uno
+### Two menus, not one
 
-Los ajustes vivían **dentro** del plegable «Capture in OBS», y se leían como
-una nota al pie de una guía de captura. Son cosas distintas: las opciones se
-tocan mientras juegas, los URLs de OBS se montan una vez y no se vuelven a
-abrir. Ahora son dos:
+The settings lived **inside** the "Capture in OBS" disclosure, and read like a
+footnote to a capture guide. They are different things: the options are touched
+while you play, the OBS URLs are set up once and never opened again. Now there
+are two:
 
 | | |
 |---|---|
-| **Display options** | abierto por defecto: spoiler, mostrar, fondo, cargar spoiler |
-| **Capture in OBS** | plegado: la explicación y la tabla de URLs |
+| **Display options** | open by default: spoiler, show, background, load spoiler |
+| **Capture in OBS** | collapsed: the explanation and the URL table |
 
-Tres decisiones que no son de colocar cajas:
+Three decisions that are not about arranging boxes:
 
-- **El interruptor de spoilers no está en ninguno de los dos.** Es el que
-  buscas con prisa, en directo, y detrás de un plegable no hace su trabajo —lo
-  decía ya un comentario del código y estaba dentro de uno—. Va suelto arriba,
-  siempre a la vista.
-- **El aviso de `spoiler=full` se muda al menú de opciones**, que es donde se
-  toma la decisión. Estaba junto a la tabla de URLs («los enlaces de abajo
-  revelan…»), y con el menú de OBS plegado no lo veía nadie.
-- **Las reglas de ocultar pasan a un envoltorio `.dirtools`.** Nombraban
-  `.director`, y partido en dos habrían tenido que enumerar cada pieza — con la
-  garantía de que la siguiente se olvidaría. Es lo que mantiene funcionando el
-  caso peliagudo de más arriba: elegir «transparente» en vivo no puede esconder
-  el control con el que lo acabas de elegir. Verificado que sigue siendo así.
+- **The spoiler switch is in neither of them.** It is the one you reach for in a
+  hurry, live, and behind a disclosure it does not do its job —a comment in the
+  code already said so, and it was sitting inside one—. It goes loose at the
+  top, always visible.
+- **The `spoiler=full` warning moves to the options menu**, which is where the
+  decision is made. It was next to the URL table ("the links below reveal…"),
+  and with the OBS menu collapsed nobody saw it.
+- **The hiding rules move to a `.dirtools` wrapper.** They named `.director`,
+  and split in two they would have had to enumerate each piece — with a
+  guarantee that the next one would be forgotten. It is what keeps the awkward
+  case above working: choosing "transparent" live cannot hide the control you
+  just used to choose it. Verified that it still behaves that way.
 
-### El parpadeo de «unknown area», y el latch que faltaba
+### The "unknown area" flicker, and the missing latch
 
-Reportado el 14 ago cruzando Termina Field: el título del panel iba y venía
-entre `Remaining in TERMINA_FIELD` y `Remaining here / unknown area`.
+Reported on 14 Aug while crossing Termina Field: the panel's title kept going
+back and forth between `Remaining in TERMINA_FIELD` and `Remaining here /
+unknown area`.
 
-Reproducido y explicado. **Una transición de escena reescribe el `PlayState`**,
-así que durante uno o dos sondeos deja de validar —`running` a 0, punteros a
-medio poner—. Y el código caía entonces al save context, que en MM da
-`savedSceneNum`: en el volcado vale `0x08`, una escena que no está en la tabla,
-así que `scene_names` devuelve `None` y el panel escribe «unknown area». De ahí
-el parpadeo, y de ahí que sólo se notara en zonas con muchas transiciones.
+Reproduced and explained. **A scene transition rewrites the `PlayState`**, so
+for a poll or two it stops validating —`running` at 0, pointers half set—. And
+the code then fell back to the save context, which in MM gives `savedSceneNum`:
+in the dump it reads `0x08`, a scene that is not in the table, so `scene_names`
+returns `None` and the panel writes "unknown area". Hence the flicker, and
+hence it only being noticeable in areas with many transitions.
 
-El arreglo es el **latch** que el POC lleva recomendando desde el spike: si la
-lectura viva falla, se conserva la última buena en vez de saltar a un dato
-peor. El campo `live` del estado sigue diciendo cuál de las dos es.
-
-```
-sondeo normal                     escena=MOUNTAIN_VILLAGE_WINTER  live=True
-PlayState no valida (transicion)  escena=MOUNTAIN_VILLAGE_WINTER  live=False
-y otro sondeo igual               escena=MOUNTAIN_VILLAGE_WINTER  live=False
-vuelve a validar                  escena=MOUNTAIN_VILLAGE_WINTER  live=True
-```
-
-> La lección general: **el respaldo tiene que ser mejor que nada, no peor que
-> lo que ya tenías**. Caer del dato vivo al dato rancio parecía prudente y
-> resultó ser la fuente del defecto.
-
-### Las bases se eligen por parejas
-
-Salió buscando por qué el resumen enseñaba rupias y corazones que no eran los
-de la partida. **No está confirmado que fuera esto** —hace falta un volcado en
-el momento— pero al mirarlo apareció un agujero real.
-
-`locate_saves` elegía la base de cada juego **por separado**, la primera de la
-lista que validara. Y validar no basta: al cruzar de juego la RAM se
-reorganiza, y el buffer que queda atrás **conserva su firma y un contenido
-perfectamente plausible**. Con MM corriendo, la base de OoT de la otra
-disposición (`0x8011A5D0`) se prueba antes que la buena (`0x8076D400`), así que
-si aún quedan restos ahí, gana — y el overlay pasa a leer los rupias y los
-corazones de una foto vieja durante el resto de la sesión.
-
-Lo que lo descarta no es el contenido sino **dónde está**: el juego que corre
-tiene su save en la zona baja y el otro en la alta, siempre. Así que de las dos
-bases, **exactamente una** cae por debajo de `RDRAM_MID`. Las dos abajo
-significa que una es un resto.
-
-Ahora se elige el **par** que valide y encaje, el barrido de respaldo prefiere
-el que empareja con lo que ya hay, y la revalidación de cada sondeo lo
-comprueba también — si no, un par malo se quedaría en la caché para siempre.
-El umbral (`0x80300000`) va en el hueco vacío entre las bajas (`0x8011`–`0x801F`)
-y las altas (`0x8044`–`0x8076`), con margen a los dos lados.
-
-### Dos columnas
-
-Pedido el 14 ago: la rejilla de items sola a la izquierda, y a la derecha las
-tres listas apiladas —progreso por región, pendientes de la zona, actividad—.
-Es el reparto que tiene sentido: **la rejilla es la única que gana con el
-ancho**, porque `fitItems` dimensiona la celda a la caja que le den; las listas
-sólo necesitan leerse. Por eso se lleva la columna algo más ancha (1,1 contra
-1).
-
-El intercambio de columnas se hizo **en el marcado, no con `order` de CSS**,
-para que el orden de lectura y el visual no se separen — y de paso decide bien
-qué va primero cuando por debajo de 1100 px todo cae a una sola columna.
-
-Lo que costó no fue mover las tarjetas sino el alto. Los `max-height` de los
-paneles restan una constante que es el cromo de alrededor, y con tres tarjetas
-en una columna hay dos cabeceras y dos huecos más. Se **midió** en vez de
-ajustar a ojo: a 1080p el body daba 1132 contra un viewport de 985, y de los
-147 sobrantes la mayoría eran del menú **Display options abierto** (236 px).
-Plegado —el interruptor de spoilers está fuera, que es lo único que hay que
-alcanzar con prisa— y con `pane-third` en `(100vh − 604px) / 3` y `pane-tall`
-en `100vh − 438px`, la vista cabe exacta: **985 = 985**, sin barra.
-
-Verificado además que sigue bien lo que esta zona rompe fácil: los cinco
-paneles sueltos no dejan contenedores vacíos, la ventana estrecha cae a una
-columna sin scroll horizontal, y `/p/items` a 400×600 —tamaño de fuente de
-OBS— sigue entrando sin scroll.
-
-### Ocultar las regiones completadas
-
-`?done=hide`, o el selector **Regions** de las opciones. Con la lista llena de
-zonas terminadas, lo que queda por hacer se pierde entre ellas.
-
-**Lo hecho se define por el filtro que tengas puesto.** Con «sólo lo
-importante», una región cuenta como terminada cuando lo están sus checks
-importantes, aunque le quede relleno. Si no, las dos opciones se pelearían y el
-panel enseñaría regiones a `3 / 3` bajo un título que dice que están
-pendientes.
-
-Y se dice, como con lo demás: `165 regions not started · 1 completed`. Si al
-ocultarlas no queda ninguna, el panel no se queda mudo — pone *every region you
-have touched is done*, que no es lo mismo que «no hay datos».
-
-### El panel de regiones sólo enseña donde has estado, y lo dice
-
-Salió de que el usuario contara: con el filtro de importantes veía tres
-regiones sumando **29** checks, y la cabecera decía **4 / 670**. Parecían faltar
-ubicaciones.
-
-No faltaban. El panel lista **sólo las regiones donde has hecho algo** (`if
-got:`), y las cuentas cuadran exactas:
+The fix is the **latch** the POC has been recommending since the spike: if the
+live read fails, keep the last good one rather than jumping to worse data. The
+state's `live` field still says which of the two it is.
 
 ```
-  5 regiones mostradas       ->  29 importantes
-165 regiones sin progreso    -> 641 importantes
+normal poll                       scene=MOUNTAIN_VILLAGE_WINTER  live=True
+PlayState fails to validate       scene=MOUNTAIN_VILLAGE_WINTER  live=False
+and another poll the same         scene=MOUNTAIN_VILLAGE_WINTER  live=False
+validates again                   scene=MOUNTAIN_VILLAGE_WINTER  live=True
+```
+
+> The general lesson: **the fallback has to be better than nothing, not worse
+> than what you already had**. Falling from live data to stale data seemed
+> prudent and turned out to be the source of the defect.
+
+### The bases are chosen in pairs
+
+This came out of looking into why the summary was showing rupees and hearts
+that were not the save's. **It is not confirmed that this was the cause** —a
+dump at the moment it happens is needed— but looking at it turned up a real
+hole.
+
+`locate_saves` chose each game's base **separately**, the first one on the list
+that validated. And validating is not enough: on crossing between games RAM is
+reorganised, and the buffer left behind **keeps its signature and perfectly
+plausible contents**. With MM running, OoT's base from the other arrangement
+(`0x8011A5D0`) is tried before the right one (`0x8076D400`), so if there are
+still remnants there, it wins — and the overlay goes on reading the rupees and
+hearts of an old snapshot for the rest of the session.
+
+What rules it out is not the contents but **where it is**: the running game has
+its save in the low area and the other in the high one, always. So of the two
+bases, **exactly one** falls below `RDRAM_MID`. Both low means one of them is a
+remnant.
+
+Now the **pair** that validates and fits is chosen, the fallback sweep prefers
+the one that pairs with what is already there, and each poll's revalidation
+checks it too — otherwise a bad pair would stay in the cache forever. The
+threshold (`0x80300000`) sits in the empty gap between the low ones
+(`0x8011`–`0x801F`) and the high ones (`0x8044`–`0x8076`), with margin on both
+sides.
+
+### Two columns
+
+Requested on 14 Aug: the item grid alone on the left, and on the right the
+three lists stacked —progress by region, remaining in the area, activity—. It
+is the split that makes sense: **the grid is the only one that gains from
+width**, because `fitItems` sizes the cell to the box it is given; the lists
+only need to be readable. That is why it takes the slightly wider column (1.1
+against 1).
+
+The column swap was done **in the markup, not with CSS `order`**, so that
+reading order and visual order do not come apart — and as a bonus it decides
+correctly what comes first when, below 1100 px, everything collapses into a
+single column.
+
+What cost effort was not moving the cards but the height. The panels'
+`max-height` values subtract a constant that is the surrounding chrome, and
+with three cards in one column there are two more headers and two more gaps. It
+was **measured** rather than eyeballed: at 1080p the body gave 1132 against a
+viewport of 985, and of the 147 excess pixels most came from the **Display
+options menu being open** (236 px). Collapsed —the spoiler switch is outside,
+which is the only thing you need to reach in a hurry— and with `pane-third` at
+`(100vh − 604px) / 3` and `pane-tall` at `100vh − 438px`, the view fits exactly:
+**985 = 985**, no scrollbar.
+
+Also verified that what this area breaks easily still holds: the five
+standalone panels leave no empty containers, a narrow window collapses to one
+column with no horizontal scrolling, and `/p/items` at 400×600 —an OBS source's
+size— still fits without scrolling.
+
+### Hiding completed regions
+
+`?done=hide`, or the **Regions** selector in the options. With the list full of
+finished areas, what is left to do gets lost among them.
+
+**What counts as done is defined by whichever filter you have on.** With "only
+what matters", a region counts as finished when its important checks are,
+even if junk is left. Otherwise the two options would fight each other and the
+panel would show regions at `3 / 3` under a heading saying they are pending.
+
+And it says so, as with everything else: `165 regions not started · 1
+completed`. If hiding them leaves none, the panel does not go mute — it says
+*every region you have touched is done*, which is not the same as "no data".
+
+### The region panel only shows where you have been, and says so
+
+This came out of the user counting: with the important filter on they saw three
+regions adding up to **29** checks, and the header said **4 / 670**. Locations
+appeared to be missing.
+
+They were not. The panel lists **only the regions where you have done
+something** (`if got:`), and the numbers add up exactly:
+
+```
+  5 regions shown            ->  29 important
+165 regions with no progress -> 641 important
                                 ---
                                 670
 ```
 
-El fallo era de presentación: no decía nada de las 165 que se estaba callando.
-Ahora pone `165 regions not started` debajo, con el recuento acorde al filtro
-—109 regiones tienen algún check importante, de 170 en total—. No aparece con
-`?game=`, porque ahí el recuento y la lista no hablarían del mismo conjunto.
+The fault was presentational: it said nothing about the 165 it was keeping
+quiet about. Now it says `165 regions not started` underneath, with the count
+matching the filter —109 regions have at least one important check, out of 170
+in total—. It does not appear with `?game=`, because there the count and the
+list would not be talking about the same set.
 
-> Que el usuario tuviera que sumar a mano para entender un panel es la señal.
-> El número que falta casi siempre es «cuántos no estoy enseñando».
+> That the user had to add things up by hand to understand a panel is the
+> signal. The missing number is almost always "how many am I not showing".
 
-### Los setups de escena: por qué Hyrule Field parecía roto
+### Scene setups: why Hyrule Field looked broken
 
-**Hecho el 14 ago 2026**, de un fallo que reportó el usuario: en Hyrule Field
-cortaba un arbusto, el feed lo cantaba, y en los pendientes seguía saliendo
-uno con casi el mismo nombre. Parecía que el tracker no se enteraba.
+**Done 14 Aug 2026**, from a bug the user reported: in Hyrule Field they cut a
+bush, the feed announced it, and the remaining list still showed one with
+almost the same name. It looked as though the tracker was not noticing.
 
-No era eso. Son **dos arbustos distintos**:
+That was not it. They are **two different bushes**:
 
 ```
 Hyrule Field Bush 09               setup=1  actor=39  bitpos=2438
 Hyrule Field Grass Pack 3 Bush 09  setup=0  actor=60  bitpos=2322
 ```
 
-Una escena de OoT existe en varias versiones —los *headers alternativos*:
-niño/adulto, día/noche— y **cada una tiene sus propios actores**, luego sus
-propios checks. Hyrule Field tiene tres (setups 0, 1 y 2). Sólo una está
-cargada, así que la mitad de lo que el panel listaba era inalcanzable en ese
-momento y se quedaba pendiente para siempre. Lo que lo hacía parecer un fallo
-de detección es que los nombres se parecen y **los números coinciden** —07,
-08, 09, 11, 12 en las dos familias—, así que se leen como el mismo sitio.
+An OoT scene exists in several versions —the *alternate headers*:
+child/adult, day/night— and **each one has its own actors**, hence its own
+checks. Hyrule Field has three (setups 0, 1 and 2). Only one is loaded, so half
+of what the panel listed was unreachable at that moment and stayed pending
+forever. What made it look like a detection bug is that the names are similar
+and **the numbers coincide** —07, 08, 09, 11, 12 in both families— so they read
+as the same place.
 
-Es el mismo tipo de fallo que ya se arregló con Master Quest, que sí se
-filtraba.
+It is the same class of bug already fixed for Master Quest, which was being
+filtered.
 
-**De dónde sale el setup.** `gSaveContext.sceneSetupId`, y no está en el save
-sino en el `SaveContext` que lo envuelve:
+**Where the setup comes from.** `gSaveContext.sceneSetupId`, and it is not in
+the save but in the `SaveContext` that wraps it:
 
 ```
 ASSERT_OFFSET(OotSaveContext, sceneSetupId, 0x1360)   OotSaveContext{OotSave save; …}
 ASSERT_OFFSET(MmSaveContext,  sceneSetupId, 0x3cac)   MmSaveContext{MmSave save; …}
 ```
 
-La base de MM del proyecto es `MmSave+0x08`, así que ahí va `0x3CAC − 8`.
-Verificado en los dos volcados: con ese offset MM lee 0, y tomando la base
-como `MmSave` lee basura. El `0x1360` de OoT cae dentro de lo que el POC
-llamaba «flags temporales de la escena activa» (`+0x1354`…), que encaja: esa
-zona no es del `OotSave`, es del `SaveContext` de detrás.
+The project's MM base is `MmSave+0x08`, so there it is `0x3CAC − 8`. Verified
+on both dumps: with that offset MM reads 0, and taking the base as `MmSave` it
+reads garbage. OoT's `0x1360` falls inside what the POC called "the active
+scene's temporary flags" (`+0x1354`…), which fits: that area is not the
+`OotSave`'s, it belongs to the `SaveContext` behind it.
 
-**Pero el pedido no es el cargado.** OoTMM resuelve uno a otro en
-`oot/room.c`: si la escena no tiene ese header alternativo, baja al mayor que
-exista y si no cae a 0; y por encima de 3 es una cutscene y usa 0. El
-resultado vive en `g.sceneSetupId`, que está en el payload sin dirección
-conocida, así que `setup_loaded()` **repite la resolución** usando los setups
-que mencionan los propios xflags de la escena.
+**But the requested one is not the loaded one.** OoTMM resolves one to the
+other in `oot/room.c`: if the scene does not have that alternate header, it
+falls back to the highest that exists and otherwise to 0; and above 3 it is a
+cutscene and uses 0. The result lives in `g.sceneSetupId`, which is in the
+payload with no known address, so `setup_loaded()` **repeats the resolution**
+using the setups the scene's own xflags mention.
 
 ```
 sceneSetupId=0 -> 0    sceneSetupId=2 -> 2    sceneSetupId=7 -> 0
-sceneSetupId=1 -> 1    sceneSetupId=3 -> 2    (HYRULE_FIELD tiene 0,1,2)
+sceneSetupId=1 -> 1    sceneSetupId=3 -> 2    (HYRULE_FIELD has 0,1,2)
 ```
 
-**El guardia que evita el fallo simétrico.** Si el setup resuelto no está
-entre los que conocemos —una escena cuyos únicos xflags vivan en un header
-alternativo—, `setup_loaded` devuelve `None` y **no se filtra nada**. Sin eso,
-el panel se vaciaría entero, que es peor que enseñar sobras.
+**The guard that avoids the symmetric bug.** If the resolved setup is not among
+the ones we know —a scene whose only xflags live in an alternate header—
+`setup_loaded` returns `None` and **nothing is filtered**. Without that, the
+panel would empty out entirely, which is worse than showing leftovers.
 
-Medido en Hyrule Field, 177 pendientes:
+Measured in Hyrule Field, 177 remaining:
 
-| `sceneSetupId` | en la lista | `Bush NN` | `Grass Pack … Bush` | apartados |
+| `sceneSetupId` | in the list | `Bush NN` | `Grass Pack … Bush` | set aside |
 |---|---|---|---|---|
 | 0 | 67 | 0 | 48 | 110 |
 | 1 | 108 | 58 | 0 | 69 |
 
-O sea: en el caso del usuario —el feed cantaba `Bush NN`, luego setup 1— los
-`Grass Pack` desaparecen de los pendientes, que es justo lo que sobraba.
+That is: in the user's case —the feed announced `Bush NN`, therefore setup 1—
+the `Grass Pack` ones disappear from the remaining list, which is exactly what
+was surplus.
 
-**No se quitan de los totales, y se dice cuántos son.** Los checks de otro
-setup existen de verdad y son alcanzables volviendo con la otra edad, así que
-sólo se filtra el panel de «lo que queda aquí», y debajo se lee `and 83 more ·
-69 in another setup of this scene`. Esconderlos sin decirlo es la trampa que
-este proyecto ya ha pisado dos veces.
+**They are not removed from the totals, and it says how many there are.** The
+checks from another setup genuinely exist and are reachable by coming back at
+the other age, so only the "what is left here" panel is filtered, and
+underneath it reads `and 83 more · 69 in another setup of this scene`. Hiding
+them without saying so is the trap this project has already stepped in twice.
 
-> Y de paso, **`area cleared` tenía que querer decir cleared**. Con la lista
-> vacía el panel decía siempre eso, aunque estuviera vacía por el filtro. Ahora
-> distingue las tres: `nothing for this version of the scene · N in another
-> setup`, `nothing important left · N junk`, y `area cleared` sólo cuando lo
-> está. El de relleno era un fallo que ya estaba ahí: con `junk=hide` y sólo
-> relleno pendiente, la lista salía vacía **sin ningún mensaje**, porque el
-> contador miraba la lista sin filtrar.
+> And along the way, **`area cleared` had to mean cleared**. With an empty list
+> the panel always said that, even when it was empty because of the filter. Now
+> it distinguishes all three: `nothing for this version of the scene · N in
+> another setup`, `nothing important left · N junk`, and `area cleared` only
+> when it is. The junk one was a bug that was already there: with `junk=hide`
+> and only junk left, the list came out empty **with no message at all**,
+> because the counter was looking at the unfiltered list.
 
-### Las vacas, y el misterio del campo `unk` resuelto de paso
+### The cows, and the mystery of the `unk` field solved along the way
 
-**Hecho el 14 ago**, y salió de una queja del usuario: dentro de la gruta de la
-vaca, con el filtro de importantes, el panel no listaba **la vaca** — que era
-justo lo que le quedaba por sacar. No salía porque los `cow_flags` eran de los
-80 checks sin dirección, y sin dirección no entran en el panel.
+**Done 14 Aug**, and it came out of a complaint from the user: inside the cow
+grotto, with the important filter on, the panel did not list **the cow** —
+which was exactly what they had left to get. It did not show up because the
+`cow_flags` were among the 80 checks with no address, and with no address they
+do not enter the panel.
 
-El macro que faltaba está en `combo/save.h`:
+The missing macro is in `combo/save.h`:
 
 ```c
 #define SAVE_EXTRA_RECORD(type, index) (gOotSave + 0xd4 + 0x1c*(index) + 0x10)
 #define gCowFlags   SAVE_EXTRA_RECORD(u32, 9)
 ```
 
-Y `0xD4 + N*0x1C + 0x10` es **el campo `unk` de la escena N** de la tabla de
-flags de OoT. Es decir: OoTMM se guarda una veintena de u32 propios metiéndolos
-en el hueco que OoT vanilla no usa de cada escena.
+And `0xD4 + N*0x1C + 0x10` is **scene N's `unk` field** in OoT's flag table.
+That is: OoTMM stores a couple of dozen u32s of its own by tucking them into
+the slot vanilla OoT does not use in each scene.
 
-> **Eso cierra el «cabo suelto: el campo `unk`»** que llevaba días abierto al
-> final de este documento. Los items que encendían bits en el `unk` de **dos**
-> escenas a la vez estaban escribiendo dos de estos registros, y el par medido
-> lo confirma: Cojiro tocaba las escenas 0 y 10, que son exactamente
-> `gOotExtraTrade` (índice 0) y `gOotExtraTradeSave` (índice 10). No había
-> ninguna regla geométrica que deducir; era una tabla de índices.
+> **That closes the "loose end: the `unk` field"** that had been open for days
+> at the end of this document. The items that set bits in the `unk` of **two**
+> scenes at once were writing two of these records, and the measured pair
+> confirms it: Cojiro touched scenes 0 and 10, which are exactly
+> `gOotExtraTrade` (index 0) and `gOotExtraTradeSave` (index 10). There was no
+> geometric rule to deduce; it was a table of indices.
 
-`gCowFlags` es el índice 9, así que vive en `oot_base + 0x1E0`, es un `u32`
-con `1 << id`, y **las vacas de los dos juegos comparten el mismo campo** —
-está en el save de OoT corra el que corra, que ya se localiza siempre.
+`gCowFlags` is index 9, so it lives at `oot_base + 0x1E0`, it is a `u32` with
+`1 << id`, and **both games' cows share the same field** — it is in OoT's save
+whichever one is running, and that is always located.
 
-Con eso, **18 de 18 `cow_flags` resueltos** y los checks pendientes de mapear
-bajan de 80 a **62**. Los 18 dan 18 pares `(addr, bit)` distintos.
+With that, **18 of 18 `cow_flags` resolved** and the checks left to map drop
+from 80 to **62**. The 18 give 18 distinct `(addr, bit)` pairs.
 
-> **Derivado, no medido.** En los tres volcados `oot_base + 0x1E0` vale 0, que
-> es coherente —no se ha ordeñado ninguna vaca— pero no prueba nada, igual que
-> pasó con `gsFlags`. **Predicción falsable:** al ordeñar la vaca de atrás de
-> la gruta de Termina Field debe encenderse el **bit 20** de `0x…1E0`; la de
-> delante es el 19, y las tres de Romani Ranch los bits 16, 17 y 18.
+> **Derived, not measured.** In all three dumps `oot_base + 0x1E0` reads 0,
+> which is consistent —no cow has been milked— but proves nothing, just as
+> happened with `gsFlags`. **Falsifiable prediction:** milking the cow at the
+> back of Termina Field's grotto must set **bit 20** of `0x…1E0`; the one at the
+> front is 19, and Romani Ranch's three are bits 16, 17 and 18.
 
-### La sala filtra, y las grutas
+### The room filters, and the grottos
 
-**Corregido el 14 ago**, de estar dentro de una gruta y ver 440 pendientes:
-`Remaining in GROTTOS · room 10` seguido de todas las grutas del juego.
+**Fixed 14 Aug**, from being inside a grotto and seeing 440 remaining:
+`Remaining in GROTTOS · room 10` followed by every grotto in the game.
 
-Dos cosas. La primera es que **la sala tenía que filtrar, no sólo ordenar** —
-que es lo que el backlog pedía desde el principio, «afinar los pendientes de la
-escena entera a la habitación en la que estás»—. Se dejó como reordenación por
-prudencia, y en una escena normal se nota poco; en `GROTTOS`, que es **una sola
-escena con todas las grutas del juego dentro**, la diferencia es entre útil e
-inservible. Lo que no lleva sala —cofres, NPC, tiendas— nunca se descarta.
+Two things. The first is that **the room had to filter, not just sort** — which
+is what the backlog had been asking for from the start, "narrow the whole
+scene's remaining list down to the room you are in". It was left as a reordering
+out of caution, and in a normal scene it barely shows; in `GROTTOS`, which is
+**a single scene with every grotto in the game inside it**, the difference is
+between useful and useless. Anything with no room —chests, NPCs, shops— is
+never discarded.
 
-La segunda son los `0x20 | grottoData` de `comboXflagInit`. Ésos no son un
-número de sala, así que no se pueden comparar… salvo que sepas si estás **en**
-la sala de las grutas genéricas o no. Y eso **sale de los datos, sin constante
-ninguna**:
+The second is `comboXflagInit`'s `0x20 | grottoData`. Those are not a room
+number, so they cannot be compared… unless you know whether you are **in** the
+generic grotto room or not. And that **falls out of the data, with no constant
+at all**:
 
-> La sala genérica es la que **no tiene checks propios**, precisamente porque
-> sus actores se renumeraron a `0x20 | …`. En `GROTTOS` de MM las salas con
-> checks son 0, 2, 5, 6 y 9–15 — no hay 4 — y 4 es exactamente la que
-> `comboXflagInit` reescribe. Así que si estás en una sala que la escena
-> reconoce como suya, **ninguno de los `0x20 |` puede ser tuyo**.
+> The generic room is the one that **has no checks of its own**, precisely
+> because its actors were renumbered to `0x20 | …`. In MM's `GROTTOS` the rooms
+> with checks are 0, 2, 5, 6 and 9–15 — there is no 4 — and 4 is exactly the one
+> `comboXflagInit` rewrites. So if you are in a room the scene recognises as its
+> own, **none of the `0x20 |` ones can be yours**.
 
-Medido en la gruta de la vaca de Termina Field (sala 10): de **452 a 99**. Los
-99 son los 76 de esa sala más 23 cofres y NPC que no llevan sala — el cabo
-suelto que ya estaba anotado. Y en la sala genérica (4) no se filtra ninguno de
-ellos, que es lo correcto: allí todos son candidatos.
+Measured in Termina Field's cow grotto (room 10): from **452 to 99**. The 99
+are that room's 76 plus 23 chests and NPCs that carry no room — the loose end
+that was already noted. And in the generic room (4) none of them is filtered,
+which is correct: there they are all candidates.
 
-En una escena normal hace lo que se esperaba: Templo del Agua, sala 21, pasa de
-42 a 21 —6 de la sala y 15 sin sala— y dice `21 in other rooms`.
+In a normal scene it does what was expected: Water Temple, room 21, goes from
+42 to 21 —6 from the room and 15 with no room— and says `21 in other rooms`.
 
-### Y de propina, la sala
+### And as a bonus, the room
 
-Del mismo `PlayState` sale `roomCtx.curRoom.num`, y **sólo los xflags llevan
-sala** en `checks.json` (4.440 de 6.043). Con eso los pendientes de la sala en
-la que estás salen **primero y marcados**, y el título dice «· room N» cuando
-la escena tiene más de una.
+From the same `PlayState` comes `roomCtx.curRoom.num`, and **only the xflags
+carry a room** in `checks.json` (4,440 of 6,043). With that, the remaining
+checks for the room you are in come out **first and marked**, and the title
+says "· room N" when the scene has more than one.
 
-Dos decisiones, las dos por el mismo motivo —que un filtro que esconde cosas
-sin decirlo es peor que no filtrar—:
+Two decisions, both for the same reason —that a filter which hides things
+without saying so is worse than no filter—:
 
-- **Se reordena, no se filtra.** Los cofres, los NPC y las tiendas no tienen
-  sala; filtrando desaparecerían todos. Medido en el Templo del Agua con el
-  jugador en la sala 21: 42 pendientes, 6 marcados y arriba, y los 15 sin sala
-  siguen en la lista.
-- **En las grutas no se aplica.** Ahí el `room` del xflag es el truco
-  `0x20 | grottoData` de `comboXflagInit`, no un número de sala, mientras que
-  `curRoom.num` vale 0. Comparándolos, los 311 checks de gruta saldrían todos
-  como «de otra sala». Se marcan como sin sala y listo.
+- **It reorders, it does not filter.** Chests, NPCs and shops have no room;
+  filtering would make them all disappear. Measured in the Water Temple with
+  the player in room 21: 42 remaining, 6 marked and at the top, and the 15 with
+  no room still in the list.
+- **It is not applied in grottos.** There the xflag's `room` is
+  `comboXflagInit`'s `0x20 | grottoData` trick, not a room number, while
+  `curRoom.num` reads 0. Comparing them, all 311 grotto checks would come out
+  as "in another room". They are marked as having no room and that is that.
 
-### Recolocación de bases: por qué `checks.json` lleva ancla
+### Rebasing: why `checks.json` carries an anchor
 
-Las direcciones de `checks.json` son absolutas, y las bases **se mueven** al cruzar entre OoT y MM: la RAM se reorganiza entera, que es justo la razón de que exista `locate_saves`. Un overlay que corre durante horas tiene que rebasar, así que cada check lleva además `anchor` + `off`:
+`checks.json`'s addresses are absolute, and the bases **move** when crossing between OoT and MM: RAM is reorganised entirely, which is exactly why `locate_saves` exists. An overlay that runs for hours has to rebase, so each check also carries `anchor` + `off`:
 
-| Ancla | Se resuelve | Cuelga de |
+| Anchor | Resolved by | What hangs off it |
 |---|---|---|
-| `oot` | firma `ZELDAZ` | flags de escena de OoT, `gsFlags` |
-| `mm` | firma `ZELDA3` | flags de escena de MM |
-| `custom` | desplazamiento fijo desde `mm` | los 4.751 xflags y los bitmaps custom |
+| `oot` | the `ZELDAZ` signature | OoT's scene flags, `gsFlags` |
+| `mm` | the `ZELDA3` signature | MM's scene flags |
+| `custom` | a fixed offset from `mm` | the 4,751 xflags and the custom bitmaps |
 
-El custom save no tiene firma propia, pero cuelga del buffer de MM por una distancia que es constante de versión: los dos son globales de la misma build, así que se mueven juntos.
+The custom save has no signature of its own, but it hangs off MM's buffer by a distance that is a per-version constant: both are globals of the same build, so they move together.
 
-### La firma no basta para localizar un save
+### The signature is not enough to locate a save
 
-Salió jugando otra seed: con OoT corriendo, el panel de MM se llenó de basura —`SKULLTULAS PANTANO 7680`, cuando el máximo es 30— y las regiones de MM inventaban progreso.
+This came up playing another seed: with OoT running, MM's panel filled with garbage —`SWAMP SKULLTULAS 7680`, when the maximum is 30— and MM's regions invented progress.
 
-`locate_saves` buscaba la firma `ZELDA3` y **se quedaba con la primera coincidencia por dirección, sin comprobar nada**. Pero la firma aparece también en copias estáticas y en buffers viejos, así que la primera no suele ser la viva. En las sesiones anteriores funcionaba de chiripa: la base conocida acertaba y no hacía falta escanear.
+`locate_saves` searched for the `ZELDA3` signature and **kept the first match by address, without checking anything**. But the signature also appears in static copies and in stale buffers, so the first is usually not the live one. In earlier sessions it worked by luck: the known base was right and no scanning was needed.
 
-Ahora cada candidata pasa una comprobación de plausibilidad barata, con campos cuyo rango se conoce:
+Now each candidate passes a cheap plausibility check, using fields whose range is known:
 
-| Campo | Invariante |
+| Field | Invariant |
 |---|---|
-| `healthCapacity` | mayor que cero, hasta 20 corazones, y **múltiplo de 0x10** |
-| `health` | entre cero y la capacidad |
-| `rupees` | de 0 a 9999 |
-| skulltulas de pantano y océano (MM) | 30 como mucho |
+| `healthCapacity` | greater than zero, up to 20 hearts, and **a multiple of 0x10** |
+| `health` | between zero and the capacity |
 
-Verificado contra los dos volcados: en el de OoT descarta la copia estática de MM (`0x80442248`) y se queda con la viva (`0x8044BE18`); en el de MM descarta `0x801C6954` y elige `0x801EF678`. Y al cruzar de juego relocaliza sola, en los dos sentidos.
+| `rupees` | from 0 to 9999 |
+| swamp and ocean skulltulas (MM) | 30 at most |
 
-> **De paso, un problema peor.** `locate_saves` corre en cada sondeo, y cuando una base no está entre las conocidas **escanea 8 MB de RDRAM**. Dos veces por segundo. Con las bases movidas, cada sondeo era un barrido de la memoria entera. Ahora las bases se cachean y sólo se relocalizan cuando dejan de validar.
+Verified against both dumps: in OoT's it discards MM's static copy (`0x80442248`) and keeps the live one (`0x8044BE18`); in MM's it discards `0x801C6954` and picks `0x801EF678`. And on crossing between games it relocates on its own, both ways.
 
-### La medida de confianza
+> **And along the way, a worse problem.** `locate_saves` runs on every poll, and when a base is not among the known ones it **scans 8 MB of RDRAM**. Twice a second. With the bases moved, every poll was a sweep of the entire memory. Now the bases are cached and only relocated when they stop validating.
 
-`gSharedCustomSave` sólo está localizado con **OoT corriendo**; con MM su dirección es otra y no se ha despejado. En vez de enseñar basura, el overlay mide qué fracción de los bits encendidos cae en un check conocido y por debajo del 90% marca el panel como no fiable. Si la base está mal, los bits caen donde no hay nada mapeado y la medida se hunde sola.
+### The confidence measure
 
-Se mide **sólo sobre los tramos de xflags**, que son bitmap puro. Medirla sobre el bloque entero daba 0.93 con la base correcta, porque dentro hay campos que no son flags de check —el bitfield de cola de `OotCustomSave`, `mm.halfDays`, los contadores— cuyos bits encendidos son legítimos pero no mapean a nada. Acotada a los xflags da 1.0.
+`gSharedCustomSave` is only located with **OoT running**; with MM its address is a different one and has not been worked out. Rather than show garbage, the overlay measures what fraction of the set bits falls on a known check and below 90% marks the panel as untrustworthy. If the base is wrong, the bits land where nothing is mapped and the measure sinks on its own.
 
-**La fracción sola no basta, y esto es un agujero que estuvo abierto un tiempo.** Una base equivocada que caiga en una zona de ceros da 1.0 por vacuidad, sin un solo bit: eso no es un aviso, es un silencio, y el overlay se limitaba a contar menos checks sin decir nada. Ahora se compara también el número de bits con el mayor visto. Si antes había y ahora no hay ninguno, o la base es mala o has empezado partida nueva, y **lo que las distingue es que en una partida nueva se caen también los checks de escena**, que se leen por otra ancla: si esos siguen ahí y los xflags no, la base está mal.
+It is measured **only over the xflag ranges**, which are pure bitmap. Measuring it over the whole block gave 0.93 with the correct base, because inside there are fields that are not check flags —`OotCustomSave`'s trailing bitfield, `mm.halfDays`, the counters— whose set bits are legitimate but map to nothing. Narrowed to the xflags it gives 1.0.
 
-Ese guardia fue el que dejó al descubierto que **con MM corriendo el custom save no se estaba leyendo** — y con eso localizado, se arregló. Ver abajo.
+**The fraction alone is not enough, and this was a hole that stayed open for a while.** A wrong base that lands in a region of zeros gives 1.0 vacuously, without a single bit: that is not a warning, it is silence, and the overlay simply counted fewer checks without saying anything. Now the number of bits is also compared against the highest seen. If there were bits before and now there are none, either the base is wrong or you have started a new save, and **what tells them apart is that in a new save the scene checks drop too**, and those are read through a different anchor: if those are still there and the xflags are not, the base is wrong.
 
-### El custom save con MM corriendo
+That guard is what exposed that **with MM running the custom save was not being read at all** — and with that located, it was fixed. See below.
 
-Era la última limitación grande, y se resolvió sin tocar el emulador, usando los dos volcados que ya había: son de la misma partida y **el custom save es compartido**, así que su contenido tiene que aparecer literalmente en las dos memorias. Buscando el bloque de la RAM de OoT dentro de la de MM sale **una única coincidencia**, y los offsets no-cero cuadran uno a uno: `0xd6`, `0x1b2..0x1c1` de xflags, `0x31a` shops, `0x376` el bitfield de cola de `OotCustomSave`, `0x6f4` `halfDays`. Las únicas diferencias son los dos checks que el jugador hizo entre un volcado y otro.
+### The custom save with MM running
 
-La regla resultó ser simétrica: **`gSharedCustomSave` va justo delante del buffer del juego que NO está corriendo.**
+It was the last big limitation, and it was solved without touching the emulator, using the two dumps that already existed: they are from the same save and **the custom save is shared**, so its contents have to appear literally in both memories. Searching for OoT's RAM block inside MM's turns up **a single match**, and the non-zero offsets line up one to one: `0xd6`, `0x1b2..0x1c1` of xflags, `0x31a` shops, `0x376` `OotCustomSave`'s trailing bitfield, `0x6f4` `halfDays`. The only differences are the two checks the player did between one dump and the other.
 
-| Juego activo | Buffer del otro | Custom save | Distancia |
+The rule turned out to be symmetric: **`gSharedCustomSave` sits right in front of the buffer of the game that is NOT running.**
+
+| Active game | The other's buffer | Custom save | Distance |
 |---|---|---|---|
-| OoT | MM en `0x8044BE18` | `0x8044B570` | `0x8A8` |
-| MM | OoT en `0x8076C4F0` | `0x8076BC50` | `0x8A0` |
+| OoT | MM at `0x8044BE18` | `0x8044B570` | `0x8A8` |
+| MM | OoT at `0x8076C4F0` | `0x8076BC50` | `0x8A0` |
 
-Las distancias difieren porque lo que hay en medio es el save del otro juego, y no ocupan lo mismo. El sondeo prueba las dos direcciones y se queda con la que más bits mapeados da, así que no depende de acertar a la primera.
+The distances differ because what sits in between is the other game's save, and they are not the same size. The poll tries both addresses and keeps whichever gives more mapped bits, so it does not depend on getting it right first time.
 
-**La comprobación que lo cierra**: con el volcado de MM el tracker pasa de 5 checks a **20**, y bajo OoT da 18. La diferencia de 2 es exactamente la de los dos volcados — un bit de xflag en `0x300` y el `Song of Healing` en `0x6dc`.
+**The check that closes it**: with MM's dump the tracker goes from 5 checks to **20**, and under OoT it gives 18. The difference of 2 is exactly the one between the two dumps — an xflag bit at `0x300` and the `Song of Healing` at `0x6dc`.
 
-### Gotchas que salieron de construirlo
+### Gotchas that came out of building it
 
-- **`read_block` viaja en palabras de 4 bytes.** Pedir un campo en una dirección no alineada (`info.sceneId` está en `+0x66`) devuelve basura con el enlace real. Hay que leer la palabra que lo contiene y sacar el halfword de dentro. Con un enlace falso sobre un volcado esto **no** se nota, así que es de los que pasan el test y fallan en vivo.
-- **El primer sondeo tiene que fijar la línea base en silencio**, o el feed arranca escupiendo de golpe los cientos de checks que ya llevabas.
-- **Sombreado de variables.** El bucle de regiones usaba `scene` como variable y pisaba el id de escena que venía del sondeo; después del bucle valía el *nombre* de la última región, así que `scene_id == scene` comparaba un entero contra un string y la lista de pendientes salía siempre vacía, sin error.
-- **La pista del medidor no puede parecerse al relleno.** Con la pista a un 26% del tono, una barra al 0,4% se leía como llena. En un overlay de stream eso es desinformar a quien mira.
-- **Los controles que generan URLs tienen que arrancar leyendo la URL.** Los `<select>` de la vista de director salían con su valor por defecto del HTML, así que abrir `/?spoiler=off` generaba enlaces sin `spoiler=off`: la opción se veía puesta y no se propagaba.
-- **Colisión de clases entre dos componentes.** Las filas de región llevan `row-oot` / `row-mm` para heredar el color del juego, y el contenedor de la rejilla de items llevaba las mismas. Al ponerle `display:flex` a esas clases para colocar los grupos en paralelo, **desaparecieron los medidores de todas las regiones**: la fila dejó de ser un grid y el `.meter` se encogió a nada. Una clase que sólo aporta variables de color no puede usarse además como gancho de maquetación; ahora el contenedor de la rejilla es `.gamegrid`.
-- **Zona muerta temporal de `const`.** El bloque que monta el modo panel usaba `GAME` para titular, y `const GAME` estaba declarado más abajo: `Cannot access 'GAME' before initialization` reventaba el script entero y los paneles salían vacíos, sin nada roto a la vista. La captura sólo mostraba una tarjeta vacía; lo que lo delató fue leer la consola con `--enable-logging=stderr`.
-- **Cuidado con las capturas headless de Edge en pantallas con escalado.** Pedir `--window-size=420` daba un viewport de 504 px CSS y un PNG de 420, recortando la derecha: parecía que faltaban los contadores de las regiones. No había tal fallo. Antes de arreglar algo que sólo se ve en una captura, **medir el DOM** (`--dump-dom` con una sonda que escriba las medidas en el `<title>`) — y borrar la sonda después.
+- **`read_block` travels in 4-byte words.** Asking for a field at an unaligned address (`info.sceneId` is at `+0x66`) returns garbage over the real link. You have to read the word containing it and pull the halfword out. With a fake link over a dump this **does not** show, so it is one of those that passes the test and fails live.
+- **The first poll has to set the baseline silently**, or the feed starts by spitting out all at once the hundreds of checks you already had.
+- **Variable shadowing.** The region loop used `scene` as a variable and clobbered the scene id coming from the poll; after the loop it held the *name* of the last region, so `scene_id == scene` compared an integer against a string and the remaining list always came out empty, with no error.
+- **The meter's track cannot look like the fill.** With the track at 26% of the hue, a bar at 0.4% read as full. In a stream overlay that is misinforming whoever is watching.
+- **Controls that generate URLs have to start by reading the URL.** The director view's `<select>`s came up with their default value from the HTML, so opening `/?spoiler=off` generated links without `spoiler=off`: the option looked set and did not propagate.
+- **A class collision between two components.** The region rows carry `row-oot` / `row-mm` to inherit the game's colour, and the item grid's container carried the same ones. On giving those classes `display:flex` to put the groups in parallel, **the meters vanished from every region**: the row stopped being a grid and `.meter` shrank to nothing. A class that only contributes colour variables cannot also be used as a layout hook; the grid's container is now `.gamegrid`.
+- **`const`'s temporal dead zone.** The block that sets up panel mode used `GAME` for the title, and `const GAME` was declared further down: `Cannot access 'GAME' before initialization` blew up the entire script and the panels came out empty, with nothing visibly broken. The screenshot only showed an empty card; what gave it away was reading the console with `--enable-logging=stderr`.
+- **Careful with headless Edge screenshots on scaled displays.** Asking for `--window-size=420` gave a viewport of 504 CSS px and a PNG of 420, cropping the right side: it looked as though the regions' counters were missing. There was no such bug. Before fixing something that only shows in a screenshot, **measure the DOM** (`--dump-dom` with a probe that writes the measurements into the `<title>`) — and delete the probe afterwards.
 
-### Técnica que conviene usar a partir de ahora
+### A technique worth using from now on
 
-**Savestates.** Guardar un savestate antes de coger un check permite volcar, recargar, y tener el check otra vez sin coger. Mapear ubicaciones deja de gastar la partida y el experimento A/B pasa a ser exacto: mismo estado de partida, única diferencia el check. Se descubrió tarde; habría ahorrado varias horas.
+**Savestates.** Saving a savestate before taking a check lets you dump, reload, and have the check available again untaken. Mapping locations stops consuming the save and the A/B experiment becomes exact: same save state, the only difference being the check. It was discovered late; it would have saved several hours.
 
 ---
 
-## La colocación sale de la ROM: el spoiler ya no hace falta
+## The placement comes out of the ROM: the spoiler is no longer needed
 
-**Hecho el 13 ago 2026.** Salió de preguntar si en vez de cargar un spoiler se
-puede leer de la ROM qué item hay en cada sitio. Se puede, y es lo que hace
-ahora `placement.py`: **5.371 ubicaciones con su item, sin pedir nada a nadie**.
+**Done 13 Aug 2026.** It came out of asking whether, instead of loading a
+spoiler, the ROM could be read for what item is in each place. It can, and it
+is what `placement.py` does now: **5,371 locations with their item, without
+asking anyone for anything**.
 
-### La tabla
+### The table
 
-`comboItemOverride()` (`src/common/item/item.c`) resuelve una consulta a un
-item, y lee de un fichero de la ROM, `COMBO_VROM_CHECKS`:
+`comboItemOverride()` (`src/common/item/item.c`) resolves a query into an item,
+and reads from a file in the ROM, `COMBO_VROM_CHECKS`:
 
 ```c
-typedef struct ComboOverrideData {   /* 16 bytes, ORDENADA por key */
+typedef struct ComboOverrideData {   /* 16 bytes, SORTED by key */
     u32 key;      /* (ovType << 24) | (sceneId << 16) | (roomId << 8) | id */
-    s16 player;   /* de quien es el item, para multi */
-    u16 value;    /* <-- el item, un GI */
+    s16 player;   /* whose item it is, for multiworld */
+    u16 value;    /* <-- the item, a GI */
     s16 giCloak;
     s16 unused[3];
 } ComboOverrideData;
 ```
 
-El juego la recorre con **búsqueda binaria** sobre la clave, con una caché de
-64 entradas. Nosotros podemos leerla entera de una vez.
+The game walks it with a **binary search** on the key, with a 64-entry cache.
+We can read the whole thing in one go.
 
-**Dónde está, y esta es la mejor noticia:** `COMBO_VROM_CHECKS` es
-`COMBO_EXTRA_DMA_VROM | 0x00400000` en el build de OoT y `| 0x00500000` en el
-de MM (`combo/defs.h`), o sea **`0xF0400000` y `0xF0500000`**. Constantes
-estructurales, no direcciones que se muevan con cada versión como los
-`0x80b0f00` de las tablas de xflags. Y se leen con `rom.read_extra_vrom`, que
-ya existe.
+**Where it is, and this is the best news:** `COMBO_VROM_CHECKS` is
+`COMBO_EXTRA_DMA_VROM | 0x00400000` in the OoT build and `| 0x00500000` in the
+MM one (`combo/defs.h`), i.e. **`0xF0400000` and `0xF0500000`**. Structural
+constants, not addresses that move with every version the way the xflag tables'
+`0x80b0f00` do. And they are read with `rom.read_extra_vrom`, which already
+exists.
 
-### Lo medido sobre la seed f5PCTnhD
+### What was measured on seed f5PCTnhD
 
 ```
-0xF0400000  build de OoT   36.000 bytes = 2250 entradas
-0xF0500000  build de MM    44.320 bytes = 2770 entradas
-                                          ----
-                            menos 2 centinelas (ovType 0xFF)  = 5018
+0xF0400000  OoT build   36,000 bytes = 2250 entries
+0xF0500000  MM build    44,320 bytes = 2770 entries
+                                       ----
+                         minus 2 sentinels (ovType 0xFF)  = 5018
 ```
 
-**5018 es exactamente el número de ubicaciones del spoiler log.** Las dos
-tablas salen ordenadas por clave y sin claves repetidas.
+**5018 is exactly the number of locations in the spoiler log.** Both tables come
+out sorted by key and with no repeated keys.
 
-Y el reparto por `ovType` da los tres bloques que faltaban por mapear:
+And the breakdown by `ovType` gives the three blocks that were left to map:
 
 | ovType | | OoT | MM | |
 |---|---|---|---|---|
 | 1 | chest | 179 | 188 | |
 | 2 | collectible | 37 | 22 | |
 | 3 | npc | 95 | 123 | |
-| 4 | gs | **100** | — | los 100 vanilla, clavado |
-| 5 | sf | — | **29** | las stray fairies que faltan |
+| 4 | gs | **100** | — | the 100 vanilla ones, exactly |
+| 5 | sf | — | **29** | the missing stray fairies |
 | 6 | cow | 9 | 8 | |
 | 7 | shop | 64 | 22 | |
 | 8 | scrub | 36 | — | |
 | 9 | sr | 80 | — | |
-| 10 | fish | **33** | — | los `caughtFishFlags` que faltan |
+| 10 | fish | **33** | — | the missing `caughtFishFlags` |
 | 16–27 | xflag0–11 | 1225+ | 1685+ | |
 
-> Ojo: esto **no** resuelve los 80 checks pendientes. Están pendientes porque
-> no sabemos **dónde vive su flag**, no porque no sepamos qué item hay. Lo que
-> hace la tabla es enumerarlos exactamente, y de paso confirmar los conteos.
+> Careful: this does **not** resolve the 80 pending checks. They are pending
+> because we do not know **where their flag lives**, not because we do not know
+> what item is there. What the table does is enumerate them exactly, and
+> confirm the counts along the way.
 
-### La clave, y la trampa que tuvo
+### The key, and the trap it had
 
-La clave de cada check, tal como la forma `placement.override_key`:
+Each check's key, as `placement.override_key` forms it:
 
 ```
 xflags:  ov = 0x10 + slice
-         room = (room & 0x3F) | ((setup & 3) << 6)      <- igual que comboXflagItemQuery
+         room = (room & 0x3F) | ((setup & 3) << 6)      <- same as comboXflagItemQuery
          key = (ov << 24) | (scene << 16) | (room << 8) | actor
 ```
 
-**Los demás tipos no llevan todos la escena.** Sólo `chest`, `collectible` y
-`sf` la usan; en `npc`, `gs`, `cow`, `shop`, `scrub`, `sr` y `fish` el byte de
-escena es **0**, porque son espacios de id globales. Se vio mirando las claves
-reales de la ROM, tras un primer intento en que todo eso fallaba en bloque.
+**The other types do not all carry the scene.** Only `chest`, `collectible` and
+`sf` use it; in `npc`, `gs`, `cow`, `shop`, `scrub`, `sr` and `fish` the scene
+byte is **0**, because they are global id spaces. It was found by looking at
+the ROM's real keys, after a first attempt in which all of that failed as a
+block.
 
-> **El id de la clave es el índice global del bitmap, y `checks.json` no lo
-> tenía.** En `npc`, `gs`, `shop`, `scrub` y `sr`, `mkchecks.py` reescribe
-> `bit` para dejar el bit dentro de su byte, y con eso 61 claves acababan
-> reclamadas por varios checks a la vez: `Hatch Chicken`, `Malon Egg`,
-> `Lost Woods Target` y `Saria's Song` compartían `0x03000000`. El id bueno
-> sólo existe en el momento de leer el CSV, así que ahora se guarda aparte en
-> el campo **`csv_id`** y la clave se forma con ese.
+> **The key's id is the bitmap's global index, and `checks.json` did not have
+> it.** In `npc`, `gs`, `shop`, `scrub` and `sr`, `mkchecks.py` rewrites `bit`
+> to leave the bit within its byte, and with that 61 keys ended up claimed by
+> several checks at once: `Hatch Chicken`, `Malon Egg`, `Lost Woods Target` and
+> `Saria's Song` shared `0x03000000`. The good id only exists at the moment the
+> CSV is read, so now it is kept separately in the **`csv_id`** field and the
+> key is formed from that.
 
-### La prueba de que es la colocación de verdad
+### The proof that it really is the placement
 
-Dos, y la segunda es la que vale.
+Two, and the second is the one that counts.
 
-**Uno**: si la tabla es lo que creemos, cada `gi` tiene que corresponder a un
-solo nombre de item del spoiler. Sobre los tipos con clave 1:1 salen **63 `gi`
-distintos y ni un conflicto real**. Los dos que aparecen con varios nombres son
-`Small Key (…)` y `Stray Fairy (…)`, que el generador nombra según la mazmorra
-— comportamiento correcto, no error de lectura.
+**One**: if the table is what we think it is, each `gi` has to correspond to a
+single item name in the spoiler. Over the types with a 1:1 key there are **63
+distinct `gi` and not one real conflict**. The two that appear with several
+names are `Small Key (…)` and `Stray Fairy (…)`, which the generator names by
+dungeon — correct behaviour, not a misreading.
 
-**Dos, la buena**: lo que importa no es que el texto coincida letra a letra,
-sino que **la clasificación de relleno salga igual**, que es para lo que se
-usa. Sobre las 5.018 ubicaciones que tienen item por las dos vías:
-
-```
-clasificacion de relleno, ROM contra spoiler:  5018 coinciden, 0 discrepan  (100%)
-nombres:  4755 identicos · 17 sólo cambian el sufijo (OoT)/(MM) · 246 distintos
-```
-
-Los 246 nombres distintos no son errores: el spoiler dice `Progressive Sword`
-y la ROM `Kokiri Sword`, el spoiler `Gold Rupee` y la ROM `Huge Rupee`. La ROM
-nombra el item concreto y el spoiler la entrada del pool.
-
-> **Las 34 discrepancias que sí hubo, y por qué importaban.** Salieron cuatro
-> casos: `Milk` contra `some Lon Lon Milk` y `1 Bomb` contra `Bomb`. Los dos
-> son de forma, no de contenido, pero los dos **hacían pasar por importante un
-> relleno**. Se arreglaron por los dos lados: `limpia_nombre` quita también el
-> `some` inicial, y los patrones de relleno admiten el singular y el
-> `Lon Lon`. De ahí sale el 100%.
-
-### Cobertura, y lo que queda fuera
+**Two, the good one**: what matters is not that the text matches letter for
+letter, but that **the junk classification comes out the same**, which is what
+it is used for. Over the 5,018 locations that have an item by both routes:
 
 ```
-checks activos:                    5074
-  con direccion:                   4995
-  con item de la ROM:              4939   (98,9%)
-sin item, en total:                 672
-  de esos, Master Quest:            616   correcto: no existen en esta seed
-  activos y con direccion:           56   (1,1%)
+junk classification, ROM against spoiler:  5018 agree, 0 disagree  (100%)
+names:  4755 identical · 17 differ only in the (OoT)/(MM) suffix · 246 different
 ```
 
-Los 56 son 25 `tree`, 7 `grass`, 5 `crate`, 5 `butterfly`, 4 `pot`, 3
-`boulder-silver`, 3 `collectible`, 2 `rock`, 1 `snowball` y 1 `npc`. Se quedan
-sin item y quien los consuma lo sabe: `is_junk(None)` da `False`, así que
-cuentan como importantes, que es el lado seguro por el que fallar.
+The 246 different names are not errors: the spoiler says `Progressive Sword`
+and the ROM `Kokiri Sword`, the spoiler `Gold Rupee` and the ROM `Huge Rupee`.
+The ROM names the concrete item and the spoiler the pool entry.
 
-### Cómo queda montado
+> **The 34 disagreements there were, and why they mattered.** Four cases turned
+> up: `Milk` against `some Lon Lon Milk` and `1 Bomb` against `Bomb`. Both are
+> about form rather than content, but both **made junk pass for important**.
+> They were fixed on both sides: `limpia_nombre` also strips a leading `some`,
+> and the junk patterns accept the singular and `Lon Lon`. That is where the
+> 100% comes from.
+
+### Coverage, and what falls outside
+
+```
+active checks:                     5074
+  with an address:                 4995
+  with an item from the ROM:       4939   (98.9%)
+without an item, in total:          672
+  of those, Master Quest:           616   correct: they do not exist in this seed
+  active and with an address:        56   (1.1%)
+```
+
+The 56 are 25 `tree`, 7 `grass`, 5 `crate`, 5 `butterfly`, 4 `pot`, 3
+`boulder-silver`, 3 `collectible`, 2 `rock`, 1 `snowball` and 1 `npc`. They are
+left with no item and whoever consumes them knows it: `is_junk(None)` gives
+`False`, so they count as important, which is the safe side to fail on.
+
+### How it is wired up
 
 | | |
 |---|---|
-| `placement.py` | lee las dos tablas de la ROM y `data/gi.yml`, y forma las claves |
-| `data/gi.yml` | copia de `data/defs/gi.yml` del repo; el índice `gi` es la posición + 1 |
-| `mkchecks.py` | guarda `csv_id`, y escribe `item`, `item_id`, `gi` y `ovkey` en cada fila |
-| `overlay.py` | `rom_items` de `checks.json`; el spoiler cargado a mano se pone **encima** |
+| `placement.py` | reads both tables from the ROM and `data/gi.yml`, and forms the keys |
+| `data/gi.yml` | a copy of the repo's `data/defs/gi.yml`; the `gi` index is the position + 1 |
+| `mkchecks.py` | stores `csv_id`, and writes `item`, `item_id`, `gi` and `ovkey` on each row |
+| `overlay.py` | `rom_items` from `checks.json`; a hand-loaded spoiler goes **on top** |
 
-El botón de cargar spoiler **se queda**, pero pasa a ser el camino de
-respaldo: sirve cuando de la ROM no se puede leer la tabla. La vista de
-director dice cuál está en uso — «5.371 items leídos de la ROM · no hace falta
-spoiler».
+The load-spoiler button **stays**, but becomes the fallback route: it is there
+for when the table cannot be read from the ROM. The director view says which
+one is in use — "5,371 items read from the ROM · no spoiler needed".
 
-Medido con el overlay servido sobre el volcado y **sin spoiler ninguno**:
-`can_filter` sale a `true` solo, y «sólo lo importante» da **4 / 612** y 2
-pendientes en Kokiri Forest — los mismos números exactos que daba cargando el
-spoiler a mano.
+Measured with the overlay served over the dump and **with no spoiler at all**:
+`can_filter` comes out `true` on its own, and "only what matters" gives **4 /
+612** and 2 remaining in Kokiri Forest — the exact same numbers it gave with
+the spoiler loaded by hand.
 
-### Y una precisión sobre «más estable con futuras versiones»
+### And a qualification about "more stable across future versions"
 
-Sí, pero conviene no venderlo de más:
+Yes, but it is worth not overselling it:
 
-- **Sí es más estable en la dirección**: `0xF0400000` es una constante
-  estructural, frente a las VROM de las tablas de xflags, que son de v32.0 y
-  ya han roto una vez con una seed de otra versión.
-- **No es independiente de la versión**: el formato de la clave, la numeración
-  de `ovType` y sobre todo el índice `gi` pueden cambiar entre versiones — un
-  item nuevo en medio de la lista desplaza todos los que van detrás.
+- **It is more stable in the address**: `0xF0400000` is a structural constant,
+  as against the xflag tables' VROMs, which are v32.0's and have already broken
+  once with a seed from another version.
+- **It is not version-independent**: the key's format, the `ovType` numbering
+  and above all the `gi` index can change between versions — a new item in the
+  middle of the list shifts everything behind it.
 
-Y una nota que no es técnica: leer la colocación de la ROM **no da menos
-información que el spoiler, da la misma**. Lo que se gana es que no hay
-fichero que encontrar, cargar ni validar; no que el tracker sepa menos.
+And a note that is not technical: reading the placement from the ROM **does not
+give less information than the spoiler, it gives the same**. What is gained is
+that there is no file to find, load or validate; not that the tracker knows
+less.
 
-## Lectura del inventario
+## Reading the inventory
 
-El tracker de items no necesita el sistema de checks: lee el inventario directamente del save context, que es más inmediato (no espera a cambiar de escena) y cubre los dos juegos.
+The item tracker does not need the check system: it reads the inventory straight from the save context, which is more immediate (it does not wait for a scene change) and covers both games.
 
-### Mapa de OoT
+### OoT's map
 
-Sacado de `combo/oot/save.h` y validado en juego. Ver `inventory.py`.
+Taken from `combo/oot/save.h` and validated in game. See `inventory.py`.
 
 ```
 items[24]  +0x74     ammo[15]  +0x8C     equipment +0x9C    upgrades +0xA0
 questItems +0xA4     dungeonItems +0xA8  goldTokens +0xD0
 ```
 
-`equipment` son cuatro nibbles (espadas, escudos, túnicas, botas), y `upgrades` ocho campos de 2–3 bits (carcaj, bolsa de bombas, fuerza, escama, cartera, bolsa de balas, palos, nueces). Los bitfields se leen a la manera de MIPS big endian: **el primer campo declarado en la struct ocupa los bits más altos**.
+`equipment` is four nibbles (swords, shields, tunics, boots), and `upgrades` eight fields of 2–3 bits (quiver, bomb bag, strength, scale, wallet, bullet bag, sticks, nuts). The bitfields are read the MIPS big-endian way: **the first field declared in the struct occupies the highest bits**.
 
-### Mapa de MM
+### MM's map
 
-No estaba en ningún sitio: se ancló cazando **dos máscaras**.
+It was nowhere to be found: it was anchored by hunting **two masks**.
 
 ```
-Deku   (máscara 5,  slot 29)  ->  +0x85
-Romani (máscara 12, slot 36)  ->  +0x8C     diferencia de 7 slots
+Deku   (mask 5,  slot 29)  ->  +0x85
+Romani (mask 12, slot 36)  ->  +0x8C     a difference of 7 slots
 ```
 
-Esa diferencia coincide con el orden real de máscaras de MM, y de ahí sale `items[48] = +0x68`. Con el layout de `MmInventory` del header, el resto por resta:
+That difference matches MM's real mask order, and from there comes `items[48] = +0x68`. With `MmInventory`'s layout from the header, the rest by subtraction:
 
 ```
 items[48] +0x68   ammo[24] +0x98   upgrades +0xB0   quest +0xB4
@@ -1655,13 +1674,13 @@ dungeonItems[10] +0xB8   dungeonKeys[9] +0xC2   strayFairies[10] +0xCC
 skullCountSwamp +0xEB8   skullCountOcean +0xEBA
 ```
 
-Comprobado por tres vías independientes: el slot 26 de un volcado valía `0x47` (Blast Mask, que salió del cofre de Mido); `quest` tenía el bit 12 (Song of Time, la del Skull Kid); y los trozos de corazón en los 4 bits altos de esa palabra.
+Checked three independent ways: slot 26 of one dump read `0x47` (Blast Mask, which came out of Mido's chest); `quest` had bit 12 (Song of Time, the Skull Kid's); and the heart pieces in that word's four high bits.
 
-**`MmUpgrades` tiene el mismo layout que `OotSaveUpgrades`** (sólo cambia `dive` por `scale`). Confirmado: al mejorar los palos deku el `u32` subió exactamente `1<<17`, que es donde cae `dekuStick` en ambos.
+**`MmUpgrades` has the same layout as `OotSaveUpgrades`** (only `dive` changes to `scale`). Confirmed: on upgrading the deku sticks the `u32` went up by exactly `1<<17`, which is where `dekuStick` falls in both.
 
-### La tabla de ids: 325 items sin cazar ninguno
+### The id table: 325 items with nothing hunted
 
-`packages/generator/include/combo/data/items.h` (copia en `data/ref/`) define los `ITEM_OOT_*` y `ITEM_MM_*`, **y el valor guardado en `items[]` es directamente ese id**. Validado contra los ocho ids cazados en vivo:
+`packages/generator/include/combo/data/items.h` (copy in `data/ref/`) defines the `ITEM_OOT_*` and `ITEM_MM_*`, **and the value stored in `items[]` is that id directly**. Validated against the eight ids hunted live:
 
 ```
 ITEM_MM_BOMBCHU 0x07 · ITEM_MM_POWDER_KEG 0x0c · ITEM_MM_MASK_DEKU 0x32
@@ -1669,93 +1688,93 @@ ITEM_MM_MASK_ROMANI 0x3c · ITEM_MM_MASK_BLAST 0x47 · ITEM_MM_BOOTS_HOVER 0xb2
 ITEM_OOT_POWDER_KEG 0xa7 · ITEM_OOT_COJIRO 0x2f
 ```
 
-162 items de OoT y 163 de MM quedan nombrados de golpe. **No hace falta cazar item por item para etiquetar el inventario**: basta con leer el id.
+162 OoT items and 163 MM ones get named in one go. **There is no need to hunt item by item just to label the inventory**: reading the id is enough.
 
-### Dos cosas que sólo se ven jugando
+### Two things you only see by playing
 
-- **OoTMM sincroniza las mejoras entre juegos.** Las mejoras de nueces y de palos tocaron `upgrades` y `ammo` en OoT *y* en MM a la vez. Dos casos independientes, así que es el comportamiento normal.
-- **Los items se cruzan de inventario.** El Powder Keg (de MM) ocupa el slot de bombas en OoT con id `0xA7`; las Hover Boots (de OoT) aparecen en el slot 17 de MM con id `0xB2`. Para el tracker: **no basta con mirar si un slot está ocupado, hay que leer el id**.
+- **OoTMM syncs upgrades across games.** The nut and stick upgrades touched `upgrades` and `ammo` in OoT *and* in MM at once. Two independent cases, so it is normal behaviour.
+- **Items cross inventories.** The Powder Keg (MM's) takes the bomb slot in OoT with id `0xA7`; the Hover Boots (OoT's) show up in MM's slot 17 with id `0xB2`. For the tracker: **it is not enough to look at whether a slot is occupied, you have to read the id**.
 
-### Verificaciones en vivo
+### Live verifications
 
-Quince items cogidos con el tracker mirando, cada uno confirmando una estructura distinta:
+Fifteen items picked up with the tracker watching, each one confirming a different structure:
 
-| Item | Qué confirmó |
+| Item | What it confirmed |
 |---|---|
-| Minuet · Serenade · Sun's Song | `questItems` de OoT |
+| Minuet · Serenade · Sun's Song | OoT's `questItems` |
 | Recovery Heart | `health` |
-| Large Magic Jar | (dejó `+0x537` sin identificar) |
-| Mejora de nueces · de palos | `upgrades` + `ammo`, y la sincronización entre juegos |
-| Deku Mask · Romani Mask | `items[48]` de MM y el orden de las 24 máscaras |
-| Song of Time · 2 trozos de corazón | `quest` de MM |
-| Restos de Twinmold | `quest` de MM con un objeto clave |
-| Skulltula del pantano | contador `+0xEB8` |
-| Piece of Heart (tienda) | bitmap `shops` del custom save |
-| Cojiro | slot 22 de OoT |
-| Giant's Knife | nibble de espadas + `swordHealth` |
-| Espada Kokiri | bit 0 del nibble de espadas |
-| Hover Boots | nibble de botas + slot 17 de MM |
-| Powder Keg | slot 12 de MM + slot de bombas en OoT |
-| Bolsa de bombchus | slot 7 de MM + slot 8 de OoT |
+| Large Magic Jar | (left `+0x537` unidentified) |
+| Nut upgrade · stick upgrade | `upgrades` + `ammo`, and the cross-game sync |
+| Deku Mask · Romani Mask | MM's `items[48]` and the order of the 24 masks |
+| Song of Time · 2 heart pieces | MM's `quest` |
+| Remains of Twinmold | MM's `quest` with a key object |
+| Swamp skulltula | the `+0xEB8` counter |
+| Piece of Heart (shop) | the custom save's `shops` bitmap |
+| Cojiro | OoT's slot 22 |
+| Giant's Knife | the sword nibble + `swordHealth` |
+| Kokiri Sword | bit 0 of the sword nibble |
+| Hover Boots | the boot nibble + MM's slot 17 |
+| Powder Keg | MM's slot 12 + OoT's bomb slot |
+| Bombchu Bag | MM's slot 7 + OoT's slot 8 |
 
-### El cazador
+### The hunter
 
-`ootmm.py items` lee los dos saves en bucle y canta cada cambio. Tres cosas lo hacen usable:
+`ootmm.py items` reads both saves in a loop and reports every change. Three things make it usable:
 
-- **Localiza las bases por firma y revalida en cada lectura.** Si detecta que la firma se movió, relocaliza sola: es lo que permite cruzar de OoT a MM sin reiniciar nada. La comprobación es gratis, porque la firma viene dentro del bloque que ya se lee.
-- **Calibra el ruido al arrancar.** Seis segundos observando qué se mueve solo, y eso queda silenciado. El bloque incluye posiciones y temporizadores que si no ahogan el log.
-- **Auto-silencia lo que insiste.** Un byte sin identificar que cambia más de tres veces se da por contador y se calla. Un item se coge una vez; un reloj no.
+- **It locates the bases by signature and revalidates on every read.** If it detects that the signature moved, it relocates on its own: that is what makes it possible to cross from OoT to MM without restarting anything. The check is free, because the signature comes inside the block already being read.
+- **It calibrates the noise at startup.** Six seconds watching what moves on its own, and that gets silenced. The block includes positions and timers that would otherwise drown the log.
+- **It auto-silences whatever insists.** An unidentified byte that changes more than three times is taken for a counter and goes quiet. An item is picked up once; a clock is not.
 
-Todo lo que no reconoce sale con offset y dirección, así que ningún item pasa inadvertido aunque escriba en un sitio nuevo. Es lo que permitió cazar los quince de arriba.
+Everything it does not recognise comes out with its offset and address, so no item goes unnoticed even if it writes somewhere new. That is what made it possible to hunt the fifteen above.
 
-### Cabo suelto: el campo `unk`
+### Loose end: the `unk` field
 
-Varios items encienden bits en el campo `unk` de la tabla de escenas, que en OoT vanilla no se usa:
+Several items set bits in the `unk` field of the scene table, which vanilla OoT does not use:
 
-| Item | Escenas | Bit |
+| Item | Scenes | Bit |
 |---|---|---|
-| Minuet / Blast Mask | 0 y 10 | 27 |
-| Cojiro | 0 y 10 | 2 |
-| Powder Keg | 1 y 20 | 24 |
+| Minuet / Blast Mask | 0 and 10 | 27 |
+| Cojiro | 0 and 10 | 2 |
+| Powder Keg | 1 and 20 | 24 |
 
-Siempre **dos** escenas y el mismo bit en ambas, pero el par cambia según el item, y en el caso del Powder Keg los valores base eran distintos entre las dos escenas (así que no son copias idénticas). Con tres muestras no da para deducir la regla. Merece la pena volver aquí: si el índice sigue algún orden, es otra vía para mapear checks.
+Always **two** scenes and the same bit in both, but the pair changes with the item, and in the Powder Keg's case the base values differed between the two scenes (so they are not identical copies). With three samples there is not enough to deduce the rule. Worth coming back here: if the index follows some order, it is another route for mapping checks.
 
-> **RESUELTO el 14 ago 2026, y no había regla que deducir: era una tabla.**
-> `SAVE_EXTRA_RECORD(type, index)` de `combo/save.h` es
-> `gOotSave + 0xd4 + 0x1c*index + 0x10`, o sea **el `unk` de la escena
-> `index`**. OoTMM mete ahí veintiún u32 propios. Los pares que se midieron
-> cuadran: Cojiro en las escenas 0 y 10 son `gOotExtraTrade` (índice 0) y
-> `gOotExtraTradeSave` (índice 10); el Powder Keg en 1 y 20 son
-> `gOotExtraItems` y `gMmExtraAmmo`.
+> **SOLVED 14 Aug 2026, and there was no rule to deduce: it was a table.**
+> `SAVE_EXTRA_RECORD(type, index)` from `combo/save.h` is
+> `gOotSave + 0xd4 + 0x1c*index + 0x10`, i.e. **scene `index`'s `unk`**. OoTMM
+> puts twenty-one u32s of its own in there. The measured pairs line up: Cojiro
+> in scenes 0 and 10 are `gOotExtraTrade` (index 0) and `gOotExtraTradeSave`
+> (index 10); the Powder Keg in 1 and 20 are `gOotExtraItems` and
+> `gMmExtraAmmo`.
 >
-> Y sí era «otra vía para mapear checks»: de ahí salió `gCowFlags` (índice 9)
-> y con él los 18 `cow_flags`. Ver la sección de las vacas más arriba. Quedan
-> sin usar `gMmOwlFlags` (11) y los cinco `gOotSilverRupeeCounts` (13–17), que
-> son los siguientes candidatos si hiciera falta.
+> And it really was "another route for mapping checks": `gCowFlags` (index 9)
+> came out of it and with it the 18 `cow_flags`. See the cow section further up.
+> Still unused are `gMmOwlFlags` (11) and the five `gOotSilverRupeeCounts`
+> (13–17), which are the next candidates if they are ever needed.
 
 ---
 
-## El `.exe`: repartirlo sin pedir Python
+## The `.exe`: distributing it without asking for Python
 
-**Hecho el 14 ago 2026.** `python -m PyInstaller ootmm.spec` deja
-`dist/ootmm-tracker.exe`, **8,5 MB**, un solo fichero y sin nada que instalar.
+**Done 14 Aug 2026.** `python -m PyInstaller ootmm.spec` leaves
+`dist/ootmm-tracker.exe`, **8.5 MB**, a single file with nothing to install.
 
-Lo que hacía falta no era empaquetar, que es una línea, sino separar dos cosas
-que hasta ahora eran la misma: **lo que viaja con el programa** y **lo que el
-programa produce**. Dentro del `.exe` dejan de estar en el mismo sitio, y cada
-una falla distinto.
+What was needed was not packaging, which is one line, but separating two things
+that until now were the same: **what travels with the program** and **what the
+program produces**. Inside the `.exe` they stop being in the same place, and
+each one fails differently.
 
-### `paths.py`, las dos carpetas
+### `paths.py`, the two folders
 
-| | Desde el código | Desde el `.exe` |
+| | From source | From the `.exe` |
 |---|---|---|
-| `paths.res(...)` — lo que viaja | la carpeta del proyecto | `sys._MEIPASS`, el temporal donde se desempaqueta |
-| `paths.user(...)` — lo que se genera | la carpeta del proyecto | `%LOCALAPPDATA%\OoTMM-Tracker\` |
+| `paths.res(...)` — what travels | the project folder | `sys._MEIPASS`, the temp folder it unpacks into |
+| `paths.user(...)` — what is generated | the project folder | `%LOCALAPPDATA%\OoTMM-Tracker\` |
 
-Ejecutando desde el código las dos devuelven lo de siempre, así que **no cambia
-nada** en el flujo de trabajo de aquí.
+Running from source both return what they always did, so **nothing changes** in
+the workflow here.
 
-Lo que va en cada una:
+What goes in each:
 
 ```
 res   data/ (pool CSVs, scenes.yml, npc.yml, gi.yml, ref/), overlay.html,
@@ -1763,203 +1782,203 @@ res   data/ (pool CSVs, scenes.yml, npc.yml, gi.yml, ref/), overlay.html,
 user  checks.json, icons.json, icons.png, discover-cache.json, icons/
 ```
 
-Poner los generados en `_MEIPASS` habría sido el fallo silencioso clásico: la
-carpeta se borra al salir, así que **cada arranque regeneraría las tablas** —lo
-único lento que hay— y nadie vería un error, sólo un tracker que tarda medio
-minuto en abrir siempre.
+Putting the generated files in `_MEIPASS` would have been the classic silent
+failure: the folder is deleted on exit, so **every start would regenerate the
+tables** —the only slow thing there is— and nobody would see an error, only a
+tracker that always takes half a minute to open.
 
-### El subproceso que no podía funcionar
+### The subprocess that could not work
 
-`discover.py` lanzaba los generadores con
-`subprocess.run([sys.executable, "mkchecks.py", ...])`. Dentro del `.exe`
-`sys.executable` **es el tracker**, no un intérprete, y no hay ningún `.py` que
-pasarle: eso relanza el tracker con argumentos que no entiende.
+`discover.py` launched the generators with
+`subprocess.run([sys.executable, "mkchecks.py", ...])`. Inside the `.exe`,
+`sys.executable` **is the tracker**, not an interpreter, and there is no `.py`
+to hand it: that relaunches the tracker with arguments it does not understand.
 
-Ahora `_generate()` importa el módulo y llama a su `main(argv)`. Los dos
-`main()` pasaron a aceptar `argv` (`ap.parse_args(argv)`), que es todo el
-cambio, y siguen valiendo como script suelto. `SystemExit` se captura para
-conservar el código de salida, que es lo que distingue «no pude» de «hecho» —y
-lo que hace que el aviso de *los checks son de otra ROM* siga saliendo.
+Now `_generate()` imports the module and calls its `main(argv)`. Both `main()`s
+were changed to accept `argv` (`ap.parse_args(argv)`), which is the whole
+change, and they still work as standalone scripts. `SystemExit` is caught to
+preserve the exit code, which is what distinguishes "I could not" from "done"
+—and what keeps the *the checks are from another ROM* warning appearing.
 
-Como se llaman por nombre, van en `hiddenimports` del `.spec`: el análisis
-estático no los ve, y sin eso el `.exe` arranca perfecto y sólo falla al
-cambiar de seed.
+Since they are called by name, they go in the `.spec`'s `hiddenimports`: static
+analysis does not see them, and without that the `.exe` starts perfectly and
+only fails when changing seed.
 
-### Lo que salió mal al construirlo
+### What went wrong while building it
 
-- **Excluir `email` del paquete.** Parecía muerto y `http.server` lo importa.
-  El tracker arrancaba entero —detección, tablas, iconos, enlace con el Lua,
-  todo correcto— y reventaba con `ModuleNotFoundError: No module named 'email'`
-  **al levantar el servidor**, que es lo último que pasa. La lista de
-  `excludes` se quedó en `tkinter` y `unittest`; el megabyte que ahorraba lo
-  otro no vale una traza así.
-- **Sin argumentos no hacía nada.** El subparser es obligatorio, así que
-  doble-clic = imprimir el uso y cerrar la ventana antes de que se lea. Desde
-  el `.exe`, sin argumentos ahora significa `overlay`; desde el código sigue
-  imprimiendo el uso.
-- **La consola se la lleva el proceso al morir.** `_run()` sostiene la ventana
-  con un `input()` al terminar, pero sólo si está congelado, si `stdin` es un
-  terminal y si **hubo doble clic o hubo error**: escribir un subcomando en una
-  consola ya deja la salida a la vista.
-- **Envolver `main()` en un `try` se comió todos los mensajes de error.** Aquí
-  se falla con `sys.exit("explicación")` por todas partes, y ese texto lo
-  imprime el intérprete **sólo si nadie captura el `SystemExit`**. `_run()` lo
-  capturaba para quedarse con el código de salida, así que cada uno de esos
-  fallos pasó a ser un código y silencio — y no sólo en el `.exe`, también
-  desde el código. Ahora, si `ex.code` no es un entero, se imprime a `stderr`.
-  Es el fallo de siempre en versión nueva: no se rompió, se calló.
-- **`--emu` equivocado no debe caer al emulador detectado.** Es una pista para
-  la búsqueda, así que apuntarlo a la carpeta incorrecta instalaba el script en
-  el emulador de verdad y decía que todo bien. Si se pasa a mano y no tiene
-  `Config\Project64.cfg`, error.
-- **Decir «instalado» de lo que no se ha escrito.** `ensure_lua()` devolvía la
-  ruta en los cuatro casos, así que negarse a pisar un script ajeno se
-  anunciaba igual que haberlo puesto. Ahora devuelve `(ruta, estado)` con
-  `written` / `same` / `kept`, y cada uno se cuenta distinto.
+- **Excluding `email` from the bundle.** It looked dead and `http.server`
+  imports it. The tracker started completely —detection, tables, icons, the
+  link with the Lua, all correct— and blew up with
+  `ModuleNotFoundError: No module named 'email'` **when bringing up the
+  server**, which is the last thing that happens. The `excludes` list was left
+  at `tkinter` and `unittest`; the megabyte the rest saved is not worth a
+  traceback like that.
+- **With no arguments it did nothing.** The subparser is mandatory, so a double
+  click = print the usage and close the window before it can be read. From the
+  `.exe`, no arguments now means `overlay`; from source it still prints the
+  usage.
+- **The console goes with the process when it dies.** `_run()` holds the window
+  open with an `input()` at the end, but only if it is frozen, if `stdin` is a
+  terminal and if **there was a double click or there was an error**: typing a
+  subcommand in a console already leaves the output visible.
+- **Wrapping `main()` in a `try` swallowed every error message.** Here failures
+  go through `sys.exit("explanation")` everywhere, and that text is printed by
+  the interpreter **only if nobody catches the `SystemExit`**. `_run()` was
+  catching it to keep the exit code, so every one of those failures became a
+  code and silence — and not only in the `.exe`, from source too. Now, if
+  `ex.code` is not an integer, it is printed to `stderr`. It is the same old
+  bug in a new outfit: it did not break, it went quiet.
+- **A wrong `--emu` must not fall back to the detected emulator.** It is a hint
+  for the search, so pointing it at the wrong folder installed the script into
+  the real emulator and said everything was fine. If it is passed by hand and
+  has no `Config\Project64.cfg`, that is an error.
+- **Saying "installed" about something not written.** `ensure_lua()` returned
+  the path in all four cases, so refusing to overwrite someone else's script was
+  announced exactly like having placed it. Now it returns `(path, status)` with
+  `written` / `same` / `kept`, and each is reported differently.
 
-### `tracker.lua` dentro del paquete
+### `tracker.lua` inside the package
 
-El script está en el `.exe`, así que ya no se puede copiar a mano. `ensure_lua()`
-lo escribe en `Scripts\` del emulador —que `discover` ya sabía localizar— la
-primera vez que arranca el overlay, y hay `ootmm-tracker.exe install-lua` para
-hacerlo aparte.
+The script is in the `.exe`, so it can no longer be copied by hand.
+`ensure_lua()` writes it into the emulator's `Scripts\` —which `discover`
+already knew how to find— the first time the overlay starts, and there is
+`ootmm-tracker.exe install-lua` to do it separately.
 
-> **Trampa nueva del enlace duro.** Editar `Scripts/tracker.lua` con una
-> herramienta que escriba el fichero entero **rompe el enlace**: se crea un
-> fichero nuevo con ese nombre y el emulador se queda con la copia vieja, sin
-> que nada avise. Pasó al traducir sus dos comentarios. Después de tocarlo:
-> `fsutil hardlink list`, y si hay un solo nombre, rehacerlo con
-> `Remove-Item <emu>` y `New-Item -ItemType HardLink`. Y reconstruir el
-> `.exe`, que lleva su propia copia dentro.
+> **A new hard-link trap.** Editing `Scripts/tracker.lua` with a tool that
+> writes the whole file **breaks the link**: a new file is created with that
+> name and the emulator keeps the old copy, with nothing to warn you. It
+> happened while translating its two comments. After touching it:
+> `fsutil hardlink list`, and if there is only one name, remake it with
+> `Remove-Item <emu>` and `New-Item -ItemType HardLink`. And rebuild the
+> `.exe`, which carries its own copy inside.
 
-Dos guardias: **nunca pisa un script que ya esté ahí** (si difiere lo dice y no
-lo toca, hay que pedirlo con `--force`), y **desde el código no escribe nada**
-salvo que se lo pidan, porque aquí la copia del proyecto y la del emulador son
-*el mismo fichero* por un enlace duro y sobrescribirlo lo partiría en dos
-copias que luego divergen en silencio. Se escribe en binario, que es la otra
-forma de no meter un BOM.
+Two guards: **it never overwrites a script that is already there** (if it
+differs it says so and leaves it alone; you have to ask with `--force`), and
+**from source it writes nothing** unless asked, because here the project's copy
+and the emulator's are *the same file* through a hard link and overwriting it
+would split it into two copies that then diverge silently. It is written in
+binary, which is the other way of not inserting a BOM.
 
-### Cómo se probó
+### How it was tested
 
-Un `tracker.lua` **falso en Python** —cliente que se conecta al puerto y sirve
-un volcado con el mismo protocolo: `PING` → `TRK1`, opcodes 2/3/4 y `0x10`—
-permite correr el overlay entero de punta a punta sin emulador. Está en el
-proyecto como `fakelua.py`, porque es la única forma de probar el `.exe`: el
-atajo `--dump` sólo lo tienen `items` y `checks`, y además se salta el enlace,
-que es justo la parte que el empaquetado podía romper. Es lo que dio la
-comparación de abajo:
+A **fake `tracker.lua` in Python** —a client that connects to the port and
+serves a dump with the same protocol: `PING` → `TRK1`, opcodes 2/3/4 and
+`0x10`— makes it possible to run the whole overlay end to end without an
+emulator. It is in the project as `fakelua.py`, because it is the only way to
+test the `.exe`: the `--dump` shortcut is only on `items` and `checks`, and it
+also skips the link, which is exactly the part packaging could break. It is
+what produced the comparison below:
 
-| Prueba | Resultado |
+| Test | Result |
 |---|---|
-| `checks.json` regenerado desde el código | **idéntico byte a byte** al de antes de tocar nada |
-| `icons.json` / `icons.png` | idénticos |
-| `checks.json` que genera el `.exe` | idéntico en las 6.043 filas (sólo cambia el `rom`, por las barras de la ruta) |
-| `/state.json` del `.exe` vs. del código, mismo volcado | **idéntico**, salvo `uptime` |
-| `ootmm-tracker.exe checks --dump` vs. `python ootmm.py checks --dump` | salida idéntica |
-| `/`, `/p/regions`, `/icons.png` servidos por el `.exe` | 200, 60.561 y 311.835 bytes |
-| Arranque **en limpio** (borrando `%LOCALAPPDATA%\OoTMM-Tracker`), sin argumentos, con `ram-en-mm.bin` | detecta ROM, regenera tablas e iconos, `active: mm`, bases `MM 0x801EF678` / `OoT 0x8076C4F0`, confianza 1.0 |
+| `checks.json` regenerated from source | **byte for byte identical** to the one from before anything was touched |
+| `icons.json` / `icons.png` | identical |
+| `checks.json` generated by the `.exe` | identical across all 6,043 rows (only `rom` differs, because of the path's slashes) |
+| the `.exe`'s `/state.json` vs. source's, same dump | **identical**, apart from `uptime` |
+| `ootmm-tracker.exe checks --dump` vs. `python ootmm.py checks --dump` | identical output |
+| `/`, `/p/regions`, `/icons.png` served by the `.exe` | 200, 60,561 and 311,835 bytes |
+| A **clean** start (deleting `%LOCALAPPDATA%\OoTMM-Tracker`), no arguments, with `ram-en-mm.bin` | detects the ROM, regenerates tables and icons, `active: mm`, bases `MM 0x801EF678` / `OoT 0x8076C4F0`, confidence 1.0 |
 
-La última es la que vale por todas: es exactamente lo que le pasa a quien lo
-descarga.
+The last one is worth all the rest: it is exactly what happens to whoever
+downloads it.
 
-### Lo que queda
+### What is left
 
-- **Los antivirus.** Un ejecutable de PyInstaller sin firmar da falsos
-  positivos; está avisado en el README. Firmarlo cuesta dinero, y la
-  alternativa honesta es que quien no se fíe use el código.
-- Sólo está probado en esta máquina (Windows 11, Python 3.14, PyInstaller
-  6.22). El `.spec` no tiene nada de Windows, pero nadie lo ha construido en
-  otro sitio.
-- El arranque tarda un par de segundos en desempaquetarse, que es el precio del
-  fichero único. Con `--onedir` no pasaría, a cambio de repartir una carpeta.
+- **Antivirus software.** An unsigned PyInstaller executable gives false
+  positives; it is flagged in the README. Signing it costs money, and the
+  honest alternative is that anyone who does not trust it uses the source.
+- It has only been tested on this machine (Windows 11, Python 3.14, PyInstaller
+  6.22). The `.spec` has nothing Windows-specific in it, but nobody has built it
+  anywhere else.
+- Startup takes a couple of seconds to unpack, which is the price of the single
+  file. With `--onedir` it would not, at the cost of distributing a folder.
 
 ---
 
-## Los nombres de items salen de `kItemNames[]`
+## Item names come out of `kItemNames[]`
 
-**Hecho el 14 ago 2026.** Era el último fallo de versión que no avisaba: los
-nombres venían de `data/gi.yml`, y ahí **el índice `gi` es la posición en el
-fichero**, así que un item nuevo en medio corre todos los de detrás. No se
-rompe: se equivoca de nombre y se calla.
+**Done 14 Aug 2026.** It was the last version failure that gave no warning: the
+names came from `data/gi.yml`, and there **the `gi` index is the position in the
+file**, so a new item in the middle shifts everything behind it. It does not
+break: it gets the name wrong and says nothing.
 
-### Dónde está
+### Where it is
 
-Está escrito en el repo, no hubo que adivinarlo:
+It is written down in the repo, none of it had to be guessed:
 
 - `packages/generator/include/combo/gi.h` → `extern const char* const kItemNames[];`
 - `packages/generator/src/common/text/text.c` → `itemName = kItemNames[gi - 1];`
-  (confirma el `- 1` que ya se dedujo de `data.ts`)
-- `packages/generator/lib/combo/codegen.ts` lo genera recorriendo `GI` en orden,
-  que es el orden de `gi.yml`.
+  (confirming the `- 1` already deduced from `data.ts`)
+- `packages/generator/lib/combo/codegen.ts` generates it by walking `GI` in
+  order, which is `gi.yml`'s order.
 
-Y vive en el **payload**, que es otro fichero de la extra DMA. De
+And it lives in the **payload**, which is another file of the extra DMA. From
 `combo/defs.h`:
 
-| | VROM | Se carga en | Tamaño |
+| | VROM | Loaded at | Size |
 |---|---|---|---|
-| payload de OoT | `0xF0000000` | `0x80400000` | `0x80000` |
-| payload de MM | `0xF0100000` | `0x80720000` | `0x60000` |
+| OoT payload | `0xF0000000` | `0x80400000` | `0x80000` |
+| MM payload | `0xF0100000` | `0x80720000` | `0x60000` |
 
-Como el payload se carga entero y de una pieza, **un puntero de dentro es
-`PAYLOAD_RAM + offset en el fichero`**. Eso es lo que hace que se pueda leer
-desde la ROM sin emulador: se resuelve el puntero restando la base.
+Since the payload is loaded whole and in one piece, **a pointer inside it is
+`PAYLOAD_RAM + offset in the file`**. That is what makes it readable from the
+ROM without an emulator: the pointer is resolved by subtracting the base.
 
-### Localizarlo por contenido, no por dirección
+### Locating it by content, not by address
 
-Una dirección más sería una constante de versión más, o sea el problema que
-esto viene a quitar. Se busca por forma: **la tirada más larga de u32
-consecutivos que caen dentro del payload y apuntan todos a una cadena**.
+One more address would be one more version constant, i.e. the very problem this
+is here to remove. It is searched for by shape: **the longest run of
+consecutive u32s that fall inside the payload and all point at a string**.
 
-En la seed de hoy sale exactamente una tirada de **936**, que son las 936
-entradas de `gi.yml`, en los dos payloads. Pero hay una segunda tirada que
-también es 100% cadenas:
-
-```
-+0x039084   936 ptrs   cadenas: 100.0%   <- kItemNames
-+0x0480CC   822 ptrs   cadenas:  38.7%
-+0x046308   254 ptrs   cadenas: 100.0%   <- nombres de región, para las pistas
-```
-
-Lo que las separa: **los nombres de item llevan código de color y los de
-región no.** 927 de 936 traen un byte de control; los 254 no traen ninguno.
-Con ese segundo filtro la identificación es inequívoca sin depender de cuál
-es más larga.
-
-### El texto, y por qué se limpia distinto en cada juego
-
-Los dos payloads llevan **las mismas palabras con distinta codificación**:
+In today's seed there is exactly one run of **936**, which is `gi.yml`'s 936
+entries, in both payloads. But there is a second run that is also 100% strings:
 
 ```
-OoT:  b'the \x05AMegaton Hammer'      0x05 + byte de color
-MM:   b'the \x01Megaton Hammer'       un solo byte
++0x039084   936 ptrs   strings: 100.0%   <- kItemNames
++0x0480CC   822 ptrs   strings:  38.7%
++0x046308   254 ptrs   strings: 100.0%   <- region names, for the hints
 ```
 
-Por eso el limpiador es por juego. Después, lo de siempre: quitar el artículo
-y colapsar espacios, para que quede con la misma forma que escribía el
-spoiler, que es contra la que están escritas las reglas del relleno.
+What separates them: **item names carry a colour code and region names do
+not.** 927 of 936 have a control byte; the 254 have none. With that second
+filter the identification is unambiguous without depending on which is longer.
 
-### Lo que se midió
+### The text, and why it is cleaned differently per game
 
-Con la seed que se está jugando (`dockiNAq`):
+Both payloads carry **the same words with different encodings**:
 
-- 936 nombres leídos, `gi.yml` coincide en **901 de 927**.
-- Las 26 que no: todas `Rusty Key (...)`, con la ROM dando el nombre bueno
-  (`Rusty Key (Market Treasure Chest Game)`) y el fichero uno viejo
+```
+OoT:  b'the \x05AMegaton Hammer'      0x05 + a colour byte
+MM:   b'the \x01Megaton Hammer'       a single byte
+```
+
+That is why the cleaner is per game. After that, the usual: strip the article
+and collapse whitespace, so it ends up with the same shape the spoiler wrote,
+which is what the junk rules are written against.
+
+### What was measured
+
+With the seed being played (`dockiNAq`):
+
+- 936 names read, `gi.yml` agrees on **901 of 927**.
+- The 26 that do not: all of them `Rusty Key (...)`, with the ROM giving the
+  right name (`Rusty Key (Market Treasure Chest Game)`) and the file an old one
   (`Rusty Key (Treasure Chest Game)`).
-- **Ninguna de esas 26 se coloca en esta seed** (0 de los 317 `gi` que usa),
-  porque esa función —cerrar con llave puertas que no tienen cerradura— no
-  está activada. Por eso `checks.json` sale **byte a byte idéntico** después
-  del cambio, que es la mejor regresión que se podía pedir.
+- **None of those 26 is placed in this seed** (0 of the 317 `gi` it uses),
+  because that feature —locking doors that have no lock— is not enabled. That is
+  why `checks.json` comes out **byte for byte identical** after the change,
+  which is the best regression test one could ask for.
 
-Y con las demás ROMs de `Downloads`, que es donde se ve para qué sirve esto:
+And with the other ROMs in `Downloads`, which is where you see what this is for:
 
-| | nombres | acuerdo con `gi.yml` |
+| | names | agreement with `gi.yml` |
 |---|---|---|
-| 17 ficheros (`Siixg4Kf`, `7NxgFEzA`, `BIEwYjtP`…) | **829** | 136/822 |
-| 11 ficheros (`dHN9YY2c`, `f5PCTnhD`, `Lunes`, `xmMVaicW`…) | 936 | 927/927 |
+| 17 files (`Siixg4Kf`, `7NxgFEzA`, `BIEwYjtP`…) | **829** | 136/822 |
+| 11 files (`dHN9YY2c`, `f5PCTnhD`, `Lunes`, `xmMVaicW`…) | 936 | 927/927 |
 | `dockiNAq` | 936 | 901/927 |
 
-Las de 829 son de una versión bastante anterior, y ahí el desfase es total:
+The 829 ones are from a considerably earlier version, and there the shift is
+total:
 
 ```
 gi 200   gi.yml: Dungeon Map (Jabu)     ROM: Compass (Water)
@@ -1967,54 +1986,54 @@ gi 600   gi.yml: Giant's Mask           ROM: Goron Lullaby
 gi 800   gi.yml: Soul of Lulu           ROM: Nayru's Love
 ```
 
-O sea que el fallo no era una hipótesis: estaba vivo en media carpeta.
+So the bug was not a hypothesis: it was live across half the folder.
 
-### Cuando no puede, lo dice
+### When it cannot, it says so
 
-`gi.yml` se queda para el **símbolo** (`OOT_BOMBS_5`), que no sobrevive a la
-compilación y por tanto no está en la ROM. Pero sólo se usa si el fichero
-sigue alineado: se comparan sus nombres con los de la ROM y por debajo del
-**90% de acuerdo** se descarta el `item_id` y se explica por qué.
+`gi.yml` stays for the **symbol** (`OOT_BOMBS_5`), which does not survive
+compilation and therefore is not in the ROM. But it is only used while the file
+is still aligned: its names are compared with the ROM's and below **90%
+agreement** the `item_id` is dropped and it explains why.
 
-La prueba de que el guardia funciona es meter el fallo a mano. Con un item
-falso insertado en la posición 20 de `gi.yml`:
+The proof that the guard works is inserting the fault by hand. With a fake item
+inserted at position 20 of `gi.yml`:
 
 ```
 names: 936 read from the ROM's kItemNames; gi.yml agrees on 29/928
   WARNING: data/gi.yml does not line up with this ROM.
 ```
 
-y los nombres siguen saliendo bien, porque ya no dependen de ese fichero:
-`gi 24` da `Spooky Mask`, que es lo que hay, en vez del `Skull Mask` corrido
-que habría dado antes.
+and the names still come out right, because they no longer depend on that file:
+`gi 24` gives `Spooky Mask`, which is what is there, instead of the shifted
+`Skull Mask` it would have given before.
 
-Sin payload localizable se cae a `gi.yml` **diciéndolo**, y una ROM que no sea
-de OoTMM —probado con Super Mario 64 y con la OoT vanilla— devuelve `None` en
-vez de reventar: su cabecera de extra DMA no existe y `struct.error` se
-escapaba por no estar en el `except`.
+With no locatable payload it falls back to `gi.yml` **saying so**, and a ROM
+that is not OoTMM's —tested with Super Mario 64 and with vanilla OoT— returns
+`None` instead of blowing up: its extra DMA header does not exist and
+`struct.error` was escaping because it was not in the `except`.
 
-### Lo que esto NO arregla
+### What this does NOT fix
 
-Las **tablas de xflags** siguen siendo constantes de `custom.h` de v32.0. Esas
-17 siguen abortando en `mkchecks` con un 72% de bits
-imposibles, y hacen bien. Esto arregla los nombres, no las direcciones.
+The **xflag tables** are still v32.0 `custom.h` constants. Those 17 still abort
+in `mkchecks` with 72% impossible bits, and rightly so. This fixes the names,
+not the addresses.
 
 ---
 
-## Las tablas de xflags se localizan por forma
+## The xflag tables are located by shape
 
-**Hecho el 14 ago 2026.** Era la última dirección cableada de las importantes,
-y la que ya había roto una vez. Ahora `locate_xflag_tables()` las encuentra
-sola y las constantes de `custom.h` se quedan **de contraste**: si lo que
-aparece no está donde ellas dicen, se dice y se usa lo encontrado.
+**Done 14 Aug 2026.** It was the last hardcoded address of the important ones,
+and the one that had already broken once. Now `locate_xflag_tables()` finds them
+on its own and `custom.h`'s constants stay **as a cross-check**: if what turns
+up is not where they say, it says so and uses what was found.
 
-### Lo que hizo que fuera fácil
+### What made it easy
 
-Antes de escribir nada, mirar la extra DMA entera de dos ROMs de familias
-distintas. Ahí estaba todo:
+Before writing anything, looking at the whole extra DMA of two ROMs from
+different families. It was all there:
 
 ```
-dockiNAq (actual)                         Siixg4Kf (vieja)
+dockiNAq (current)                        Siixg4Kf (old)
 0x080b0f00-0x080b0fca    202 B  raw       0x080948d0-0x0809499a    202 B  raw
 0x080b0fd0-0x080b10ec    284 B  raw       0x080949a0-0x08094abc    284 B  raw
 0x080b10f0-0x080b41c8  12504 B  raw       0x08094ac0-0x08097b98  12504 B  raw
@@ -2023,60 +2042,59 @@ dockiNAq (actual)                         Siixg4Kf (vieja)
 0x080b43b0-0x080b6708   9048 B  raw       0x08097d80-0x0809a0d8   9048 B  raw
 ```
 
-**Cada tabla es su propia entrada y va sin comprimir**, y los seis tamaños son
-idénticos entre versiones: sólo se habían movido `0x1C630`. No había que
-buscar dentro de ningún fichero.
+**Each table is its own entry and is uncompressed**, and the six sizes are
+identical across versions: they had only moved by `0x1C630`. There was no need
+to search inside any file.
 
-De propina: `scenes` y `setups` son **byte a byte iguales** en las dos
-familias. Lo único que cambia de contenido es `rooms`, que es dato que se lee.
+As a bonus: `scenes` and `setups` are **byte for byte equal** in both families.
+The only thing that changes in content is `rooms`, which is the data being read.
 
-### El criterio
+### The criterion
 
-Las tres tablas son una cadena, y una cadena se reconoce por su forma:
+The three tables are a chain, and a chain is recognisable by its shape:
 
 ```
-scenes[]  u16, no decreciente, empieza en 0, indexa setups[]
-setups[]  u16, no decreciente, empieza en 0, indexa rooms[]
-rooms[]   s16, el bit; sin orden ninguno
+scenes[]  u16, non-decreasing, starts at 0, indexes setups[]
+setups[]  u16, non-decreasing, starts at 0, indexes rooms[]
+rooms[]   s16, the bit; no ordering at all
 ```
 
-Un candidato son tres entradas seguidas, sin comprimir, donde las dos primeras
-tienen esa forma y **cada una indexa dentro de la siguiente**:
-`max(scenes) < len(setups)` y `max(setups) < len(rooms)`. Eso último es lo que
-hace el criterio fuerte: no es «se parece», es que **la cadena cierra**.
+A candidate is three consecutive uncompressed entries where the first two have
+that shape and **each one indexes inside the next**: `max(scenes) < len(setups)`
+and `max(setups) < len(rooms)`. That last part is what makes the criterion
+strong: it is not "it looks similar", it is that **the chain closes**.
 
-Cuál es de cada juego sale de `scenes.yml`: los ids de OoT llegan a 100 y los
-de MM a 113, así que la tabla tiene que ser lo bastante larga. El generador
-emite la de OoT primero y así ha sido en las 29, pero el encaje se comprueba en
-vez de darse por hecho.
+Which one belongs to which game comes from `scenes.yml`: OoT's ids reach 100 and
+MM's 113, so the table has to be long enough. The generator emits OoT's first
+and that has held in all 29, but the fit is checked rather than assumed.
 
-### Medido sobre las 29 ROMs de `Downloads`
+### Measured over the 29 ROMs in `Downloads`
 
 | | |
 |---|---|
-| cadenas encontradas | **exactamente 2 por ROM**, 0 falsos positivos |
-| forma, en las 29 | OoT `101 / 142 / 6252`, MM `114 / 118 / 4524` |
-| ROMs actuales (12) | devuelve **justo las constantes** `0x080B0F00` / `0x080B41D0` |
-| ROMs viejas (17) | `0x080948D0` / `0x08097BA0` |
+| chains found | **exactly 2 per ROM**, 0 false positives |
+| shape, across all 29 | OoT `101 / 142 / 6252`, MM `114 / 118 / 4524` |
+| current ROMs (12) | returns **precisely the constants** `0x080B0F00` / `0x080B41D0` |
+| old ROMs (17) | `0x080948D0` / `0x08097BA0` |
 
-Que en las actuales devuelva las constantes es lo que convierte el cambio en un
-**no-op comprobable**: `checks.json` sale byte a byte idéntico, y si no
-saliera, el localizador estaría mal.
+That it returns the constants on the current ones is what turns the change into
+a **checkable no-op**: `checks.json` comes out byte for byte identical, and if
+it did not, the locator would be wrong.
 
-### La segunda barrera, que es la parte interesante
+### The second barrier, which is the interesting part
 
-Con las tablas localizadas, la seed vieja dejó de abortar y pasó a resolver los
-4.751 xflags... escribiendo un `checks.json` con **30 colisiones** (22 OoT, 8
-MM), todas de `Boulder`. Los CSV del pool son de v32.0, esa versión tiene
-actores que la vieja no, y sus filas caen sobre bits de otros checks.
+With the tables located, the old seed stopped aborting and went on to resolve
+the 4,751 xflags... writing a `checks.json` with **30 collisions** (22 OoT, 8
+MM), all of them `Boulder`. The pool CSVs are v32.0's, that version has actors
+the old one does not, and their rows land on other checks' bits.
 
-O sea: **el cambio, tal cual, empeoraba las cosas.** Antes una seed vieja
-abortaba y dejaba el `checks.json` bueno donde estaba; ahora lo pisaba con uno
-en el que 30 checks se marcan entre ellos. Justo lo que dice la regla de que el
-respaldo tiene que ser mejor que nada, no peor que lo que ya tenías.
+That is: **the change, as it stood, made things worse.** Before, an old seed
+aborted and left the good `checks.json` where it was; now it clobbered it with
+one in which 30 checks mark each other. Exactly what the rule about the fallback
+having to be better than nothing, not worse than what you already had, says.
 
-Así que `collisions()` cuenta los pares que comparten bit sin ser vanilla/MQ
-—que es la única coincidencia legítima— y aborta **antes de escribir**:
+So `collisions()` counts the pairs that share a bit without being vanilla/MQ
+—which is the only legitimate coincidence— and aborts **before writing**:
 
 ```
 ABORTED: 30 pairs of checks share a bit without being
@@ -2086,20 +2104,20 @@ checks.json is left untouched; whatever was there still stands.
    example: Lost Woods Rupee Arrow 1 / Lost Woods Boulder Early
 ```
 
-Y el diagnóstico es preciso, que es lo que vale: **no dice «no puedo», dice qué
-es lo que no cuadra**. Antes de esto, la misma seed daba «las tablas no
-coinciden con las constantes», que ahora sería mentira.
+And the diagnosis is precise, which is what counts: **it does not say "I
+cannot", it says what does not line up**. Before this, the same seed said "the
+tables do not match the constants", which would now be a lie.
 
-El aviso de colisiones ya existía, pero se imprimía *después* de escribir el
-fichero y sólo como una línea más entre cuarenta. Existir no es lo mismo que
-frenar.
+The collision warning already existed, but it was printed *after* writing the
+file and only as one more line among forty. Existing is not the same as
+stopping.
 
-### Cabo suelto
+### Loose end
 
-Los **CSV del pool** son ahora la dependencia de versión visible. Hasta que las
-filas salgan de la ROM o se elija el CSV por versión, las seeds viejas se
-pararán en esa segunda barrera, que es lo correcto.
+The **pool CSVs** are now the visible version dependency. Until the rows come
+out of the ROM or the CSV is chosen by version, old seeds will stop at that
+second barrier, which is the right behaviour.
 
-Y de paso: una ROM que no sea de OoTMM daba un `struct.error` sobre tamaños de
-buffer. Ahora `rom.extra_dma()` lo comprueba una vez y dice
+And along the way: a ROM that is not OoTMM's gave a `struct.error` about buffer
+sizes. Now `rom.extra_dma()` checks once and says
 `it does not look like an OoTMM seed`.
