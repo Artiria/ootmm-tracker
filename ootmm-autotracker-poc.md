@@ -785,7 +785,7 @@ La regla no es alargar la última palabra —en las máscaras siempre es «Mask�
 
 ### Imágenes puestas a mano
 
-Carpeta `icons/`, con su `LEEME.md`. Lo que dejes ahí manda sobre el icono de la ROM, y está pensado para tapar lo que la ROM no tiene — las máscaras propias de MM. **No se descarga nada**: las imágenes las pone el usuario.
+Carpeta `icons/`, con su `README.md`. Lo que dejes ahí manda sobre el icono de la ROM, y está pensado para tapar lo que la ROM no tiene — las máscaras propias de MM. **No se descarga nada**: las imágenes las pone el usuario.
 
 El nombre del fichero se compara normalizado, así que valen tanto el nombre que enseña el overlay (`deku-mask.png`) como el de `items.h` (`mask-deku.png`), y `icons/mm/` sólo aplica a Majora mientras que `icons/` vale para los dos.
 
@@ -1759,7 +1759,7 @@ Lo que va en cada una:
 
 ```
 res   data/ (pool CSVs, scenes.yml, npc.yml, gi.yml, ref/), overlay.html,
-      Scripts/tracker.lua, icons/LEEME.md, README.md
+      Scripts/tracker.lua, icons/README.md, README.md
 user  checks.json, icons.json, icons.png, discover-cache.json, icons/
 ```
 

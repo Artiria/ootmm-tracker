@@ -1,170 +1,175 @@
-# Autotracker OoTMM
+# OoTMM Autotracker
 
-Lee el estado de una partida de OoTMM desde Project64-EM y lo traduce a
-nombres: inventario, canciones, máscaras, equipo, mejoras y checks.
+Reads the state of an OoTMM run from Project64-EM and turns it into names:
+inventory, songs, masks, equipment, upgrades and checks.
 
-El **cómo y el porqué** están en [`ootmm-autotracker-poc.md`](ootmm-autotracker-poc.md):
-direcciones, offsets, qué se verificó y cómo, y los cabos sueltos. Léelo antes
-de tocar nada.
+**No spoiler log needed.** What item sits in each location is read from the
+seed ROM itself.
 
-## Arrancar
+The **how and why** are in
+[`ootmm-autotracker-poc.md`](ootmm-autotracker-poc.md): addresses, offsets,
+what was verified and how, and the loose ends. Read it before changing
+anything.
 
-### Con el `.exe` (no hace falta Python)
+## Getting started
 
-Doble clic en `ootmm-tracker.exe` y ya: detecta la ROM, genera sus tablas e
-iconos la primera vez, deja `tracker.lua` en la carpeta `Scripts\` del
-emulador y abre el overlay. En el emulador, con la ROM cargada:
-**Debugger > Scripts**, ejecutar `tracker.lua`. El orden da igual.
+### With the `.exe` (no Python needed)
 
-Los subcomandos de abajo funcionan igual: `ootmm-tracker.exe items`.
+Double-click `ootmm-tracker.exe` and that is it: it finds the ROM, generates
+its tables and icons the first time, drops `tracker.lua` into the emulator's
+`Scripts\` folder and opens the overlay. In the emulator, with the ROM loaded:
+**Debugger > Scripts**, run `tracker.lua`. Either order works.
 
-Lo que genera **no** va junto al ejecutable, va a
-`%LOCALAPPDATA%\OoTMM-Tracker\` (`checks.json`, `icons.*`, la caché, y la
-carpeta `icons\` donde poner los tuyos).
+The subcommands below work the same way: `ootmm-tracker.exe items`.
 
-> Windows Defender y compañía desconfían de los ejecutables de PyInstaller sin
-> firmar. No está firmado —firmar cuesta dinero— así que puede saltar un aviso
-> de SmartScreen la primera vez. Quien prefiera no fiarse tiene el código aquí
-> al lado, que hace exactamente lo mismo.
+What it generates does **not** sit next to the executable — it goes to
+`%LOCALAPPDATA%\OoTMM-Tracker\` (`checks.json`, `icons.*`, the cache, and the
+`icons\` folder where you can drop your own).
 
-### En multiworld (sin probar todavía)
+> Windows Defender and friends are suspicious of unsigned PyInstaller
+> executables. This one is not signed, so SmartScreen may warn you the first
+> time — "More info → Run anyway". If you would rather not trust a binary, the
+> source is right here and does exactly the same thing.
 
-Cada jugador lleva **su** ROM, **su** partida y **su** tracker: el `.exe` de
-cada uno detecta lo suyo y no habla con el del otro. El tracker ya entiende que
-un item sea de otro mundo — lo lee de la tabla de la ROM y lo apunta como
-`player`.
+### In multiworld (not tested yet)
 
-**Pero antes de sentaros a una partida larga, haced esta prueba de dos
-minutos**, porque decide si esto funciona y nunca se ha comprobado:
+Every player runs **their own** ROM, save and tracker: each `.exe` finds its
+own things and never talks to anyone else's. The tracker already understands
+that an item can belong to another world — it reads that from the ROM's table
+and records it as `player`.
 
-> Con la ROM cargada, abrid **Debugger > Scripts** y arrancad el `adapter.lua`
-> del MultiClient **y** `tracker.lua`, en ese orden. Mirad si los dos siguen
-> vivos y si el overlay se pone en `ready`.
+**Before you sit down for a long session, please run this two-minute test**,
+because it decides whether this works at all and it has never been checked:
 
-- **Si aguantan los dos**: listo, no hay que hacer nada más. El tracker va
-  igual que en single.
-- **Si el emulador sólo deja uno**: entonces **hoy no se puede** llevar el
-  tracker y el multi a la vez, y la partida hay que jugarla sin tracker. No
-  hay apaño: el modo `proxy` **no vale** para esto —es una herramienta de
-  diagnóstico, se pone en medio para apuntar qué direcciones usa el multi y
-  escupir un resumen, pero no alimenta el overlay—. Haría falta un script Lua
-  que hiciera las dos cosas, y no está escrito.
+> With the ROM loaded, open **Debugger > Scripts** and start the MultiClient's
+> `adapter.lua` **and** `tracker.lua`, in that order. See whether both stay
+> alive and whether the overlay reaches `ready`.
 
-Sea cual sea el resultado, **anotad qué dijo el emulador al intentarlo**: es la
-pregunta P4 del POC, lleva abierta desde el principio del proyecto, y esa
-prueba de dos minutos la cierra.
+- **If both hold**: nothing else to do. The tracker behaves exactly as in
+  single-player.
+- **If the emulator only allows one**: then today you **cannot** run the
+  tracker and the multiworld client at the same time, and the session has to
+  be played without the tracker. There is no workaround: `proxy` mode is
+  **not** one — it is a diagnostic tool that sits in the middle to log which
+  addresses the multiworld client uses, and it does not feed the overlay. What
+  would be needed is a Lua script doing both jobs, and it is not written.
 
-### Desde el código
+Either way, **write down what the emulator said**: this is question P4 in the
+POC, it has been open since the beginning of the project, and that two-minute
+test closes it.
 
-1. Copia `Scripts\tracker.lua` a la carpeta `Scripts\` de Project64-EM (o
-   `python ootmm.py install-lua`, que la busca sola). Con la ROM cargada:
-   **Debugger > Scripts**, ejecutar `tracker.lua`.
-2. Aquí:
+### From source
+
+1. Copy `Scripts\tracker.lua` into Project64-EM's `Scripts\` folder (or run
+   `python ootmm.py install-lua`, which finds it on its own). With the ROM
+   loaded: **Debugger > Scripts**, run `tracker.lua`.
+2. Then:
 
 ```
 python ootmm.py items
 ```
 
-Localiza los saves por firma, calibra el ruido 6 segundos (no toques nada) y a
-partir de ahí canta cada cambio. Aguanta el cambio entre OoT y MM: cuando
-cruzas, relocaliza las bases solo.
+It locates the save contexts by signature, calibrates noise for six seconds
+(do not touch anything) and from there reports every change. It survives
+switching between OoT and MM: when you cross over, it relocates the bases by
+itself.
 
-El orden da igual — `tracker.lua` reintenta la conexión hasta que levantas el
-daemon, y reconecta si lo reinicias.
+Order does not matter — `tracker.lua` retries the connection until the daemon
+is up, and reconnects if you restart it.
 
-## Subcomandos
+## Subcommands
 
 | | |
 |---|---|
-| `items` | inventario de ambos juegos en bucle, cantando cambios |
-| `checks` | checks completados, resueltos a nombre del spoiler |
-| `watch ADDR:SIZE,…` | sondear direcciones sueltas |
-| `dump ADDR:LEN` | volcar una región (acepta `oot`, `mm`) |
-| `find fichero PATRÓN` | buscar una firma en un volcado |
-| `diff a b` | comparar volcados |
-| `proxy` | capturar qué direcciones usa el MultiClient |
-| `install-lua` | copiar `tracker.lua` a la carpeta del emulador |
+| `items` | both games' inventory in a loop, reporting changes |
+| `checks` | completed checks, resolved to the spoiler's names |
+| `watch ADDR:SIZE,…` | poll individual addresses |
+| `dump ADDR:LEN` | dump a region (accepts `oot`, `mm`) |
+| `find file PATTERN` | search a dump for a signature |
+| `diff a b` | compare dumps |
+| `proxy` | log which addresses the MultiClient uses |
+| `install-lua` | copy `tracker.lua` into the emulator's folder |
 
-Para ver los checks con el item de cada uno:
+To list the checks with the item in each one:
 
 ```
 python ootmm.py checks --spoiler C:\...\OoTMM-f5PCTnhD\OoTMM-Spoiler-f5PCTnhD.txt
 ```
 
-**El overlay no necesita spoiler**: qué item hay en cada sitio lo lee de la
-propia ROM (`placement.py`, tabla `COMBO_VROM_CHECKS`), que es de donde lo saca
-el juego. Con eso funcionan el filtro de relleno y los pendientes con su item,
-sin fichero que buscar ni cargar.
+**The overlay needs no spoiler**: what item sits in each location is read from
+the ROM itself (`placement.py`, the `COMBO_VROM_CHECKS` table), which is where
+the game gets it from. That is enough for the junk filter and for showing
+pending checks with their item, with no file to find or load.
 
-Los **nombres** también salen de la ROM, de `kItemNames[]` en el payload. Así
-no dependen de que `data/gi.yml` sea de la misma versión de OoTMM que la seed:
-ese fichero se indexa por posición, y con una seed vieja los nombres salían
-corridos sin que nada avisara. Se queda sólo para el símbolo (`OOT_BOMBS_5`),
-y únicamente si sus nombres siguen coincidiendo con los de la ROM.
+The **names** come from the ROM too, from `kItemNames[]` in the payload. That
+way they do not depend on `data/gi.yml` being from the same OoTMM version as
+the seed: that file is indexed by position, so with an older seed the names
+came out shifted and nothing said a word. It is kept only for the symbolic id
+(`OOT_BOMBS_5`), and only while its names still agree with the ROM's.
 
-El botón **Cargar spoiler…** de la vista de director se queda como respaldo,
-para cuando de una ROM no se pueda leer esa tabla. Comprueba versión,
-coincidencia de nombres y cobertura antes de aceptarlo, y lo que cargues se
-pone por encima de lo leído de la ROM.
+The **Load spoiler…** button in the director view stays as a fallback, for
+ROMs whose table cannot be read. It checks version, name agreement and
+coverage before accepting the file, and whatever you load takes precedence
+over what was read from the ROM.
 
-## Ficheros
+## Files
 
 | | |
 |---|---|
-| `ootmm.py` | la herramienta |
-| `paths.py` | qué viaja con el programa y qué genera (importa dentro del `.exe`) |
-| `ootmm.spec` | receta de PyInstaller: `python -m PyInstaller ootmm.spec` |
-| `Scripts/tracker.lua` | el servidor de memoria que corre dentro del emulador |
-| `inventory.py` | mapa del inventario de los dos juegos y tabla de ids |
-| `mkchecks.py` | genera `checks.json` desde `data/` y la ROM |
-| `placement.py` | qué item hay en cada sitio y cómo se llama, leído de la ROM (sustituye al spoiler) |
-| `mkicons.py` | extrae los iconos de la ROM |
-| `discover.py` | detecta ROM, spoiler y regenera lo que haga falta |
-| `overlay.py` / `overlay.html` | el tracker mirable |
-| `rom.py` | leer la ROM: Yaz0, dmadata, extra DMA |
-| `fakelua.py` | un `tracker.lua` de mentira que sirve un volcado: probar sin emulador |
-| `checks.json` | 6043 ubicaciones; 5981 con dirección resuelta |
-| `data/` | datos del repo de OoTMM (pool, escenas, npc) |
-| `data/ref/` | fuentes en que se apoya el mapeo: `mark.c`, `xflags.c`, `items.h` |
-| `LICENSE` | licencia MIT de este proyecto |
-| `THIRD-PARTY.md` | qué ficheros vienen de OoTMM y bajo qué licencia |
+| `ootmm.py` | the tool |
+| `paths.py` | what ships with the program and what it generates (matters inside the `.exe`) |
+| `ootmm.spec` | PyInstaller recipe: `python -m PyInstaller ootmm.spec` |
+| `Scripts/tracker.lua` | the memory server that runs inside the emulator |
+| `inventory.py` | both games' inventory map and the id table |
+| `mkchecks.py` | generates `checks.json` from `data/` and the ROM |
+| `placement.py` | what item is in each location and what it is called, read from the ROM (replaces the spoiler) |
+| `mkicons.py` | extracts the icons from the ROM |
+| `discover.py` | finds the ROM and spoiler, regenerates whatever is stale |
+| `overlay.py` / `overlay.html` | the tracker you actually look at |
+| `rom.py` | reading the ROM: Yaz0, dmadata, extra DMA |
+| `fakelua.py` | a fake `tracker.lua` that serves a dump: testing without an emulator |
+| `checks.json` | 6043 locations; 5981 with a resolved address |
+| `data/` | data from the OoTMM repository (pool, scenes, npc) |
+| `data/ref/` | the sources the mapping leans on: `mark.c`, `xflags.c`, `items.h` |
+| `LICENSE` | this project's MIT license |
+| `THIRD-PARTY.md` | which files come from OoTMM and under what license |
 
-### Volcados de referencia
+### Reference dumps
 
-Sirven para probar cambios **sin arrancar el emulador**, y son los dos layouts
-de RAM posibles:
+They exist to test changes **without starting the emulator**, and they are the
+two possible RAM layouts:
 
 ```
-ram-en-oot.bin      jugando OoT:  save OoT 0x8011A5D0 · MM 0x8044BE18
-ram-en-mm.bin       jugando MM:   save MM  0x801EF678 · OoT 0x8076C4F0
-fla-deswapeado.bin  el fichero .fla con las palabras ya invertidas
+ram-en-oot.bin      playing OoT:  OoT save 0x8011A5D0 · MM 0x8044BE18
+ram-en-mm.bin       playing MM:   MM save  0x801EF678 · OoT 0x8076C4F0
+fla-deswapeado.bin  the .fla file with its words already unswapped
 ```
 
-Que las bases cambien al cruzar de juego es el gotcha más peligroso del
-proyecto: con offsets fijos el tracker funciona en OoT y lee basura en MM sin
-dar ningún error. Por eso se localizan por firma y por eso conviene probar
-contra los dos volcados.
+The bases moving when you cross between games is the most dangerous gotcha in
+the project: with fixed offsets the tracker works in OoT and reads garbage in
+MM without raising a single error. That is why they are located by signature,
+and why it is worth testing against both dumps.
 
 ```
 python ootmm.py items --dump ram-en-oot.bin
 python ootmm.py checks --dump ram-en-oot.bin
 ```
 
-Y el overlay entero, que no tiene `--dump`, con el Lua de mentira: en una
-consola el tracker (o el `.exe`), en otra el volcado.
+And the whole overlay, which has no `--dump`, with the fake Lua: the tracker
+(or the `.exe`) in one console, the dump in another.
 
 ```
 python ootmm.py overlay --no-window --port 13261
 python fakelua.py ram-en-mm.bin 13261
 ```
 
-## Repartir el tracker
+## Distributing the tracker
 
-**Se reparte código, nunca arte ni datos de partida.** Cada uno genera lo suyo
-a partir de su propia copia del juego, y eso deja el paquete limpio de
-material de Nintendo.
+**Code is distributed, never art and never save data.** Everyone generates
+their own from their own copy of the game, and that keeps the package free of
+Nintendo material.
 
-Lo que se reparte:
+What ships:
 
 ```
 ootmm.py  overlay.py  overlay.html  mkchecks.py  mkicons.py  discover.py
@@ -172,72 +177,73 @@ inventory.py  placement.py  rom.py  paths.py  fakelua.py  data/
 Scripts/tracker.lua  ootmm.spec  README.md  LICENSE  THIRD-PARTY.md
 ```
 
-O el `.exe`, que lleva todo eso dentro y **tampoco** lleva arte ni datos de
-partida: se construye con `python -m PyInstaller ootmm.spec` y sale
-`dist/ootmm-tracker.exe`, 8,9 MB.
+Or the `.exe`, which carries all of that inside and **also** carries no art
+and no save data: build it with `python -m PyInstaller ootmm.spec` and you get
+`dist/ootmm-tracker.exe`, 8.9 MB.
 
-Licencia **MIT** (ver [`LICENSE`](LICENSE)), la misma que OoTMM: se puede
-descargar, usar, modificar y redistribuir sin pedir permiso. Los ficheros de
-terceros que van dentro están declarados en
-[`THIRD-PARTY.md`](THIRD-PARTY.md).
+Licensed **MIT** (see [`LICENSE`](LICENSE)), the same as OoTMM: download it,
+use it, modify it and redistribute it without asking. The third-party files
+that ship inside are declared in [`THIRD-PARTY.md`](THIRD-PARTY.md).
 
-`adapter-tracker.lua`, que usa el modo `proxy`, **no se reparte**: es copia
-literal del `adapter.lua` del MultiClient con el puerto cambiado, o sea código
-de otro. Quien quiera usar ese modo lo hace él a partir del suyo.
+`adapter-tracker.lua`, used by `proxy` mode, is **not** distributed: it is a
+verbatim copy of the MultiClient's `adapter.lua` with the port changed, which
+makes it someone else's code. Anyone who wants that mode can make it from
+their own.
 
-Lo que **no** se reparte, porque se genera solo en cada máquina (y está en
+What is **not** distributed, because every machine generates it (and it is in
 `.gitignore`):
 
-| Fichero | Qué es | De dónde sale |
+| File | What it is | Where it comes from |
 |---|---|---|
-| `icons.png` / `icons.json` | los iconos de items | `mkicons.py`, extraídos de **su** ROM |
-| `checks.json` | las 6.043 ubicaciones | `mkchecks.py`, de **su** ROM y su spoiler |
-| `discover-cache.json` | rutas y hashes | su emulador |
-| `icons/*` | imágenes que cada uno ponga | las pone él |
+| `icons.png` / `icons.json` | the item icons | `mkicons.py`, extracted from **your** ROM |
+| `checks.json` | the 6,043 locations | `mkchecks.py`, from **your** ROM |
+| `discover-cache.json` | paths and hashes | your emulator |
+| `icons/*` | images you drop in yourself | you |
 
-Quien lo instale sólo tiene que abrir el `.exe` (o lanzar
-`python ootmm.py overlay`): detecta su ROM sola —por el hash de la carpeta de partidas de Project64—, busca su
-spoiler al lado, y genera iconos y tablas en su máquina la primera vez. No
-hay paso manual ni hay que pasarle rutas.
+Whoever installs it only has to open the `.exe` (or run
+`python ootmm.py overlay`): it finds their ROM on its own — by the hash of
+Project64's save folder — looks for a spoiler next to it, and generates icons
+and tables on their machine the first time. There is no manual step and no
+paths to pass in.
 
-> Los iconos salen de la ROM de cada uno, **los de los dos juegos**. Los de
-> OoT están en `icon_item_static`; los de MM en un archivo CmpDma, con cada
-> icono comprimido aparte, y de ahí salen las 24 máscaras. Quien quiera
-> sustituir alguno por otra imagen puede ponerla en `icons/`
-> (ver [`icons/LEEME.md`](icons/LEEME.md)); eso no viaja en el paquete.
+> The icons come out of each user's own ROM, **both games'**. OoT's live in
+> `icon_item_static`; MM's in a CmpDma archive with every icon compressed
+> separately, and that is where the 24 masks come from. Anyone who wants to
+> replace one with a different image can drop it in `icons/`
+> (see [`icons/README.md`](icons/README.md)); that never ships in the package.
 
-## Apoyar
+## Support
 
-El tracker es gratis y lo seguirá siendo. Todo lo que hace está en este
-repositorio y **nada queda detrás de un pago**: no hay versión de pago, ni
-funciones reservadas, ni claves.
+The tracker is free and will stay free. Everything it does is in this
+repository and **nothing sits behind a payment**: no paid version, no reserved
+features, no keys.
 
-Si te ha resultado útil y te apetece invitar a algo, hay un botón de
-patrocinio en la página del repositorio. Que quede claro de qué es la
-donación: **es por el tracker**, que es código propio y no reparte nada de los
-juegos. Ni el randomizer, ni las ROMs, ni el trabajo de OoTMM tienen nada que
-ver con ella.
+If it has been useful and you feel like buying me something, there is a
+sponsor button on the repository page. To be clear about what the donation is
+for: **it is for the tracker**, which is my own code and distributes nothing
+from the games. The randomizer, the ROMs and the OoTMM team's work have
+nothing to do with it.
 
-## Créditos
+## Credits
 
-Esto no existiría sin **[OoTMM](https://github.com/OoTMM/OoTMM)**, el
-randomizer que combina Ocarina of Time y Majora's Mask, ni sin su equipo. El
-tracker lee las estructuras que ellos inventaron —los xflags, la tabla de
-checks, la extra DMA del payload— y se apoya en varios ficheros de datos de su
-repositorio, listados en [`THIRD-PARTY.md`](THIRD-PARTY.md).
+None of this would exist without **[OoTMM](https://github.com/OoTMM/OoTMM)**,
+the randomizer that combines Ocarina of Time and Majora's Mask, or without its
+team. The tracker reads the structures they invented — the xflags, the check
+table, the payload's extra DMA — and leans on several data files from their
+repository, listed in [`THIRD-PARTY.md`](THIRD-PARTY.md).
 
-Gracias también a la gente del Discord de OoTMM, donde se resuelven las dudas
-de formato que no están escritas en ningún sitio.
+Thanks as well to the people in the OoTMM Discord, where the format questions
+that are written down nowhere else get answered.
 
-## Licencia
+## License
 
-MIT — ver [`LICENSE`](LICENSE). Lo de terceros, en
+MIT — see [`LICENSE`](LICENSE). Third-party material is covered in
 [`THIRD-PARTY.md`](THIRD-PARTY.md).
 
-## Siguiente
+## Next
 
-Por orden de valor:
+In order of value:
 
-1. Confirmar en juego el `perm` de MM y el `gsFlags` de OoT.
-2. Los 80 checks que faltan: `caughtFishFlags`, stray fairies de MM, `cow`.
-3. La parte multi: dos scripts Lua a la vez, y el buzón coop.
+1. Confirm MM's `perm` and OoT's `gsFlags` in game.
+2. The 80 missing checks: `caughtFishFlags`, MM stray fairies, `cow`.
+3. The multiworld side: two Lua scripts at once, and the co-op mailbox.

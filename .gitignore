@@ -6,9 +6,9 @@ icons.json
 checks.json
 discover-cache.json
 
-# Iconos que cada uno ponga a mano (ver icons/LEEME.md), menos el propio LEEME
+# Iconos que cada uno ponga a mano (ver icons/README.md), menos el propio README
 icons/*
-!icons/LEEME.md
+!icons/README.md
 
 # Volcados de memoria y de partida: son datos de una partida concreta
 *.bin

@@ -1,47 +1,46 @@
-# Código y datos de terceros
+# Third-party code and data
 
-Este tracker es código original, pero **se apoya en ficheros del repositorio
-de OoTMM**, que viajan dentro de `data/` y también dentro del `.exe`. OoTMM
-está bajo licencia MIT, que permite copiarlos, modificarlos y redistribuirlos
-con una sola condición: conservar su aviso de copyright y el texto de la
-licencia. Eso es lo que hace este fichero.
+This tracker is original code, but it **leans on files from the OoTMM
+repository**, which ship inside `data/` and inside the `.exe` as well. OoTMM
+is MIT licensed, which allows copying, modifying and redistributing them on a
+single condition: keeping its copyright notice and license text. That is what
+this file is for.
 
-Nada de lo que hay aquí es propiedad intelectual de Nintendo: el tracker **no
-reparte ni un sprite ni un byte de los juegos**. Los iconos los extrae cada
-usuario de su propia ROM al arrancar el programa por primera vez (ver la
-sección «Repartir el tracker» del README).
+Nothing here is Nintendo's intellectual property: the tracker **distributes
+neither a sprite nor a byte of the games**. Every user extracts the icons from
+their own ROM the first time they run the program (see the "Distributing the
+tracker" section of the README).
 
 ## OoTMM
 
-- Repositorio: <https://github.com/OoTMM/OoTMM>
-- Licencia: MIT
+- Repository: <https://github.com/OoTMM/OoTMM>
+- License: MIT
 - Copyright (c) 2020-2022 OoTMM Team
 
-### Ficheros que vienen de allí
+### Files that come from there
 
-| Fichero en este repo | Origen en OoTMM/OoTMM | Para qué se usa |
+| File in this repo | Origin in OoTMM/OoTMM | What it is used for |
 |---|---|---|
-| `data/pool_oot.csv` | `data/pool/pool_oot.csv` | diccionario de etiquetas del pool (`mkchecks.py`) |
-| `data/pool_mm.csv` | `data/pool/pool_mm.csv` | ídem |
-| `data/scenes.yml` | `data/defs/scenes.yml` | nombre de escena -> índice |
-| `data/npc.yml` | `data/defs/npc.yml` | símbolo de npc -> índice |
-| `data/gi.yml` | `data/defs/gi.yml` | id simbólico de la tabla GI (`placement.py`) |
-| `data/ref/items.h` | `packages/generator/include/combo/data/items.h` | ids de item, parseado en ejecución |
-| `data/ref/mark.c` | `packages/generator/src/common/mark.c` | referencia del formato de marcas |
-| `data/ref/xflags.c` | `packages/generator/src/common/xflags.c` | referencia del formato de xflags |
+| `data/pool_oot.csv` | `data/pool/pool_oot.csv` | the pool's label dictionary (`mkchecks.py`) |
+| `data/pool_mm.csv` | `data/pool/pool_mm.csv` | same |
+| `data/scenes.yml` | `data/defs/scenes.yml` | scene name -> index |
+| `data/npc.yml` | `data/defs/npc.yml` | npc symbol -> index |
+| `data/gi.yml` | `data/defs/gi.yml` | symbolic id from the GI table (`placement.py`) |
+| `data/ref/items.h` | `packages/generator/include/combo/data/items.h` | item ids, parsed at runtime |
+| `data/ref/mark.c` | `packages/generator/src/common/mark.c` | reference for the mark format |
+| `data/ref/xflags.c` | `packages/generator/src/common/xflags.c` | reference for the xflag format |
 
-Son copias literales, sin modificar. Comprobado contra `master` el 14 de
-agosto de 2026: siete de los ocho son idénticos línea a línea; `gi.yml` es una
-copia de una versión anterior y difiere en 26 líneas, todas cambios de nombre
-que OoTMM hizo después (las etiquetas de las Rusty Key). No afecta: los
-nombres de item los lee el tracker de la ROM, y de `gi.yml` sólo usa el
-símbolo.
+They are verbatim copies, unmodified. Checked against `master` on 14 August
+2026: seven of the eight are identical line for line; `gi.yml` is a copy of an
+earlier version and differs on 26 lines, all of them renames OoTMM made later
+(the Rusty Key labels). It makes no difference: the tracker reads item names
+from the ROM and only uses `gi.yml` for the symbolic id.
 
-`data/ref/mark.c` y `data/ref/xflags.c` no se leen en ejecución; están
-guardados porque son la documentación del formato que este tracker
-descodifica, y conviene tenerlos fijados a una versión concreta.
+`data/ref/mark.c` and `data/ref/xflags.c` are not read at runtime; they are
+kept because they document the format this tracker decodes, and it helps to
+have them pinned to a specific version.
 
-### Licencia de OoTMM, íntegra
+### OoTMM's license, in full
 
 ```
 MIT License
@@ -67,9 +66,9 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
-## Lo que no se reparte
+## What is not distributed
 
-`adapter-tracker.lua`, que usa el modo `proxy`, es copia literal del
-`adapter.lua` del MultiClient de OoTMM con el puerto cambiado. **No está en
-este repositorio** y no se distribuye: quien quiera ese modo lo hace a partir
-del suyo.
+`adapter-tracker.lua`, used by `proxy` mode, is a verbatim copy of the OoTMM
+MultiClient's `adapter.lua` with the port changed. It is **not in this
+repository** and is not distributed: anyone who wants that mode can make it
+from their own copy.
