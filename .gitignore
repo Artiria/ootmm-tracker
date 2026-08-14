@@ -27,6 +27,10 @@ __pycache__/
 # Ajustes locales de la herramienta: llevan rutas de esta maquina
 .claude/
 
+# La lista de trabajo es nuestra, no documentacion publica. Estuvo en los dos
+# primeros commits y se purgo del historial el 14 ago 2026.
+BACKLOG.md
+
 # PyInstaller: `ootmm.spec` is source, what it produces is not
 build/
 dist/
