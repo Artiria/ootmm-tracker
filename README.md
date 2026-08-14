@@ -1,10 +1,27 @@
 # OoTMM Autotracker
 
+> **0.1.0-beta — still being refined.** Single player is tested and measured;
+> **multiworld has never been run** (see below). It has only ever been built on
+> one machine. Expect rough edges, and please report what you find — that is
+> exactly what this stage is for.
+
 Reads the state of an OoTMM run from Project64-EM and turns it into names:
 inventory, songs, masks, equipment, upgrades and checks.
 
 **No spoiler log needed.** What item sits in each location is read from the
 seed ROM itself.
+
+## What works and what does not
+
+| | |
+|---|---|
+| ✅ Single player, OoT and MM, crossing between them | tested against live saves and four RAM dumps |
+| ✅ 5,981 of 6,043 checks | the missing 62 are `caughtFishFlags` and MM stray fairies |
+| ✅ Item placement and names from the ROM | no spoiler log, on v32.0 and dev builds |
+| ✅ OBS overlay, one URL per panel | transparent background, five standalone panels |
+| ❓ Multiworld | **never run.** Two Lua scripts at once is question P4, open since day one |
+| ❓ Emulators other than Project64-EM | the tracker only needs `read` and `read_block`; BizHawk is a five-step task in the backlog |
+| ❌ Entrance tracking, logic and maps | not attempted — [The Last Tracker](https://www.thelasttracker.org) does that well |
 
 The **how and why** are in
 [`ootmm-autotracker-poc.md`](ootmm-autotracker-poc.md): addresses, offsets,
@@ -218,11 +235,13 @@ The tracker is free and will stay free. Everything it does is in this
 repository and **nothing sits behind a payment**: no paid version, no reserved
 features, no keys.
 
-If it has been useful and you feel like buying me something, there is a
-sponsor button on the repository page. To be clear about what the donation is
-for: **it is for the tracker**, which is my own code and distributes nothing
-from the games. The randomizer, the ROMs and the OoTMM team's work have
-nothing to do with it.
+If it has been useful and you feel like buying me something:
+[Ko-fi](https://ko-fi.com/artiria) · [PayPal](https://paypal.me/JuanRamos633),
+or the sponsor button on the repository page.
+
+To be clear about what the donation is for: **it is for the tracker**, which is
+my own code and distributes nothing from the games. The randomizer, the ROMs
+and the OoTMM team's work have nothing to do with it.
 
 ## Credits
 

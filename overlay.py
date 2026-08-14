@@ -43,6 +43,7 @@ import urllib.parse
 import webbrowser
 
 import paths
+from version import STAGE_NOTE, __version__
 
 # One block per anchor: how much to read from it to cover its checks. The
 # amount is computed from checks.json itself in build_plan(); this is just the
@@ -120,7 +121,7 @@ JUNK_PATTERNS = [
     r"^(Green|Blue|Red|Purple|Silver|Gold|Huge|Rainbow) Rupee" + JUEGO + r"$",
     r"^Recovery Heart" + JUEGO + r"$",
     r"^(Small|Large) Magic Jar" + JUEGO + r"$",
-    r"^(Big )?Fairy" + JUEGO + r"$",   # las Stray Fairy NO: esas son checks
+    r"^(Big )?Fairy" + JUEGO + r"$",   # Stray Fairies are NOT: those are checks
     r"^\d+ (Arrows?|Bombs?|Bombchus?|Deku Seeds?|Deku Nuts?|Deku Sticks?)" + JUEGO + r"$",
     # the singular too: the spoiler writes "1 Bomb" and the ROM "Bomb"
     r"^(Deku Sticks?|Deku Nuts?|Deku Seeds?|Arrows?|Bombs?|Bombchus?)" + JUEGO + r"$",
@@ -956,6 +957,7 @@ class Tracker:
             s = self.state
             s["ready"] = True
             s["error"] = None
+            s["version"] = __version__
             s["active"] = active
             s["confidence"] = round(conf, 3)
             s["trusted"] = conf >= CONFIDENCE_MIN
@@ -1797,6 +1799,7 @@ def serve(tracker, host, port, open_window=True):
 
     srv = ThreadingHTTPServer((host, port), Handler)
     url = f"http://{host}:{port}/"
+    print(f"[overlay] OoTMM Tracker {__version__} - {STAGE_NOTE}")
     print(f"[overlay] full view: {url}")
     print("[overlay] single panels, one per OBS Browser Source:")
     for name in PANELS:

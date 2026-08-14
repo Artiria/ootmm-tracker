@@ -2,13 +2,11 @@
 #
 # La donacion es por el tracker, que es codigo propio y no reparte nada de los
 # juegos. Todo lo que hace esta en este repositorio y nada queda detras de un
-# pago. Ver la seccion "Apoyar" del README.
+# pago. Ver la seccion "Support" del README.
 #
 # `github:` solo pinta el boton si GitHub Sponsors esta activado en la cuenta
 # (github.com/sponsors/accounts). Si aun no lo esta, no pasa nada: el fichero
-# es valido y el boton aparece el dia que se active.
+# es valido y los otros dos aparecen igual.
 github: [Artiria]
-
-# Cuando haya cuenta, descomentar la que toque:
-# ko_fi: <usuario>
-# custom: ["https://paypal.me/<usuario>"]
+ko_fi: artiria
+custom: ["https://paypal.me/JuanRamos633"]

@@ -282,8 +282,9 @@ ul.feed li:first-child, ul.pend li:first-child { border-top: 0; }
    name .director, and with the block split in two they would have had to list
    every piece. The gap matches .stack, which used to space them. */
 .dirtools { display: grid; gap: 12px; align-content: start; }
+.build { margin: 0; text-align: right; opacity: .75; }
 /* Collapsible: opened to set up the OBS sources and closed to play, so
-   la vista completa sigue cabiendo en 720p. */
+   the full view still fits in 720p. */
 .director > summary {
   cursor: pointer; list-style: none;
   font-size: 11px; font-weight: 600; letter-spacing: .08em;
@@ -509,6 +510,10 @@ body.chroma-green .card { background: var(--surface); }
         what you want. The links below already carry the options set above.</p>
       <table class="urls" id="urls"></table>
     </details>
+
+    <!-- Beta badge. It lives in .dirtools, so it shows on the player's own
+         monitor and never in a capture source. -->
+    <p class="hint build" id="build"></p>
 
   </div>
 
@@ -1089,6 +1094,10 @@ async function tick() {
 /* Painting is separate from polling: the director-view selectors repaint with
    the last state received, without waiting for the next poll. */
 function render(s) {
+  if (s.version) {
+    setHTML('build', `OoTMM Tracker <b>${esc(s.version)}</b> — early beta:
+      single player is tested, multiworld is not.`);
+  }
   if (s.error) {
     setHTML('alert', `<div class="warn"><b>No connection to the game.</b> ${esc(s.error)}</div>`);
   } else if (!s.trusted) {
