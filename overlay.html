@@ -1,0 +1,1197 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<title>OoTMM Tracker</title>
+<style>
+/* Stream overlay: it commits to a dark look and paints all of it. There is no
+   light mode on purpose; the background is swapped for transparent or chroma
+   with ?chroma=none / ?chroma=green to drop it into OBS. */
+:root {
+  color-scheme: dark;
+  --plane:      #0d0d0d;
+  --surface:    #1a1a19;
+  --surface-2:  #222221;
+  --ink:        #ffffff;
+  --ink-2:      #c3c2b7;
+  --muted:      #898781;
+  --hairline:   #2c2c2a;
+  --ring:       rgba(255,255,255,0.10);
+  --oot:        #3987e5;   /* categorico slot 1 */
+  --mm:         #d95926;   /* categorico slot 2 */
+  --good:       #0ca30c;
+  --warning:    #fab219;
+  --font: system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; }
+body {
+  background: var(--plane);
+  color: var(--ink);
+  font-family: var(--font);
+  font-size: 14px;
+  line-height: 1.45;
+  padding: 14px;
+}
+body.chroma-none { background: transparent; }
+body.chroma-green { background: #00b140; }
+body.chroma-none .card, body.chroma-green .card { backdrop-filter: blur(2px); }
+
+.wrap { display: grid; gap: 12px; max-width: 1600px; margin: 0 auto; }
+/* The grid column first and slightly wider: it is the one that uses the room. */
+.cols { display: grid; grid-template-columns: minmax(0,1.1fr) minmax(0,1fr); gap: 12px; align-items: start; }
+@media (max-width: 1100px) { .cols { grid-template-columns: 1fr; } }
+
+.card {
+  background: var(--surface);
+  border: 1px solid var(--ring);
+  border-radius: 10px;
+  padding: 14px 16px;
+}
+/* An overlay has to fit the OBS source, usually 720p. Each panel scrolls
+   inside itself instead of stretching the page, so the composition
+   no se mueve segun avanza la partida. */
+.scroll { overflow-y: auto; scrollbar-width: thin; scrollbar-color: var(--hairline) transparent; }
+/* The subtracted figure is the chrome above and below: header, summary card,
+   the two menus, and one h2 + gap per stacked panel. Hence a bigger number the
+   more panels share the column -- three of them add two more headings and two
+   more gaps than the single tall one. */
+.pane-tall { max-height: calc(100vh - 438px); min-height: 170px; }
+.pane-half { max-height: calc((100vh - 395px) / 2); min-height: 105px; }
+.pane-third { max-height: calc((100vh - 604px) / 3); min-height: 90px; }
+.card h2 {
+  margin: 0 0 10px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+/* -- cabecera: la unica cifra heroe de la vista ------------------------- */
+.head { display: flex; align-items: center; gap: 22px; flex-wrap: wrap; }
+.hero { font-size: 52px; font-weight: 650; line-height: 1; letter-spacing: -.02em; }
+.hero small { font-size: 18px; font-weight: 500; color: var(--ink-2); letter-spacing: 0; }
+.head-meta { display: flex; flex-direction: column; gap: 6px; min-width: 260px; flex: 1; }
+.head-sub { color: var(--ink-2); font-size: 13px; }
+
+.badge {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 3px 10px; border-radius: 999px;
+  font-size: 12px; font-weight: 600;
+  border: 1px solid var(--ring); color: var(--ink-2);
+}
+.badge .dot { width: 8px; height: 8px; border-radius: 50%; }
+.badge.oot .dot { background: var(--oot); }
+.badge.mm  .dot { background: var(--mm); }
+
+.warn {
+  display: flex; gap: 8px; align-items: flex-start;
+  border: 1px solid var(--warning); border-radius: 8px;
+  padding: 8px 12px; font-size: 13px; color: var(--ink-2);
+  background: color-mix(in oklab, var(--warning) 10%, var(--surface));
+}
+.warn b { color: var(--ink); }
+
+/* -- medidores ---------------------------------------------------------- */
+/* track = a muted step of the same hue, so the state reads along the whole
+   bar; fill rounded at the data end and square at the base */
+.meter { height: 8px; border-radius: 2px; overflow: hidden; background: var(--track); }
+.meter > i {
+  display: block; height: 100%;
+  background: var(--series);
+  border-radius: 0 4px 4px 0;
+}
+.meter.full > i { border-radius: 2px; }
+/* the track sits well below the fill in tone: if they get close, a nearly
+   empty bar reads as full, and on a stream that misinforms the viewer */
+.row-oot { --series: var(--oot); --track: color-mix(in oklab, var(--oot) 24%, #0b0b0b); }
+.row-mm  { --series: var(--mm);  --track: color-mix(in oklab, var(--mm)  24%, #0b0b0b); }
+/* non-zero progress must never render below one pixel */
+.meter > i.some { min-width: 3px; }
+
+.region { display: grid; grid-template-columns: 1fr auto; gap: 4px 10px; margin-bottom: 11px; }
+.region .name { font-size: 13px; color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.region .num { font-size: 12px; color: var(--ink-2); font-variant-numeric: tabular-nums; }
+.region .meter { grid-column: 1 / -1; }
+
+.legend { display: flex; gap: 14px; margin-bottom: 12px; font-size: 12px; color: var(--ink-2); }
+.legend span { display: inline-flex; align-items: center; gap: 6px; }
+.legend i { width: 9px; height: 9px; border-radius: 50%; display: inline-block; }
+
+/* -- cifras ------------------------------------------------------------- */
+.stats { display: flex; gap: 10px; flex-wrap: wrap; }
+.stat {
+  background: var(--surface-2); border: 1px solid var(--ring);
+  border-radius: 8px; padding: 7px 12px; min-width: 92px;
+}
+.stat .k { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; }
+.stat .v { font-size: 19px; font-weight: 600; }
+
+/* -- rejilla de items --------------------------------------------------- */
+/* A grid of fixed cells, not a list that grows: the OBS composition must not
+   shift as the run progresses, and no scrollbar may appear. The cells size
+   themselves to the width of the source. */
+/* Groups sit side by side when there is width. Stacked in a single column,
+   height rules and the cells end up tiny while
+   media fuente de OBS se queda vacia.
+   Careful: its own class, not `.row-oot`. Region rows carry that one too, to
+   inherit the colour, and giving them flex breaks their meter. */
+.gamegrid {
+  display: flex; flex-wrap: wrap;
+  gap: 4px 14px; align-items: flex-start; align-content: flex-start;
+}
+.gamegrid > h3 { flex: 0 0 100%; }
+/* In a narrow column, running them in parallel gives a tall thin mess:
+   ahi se apilan como antes. */
+.narrow .gamegrid { display: block; }
+.grp { flex: 0 0 auto; margin-bottom: 10px; }
+.grp h3 { margin: 0 0 6px; font-size: 11px; color: var(--muted); font-weight: 600; letter-spacing: .05em; text-transform: uppercase; }
+/* compact mode: the headings stop eating the height */
+.compact .grp { margin-bottom: 5px; }
+.compact .grp h3 { font-size: 9px; margin-bottom: 2px; }
+.compact .gamegrid > h3 { font-size: 10px !important; margin-bottom: 3px !important; }
+.compact .chips { gap: 3px; }
+/* The game fixes the columns, not the window width: that way the grid
+   reproduces the menu screen and the rows mean something (a row of swords,
+   a row of shields, a row of medallions). */
+.chips {
+  display: grid;
+  grid-template-columns: repeat(var(--cols, 6), var(--cell, 44px));
+  gap: 4px;
+  justify-content: start;
+}
+/* The menu page, hinted at: a faint frame grouping the grid */
+.chips {
+  padding: 5px; border-radius: 8px;
+  background: color-mix(in oklab, var(--surface-2) 55%, transparent);
+  border: 1px solid var(--hairline);
+  width: max-content;
+  max-width: 100%;
+}
+/* Last resort: in a column too narrow we give up the menu shape and let the
+   cells flow, which beats cropping content. */
+.flow .chips {
+  grid-template-columns: repeat(auto-fill, minmax(var(--cell, 44px), 1fr));
+  width: auto;
+}
+.chip {
+  position: relative; aspect-ratio: 1;
+  display: flex; align-items: center; justify-content: center;
+  border-radius: 7px; border: 1px solid var(--hairline);
+  background: transparent; overflow: hidden;
+}
+.chip.on { border-color: var(--ring); background: var(--surface-2); }
+
+/* The icon comes from the sheet mkicons.py extracts from the ROM. When off,
+   gris y hundido; encendido, a todo color. */
+/* The icon scales with the cell. The sheet has 16 columns, so a size of --ico
+   means a background-size of 16 widths; the height stays `auto` so it does not
+   depend on how many rows the sheet happens to have. */
+.chip .ico {
+  --ico: calc(var(--cell, 44px) * .74);
+  width: var(--ico); height: var(--ico);
+  background-image: url(/icons.png);
+  background-repeat: no-repeat;
+  background-size: calc(var(--ico) * 16) auto;
+  background-position: calc(var(--cx) * var(--ico) * -1) calc(var(--cy) * var(--ico) * -1);
+  image-rendering: pixelated;
+  filter: grayscale(1) brightness(.42) contrast(.85);
+  transition: filter .15s ease;
+}
+.chip.on .ico { filter: none; }
+
+/* Song note: the ROM texture clipped as a mask and painted in the
+   color de la cancion. Apagada, en gris hundido como el resto. */
+.chip .msk {
+  --ico: calc(var(--cell, 44px) * .74);
+  width: var(--ico); height: var(--ico);
+  background-color: color-mix(in oklab, var(--muted) 45%, transparent);
+  -webkit-mask-image: url(/icons.png); mask-image: url(/icons.png);
+  -webkit-mask-repeat: no-repeat; mask-repeat: no-repeat;
+  -webkit-mask-size: calc(var(--ico) * 16) auto; mask-size: calc(var(--ico) * 16) auto;
+  -webkit-mask-position: calc(var(--cx) * var(--ico) * -1) calc(var(--cy) * var(--ico) * -1);
+  mask-position: calc(var(--cx) * var(--ico) * -1) calc(var(--cy) * var(--ico) * -1);
+  transition: background-color .15s ease;
+}
+.chip.on .msk { background-color: var(--c, var(--ink)); }
+
+/* Hand-placed image from icons/. Treated like the ROM icon:
+   gris y hundida cuando no lo tienes, a color cuando si. */
+.chip .usr {
+  width: 78%; height: 78%; object-fit: contain;
+  filter: grayscale(1) brightness(.42) contrast(.85);
+  transition: filter .15s ease;
+}
+.chip.on .usr { filter: none; }
+
+/* With no icon the cell falls back to text: the gap shows less with initials
+   than with an empty cell. */
+/* Capped: if the text scaled without limit, icon-less cells would end up
+   shouting louder than the real icons, which is backwards. */
+/* The label grows when it has to disambiguate, so the size must come down
+   with the length or it spills out of the cell. */
+.chip .txt {
+  font-size: clamp(8px, calc(var(--cell, 44px) * .30 * 2.4 / max(2.4, var(--len, 2))), 18px);
+  font-weight: 700; letter-spacing: -.03em;
+  line-height: 1; text-align: center; color: var(--muted);
+  padding: 0 2px;
+}
+.chip.on .txt { color: var(--ink); }
+
+/* Drawn glyphs, for what the ROM does not carry. Off in the same sunken grey
+   as the icons; on, in their own colour when they have one. */
+.chip .gly {
+  width: 62%; height: 62%;
+  display: flex; align-items: center; justify-content: center;
+  color: color-mix(in oklab, var(--muted) 55%, transparent);
+}
+.chip .gly svg { width: 100%; height: 100%; fill: currentColor; }
+.chip.on .gly { color: var(--c, var(--ink)); }
+
+/* Nivel o contador, en la esquina */
+.chip .val {
+  position: absolute; right: 2px; bottom: 1px;
+  font-size: clamp(9px, calc(var(--cell, 44px) * .22), 14px);
+  font-weight: 700; color: var(--ink);
+  text-shadow: 0 0 3px #000, 0 0 3px #000;
+  font-variant-numeric: tabular-nums;
+}
+
+/* -- feed y pendientes -------------------------------------------------- */
+ul.feed, ul.pend { list-style: none; margin: 0; padding: 0; }
+ul.feed li, ul.pend li {
+  padding: 6px 0; border-top: 1px solid var(--hairline);
+  font-size: 13px; display: flex; gap: 8px; align-items: baseline;
+}
+ul.feed li:first-child, ul.pend li:first-child { border-top: 0; }
+.feed .item { font-weight: 600; }
+.feed .from, .pend .from { color: var(--muted); font-size: 12px; }
+.pend .name { color: var(--ink-2); }
+/* what is in the very room you are standing in, which the server puts first */
+.pend li.here .name { color: var(--ink); font-weight: 600; }
+.pend .room { color: var(--muted); font-size: 11px; margin-left: auto; }
+.more { color: var(--muted); font-size: 12px; padding-top: 8px; }
+.empty { color: var(--muted); font-size: 13px; }
+
+.stack { display: grid; gap: 12px; align-content: start; }
+
+/* -- vista de director --------------------------------------------------- */
+/* Two collapsible menus plus the kill switch. They share the show/hide rules
+   further down, which is why they live inside one wrapper: those rules used to
+   name .director, and with the block split in two they would have had to list
+   every piece. The gap matches .stack, which used to space them. */
+.dirtools { display: grid; gap: 12px; align-content: start; }
+/* Collapsible: opened to set up the OBS sources and closed to play, so
+   la vista completa sigue cabiendo en 720p. */
+.director > summary {
+  cursor: pointer; list-style: none;
+  font-size: 11px; font-weight: 600; letter-spacing: .08em;
+  text-transform: uppercase; color: var(--muted);
+}
+.director > summary::-webkit-details-marker { display: none; }
+.director > summary::before { content: '▸ '; }
+.director[open] > summary { margin-bottom: 12px; }
+.director[open] > summary::before { content: '▾ '; }
+.director > summary:hover { color: var(--ink-2); }
+.director .hint { margin: 0 0 12px; font-size: 13px; color: var(--ink-2); max-width: 70ch; }
+.director .hint b { color: var(--ink); }
+.controls { display: flex; gap: 16px; flex-wrap: wrap; margin-bottom: 12px; }
+.controls label { font-size: 12px; color: var(--muted); display: flex; gap: 7px; align-items: center; }
+.controls select {
+  font: inherit; font-size: 12px; color: var(--ink-2);
+  background: var(--surface-2); border: 1px solid var(--ring);
+  border-radius: 5px; padding: 4px 8px;
+}
+table.urls { border-collapse: collapse; width: 100%; font-size: 12px; }
+table.urls td { padding: 5px 10px 5px 0; border-top: 1px solid var(--hairline); vertical-align: middle; }
+table.urls tr:first-child td { border-top: 0; }
+table.urls tr.sep td { border-top: 1px solid var(--ring); padding-top: 12px; }
+table.urls .p { color: var(--ink); width: 1%; white-space: nowrap; }
+table.urls code {
+  background: var(--surface-2); border: 1px solid var(--ring); border-radius: 5px;
+  padding: 2px 7px; color: var(--ink-2); font-size: 12px;
+}
+button.copy, button.act {
+  font: inherit; font-size: 12px; cursor: pointer;
+  background: var(--surface-2); color: var(--ink-2);
+  border: 1px solid var(--ring); border-radius: 5px; padding: 3px 10px;
+}
+button.copy:hover, button.act:hover { color: var(--ink); border-color: var(--muted); }
+
+/* Loading a spoiler without restarting the overlay: the fallback for when the
+   ROM placement table cannot be read. */
+/* Reached for in a hurry, live on stream, so it must not look like one more
+   control: its own box, and red while engaged so it is obvious that it is. */
+.killswitch {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  margin: 0; padding: 8px 10px; cursor: pointer;   /* .dirtools spaces it now */
+  border: 1px solid var(--ring); border-radius: 8px; background: var(--surface-2);
+}
+.killswitch .hint { margin: 0; }
+.killswitch.on {
+  border-color: var(--warning);
+  background: color-mix(in oklab, var(--warning) 12%, var(--surface-2));
+}
+.killswitch.on b { color: var(--warning); }
+
+.spoilerbox { display: flex; align-items: center; gap: 10px; margin: 10px 0 4px; flex-wrap: wrap; }
+.spoilerbox .hint { margin: 0; }
+.hint.bad { color: var(--warning); }
+.spoilerbox .chk {
+  display: flex; align-items: center; gap: 5px; cursor: pointer;
+  font-size: 12px; color: var(--ink-2); white-space: nowrap;
+}
+.spoilerbox .hint.bad { color: var(--warning); }
+
+/* -- modo panel suelto ---------------------------------------------------- */
+/* A single block, no grid and no chrome, filling the whole OBS source. */
+body.panel { padding: 0; }
+body.panel .cols { display: block; }
+body.panel .stack { display: block; }
+body.panel .card { border-radius: 0; border: 0; min-height: 100vh; }
+body.panel .dirtools { display: none; }
+/* Every pane class, `.pane-third` included. It used to list only the first
+   two, and the three panels that stack in a column —regions, remaining,
+   activity— kept their docked height when served on their own: 158px on a
+   1080 source, and the 90px floor on anything under 604px tall. They looked
+   like they were hiding things, and they were. */
+body.panel .pane-tall,
+body.panel .pane-half,
+body.panel .pane-third { max-height: calc(100vh - 60px); }
+body.chroma-none .dirtools, body.chroma-green .dirtools { display: none; }
+/* ...but if you just changed the background with the selector, the controls
+   stay. Otherwise picking "transparent" makes them vanish with no way back
+   short of editing the URL. */
+body.opts-live:not(.panel) .dirtools { display: grid; }
+
+/* Transparent means transparent: the card paints nothing and the text leans
+   on a shadow to stay readable over any scene. It used to sit at 82% opacity
+   —put there for legibility— and that is not transparent, that is a dark
+   panel. A minimal veil stays behind the grids so the off icons do not get
+   lost over light backgrounds. */
+body.chroma-none .card {
+  background: transparent; border-color: transparent; backdrop-filter: none;
+}
+body.chroma-none .card, body.chroma-none .card * { text-shadow: 0 1px 3px rgba(0,0,0,.95); }
+body.chroma-none .chips {
+  background: color-mix(in oklab, #000 28%, transparent);
+  border-color: rgba(255,255,255,.10);
+}
+body.chroma-none .chip { background: transparent; }
+body.chroma-none .chip.on { background: color-mix(in oklab, #000 45%, transparent); }
+body.chroma-none .meter { background: color-mix(in oklab, #000 45%, transparent); }
+body.chroma-none .stat { background: color-mix(in oklab, #000 40%, transparent); }
+
+body.chroma-green .card { background: var(--surface); }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <div class="card" data-panel="summary">
+    <div class="head">
+      <div>
+        <div class="hero" id="hero">—<small id="hero-total"></small></div>
+        <div class="head-sub" id="hero-label">waiting for tracker.lua</div>
+      </div>
+      <div class="head-meta">
+        <div class="meter full row-oot"><i id="hero-meter" style="width:0%"></i></div>
+        <div class="head-sub" id="status"></div>
+      </div>
+      <div id="badges"></div>
+    </div>
+    <div id="alert" style="margin-top:12px"></div>
+    <div class="stats" id="stats" style="margin-top:12px"></div>
+  </div>
+
+  <!-- Two columns: the item grid on its own to the left, the three text
+       panels stacked to the right. The grid is the one that gains from width
+       —it sizes its cells to whatever box it gets— while the lists only need
+       to be readable. Swapped in the markup rather than with CSS `order`, so
+       reading order and visual order stay the same thing. -->
+  <div class="cols">
+    <div class="card" data-panel="items">
+      <h2>Items</h2>
+      <div id="items" class="scroll pane-tall"><div class="empty">no data yet</div></div>
+    </div>
+
+    <div class="stack">
+      <div class="card" data-panel="regions">
+        <h2>Progress by region</h2>
+        <div class="legend">
+          <span><i style="background:var(--oot)"></i> Ocarina of Time</span>
+          <span><i style="background:var(--mm)"></i> Majora's Mask</span>
+        </div>
+        <div id="regions" class="scroll pane-third"><div class="empty">no data yet</div></div>
+      </div>
+      <div class="card" data-panel="remaining">
+        <h2 id="pend-title">Remaining here</h2>
+        <div class="scroll pane-third">
+          <ul class="pend" id="pend"></ul>
+          <div class="empty" id="pend-empty">—</div>
+        </div>
+      </div>
+      <div class="card" data-panel="activity">
+        <h2>Activity</h2>
+        <div class="scroll pane-third">
+          <ul class="feed" id="feed"></ul>
+          <div class="empty" id="feed-empty">nothing new since startup</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Two menus, not one. The options are what you touch while playing; the
+       OBS URLs you set up once and never open again. They were in the same
+       block and the settings read like a footnote to a capture guide. -->
+  <div class="dirtools">
+
+    <!-- And the kill switch is in neither: it is the one you reach for in a
+         hurry, live, and behind a collapsed menu it does not do its job. -->
+    <label class="killswitch" title="Forces the spoiler level to «nothing», whatever it was">
+      <input type="checkbox" id="opt-hide"> <b>Hide spoilers</b>
+      <span class="hint">nothing that reveals the seed, anywhere on screen</span>
+    </label>
+
+    <!-- Collapsed: open it takes ~150px off the panels, and the one control
+         that has to be reachable in a hurry —the kill switch— is outside it. -->
+    <details class="card director" id="options">
+      <summary>Display options</summary>
+      <div class="controls">
+        <label>Spoiler
+          <select id="opt-spoiler">
+            <option value="off">nothing</option>
+            <option value="item" selected>only what you already got</option>
+            <option value="full">everything, including what's left</option>
+          </select>
+        </label>
+        <label>Show
+          <select id="opt-junk">
+            <option value="">every check</option>
+            <option value="hide">only what matters</option>
+          </select>
+        </label>
+        <label>Regions
+          <select id="opt-done">
+            <option value="">all</option>
+            <option value="hide">hide completed</option>
+          </select>
+        </label>
+        <label>Background
+          <select id="opt-chroma">
+            <option value="">normal</option>
+            <option value="none">transparent</option>
+            <option value="green">green screen</option>
+          </select>
+        </label>
+      </div>
+      <div class="spoilerbox">
+        <button class="act" id="load-spoiler">Load spoiler…</button>
+        <label class="chk" title="Switches the panels to «only what matters» and shows what each remaining check holds">
+          <input type="checkbox" id="opt-apply" checked> apply it to the panels
+        </label>
+        <span class="hint" id="spoiler-state"></span>
+        <input type="file" id="spoiler-file" accept=".txt,text/plain" hidden>
+      </div>
+      <!-- The warning belongs where the choice is made, not next to the links:
+           with the OBS menu collapsed nobody would ever see it there. -->
+      <p class="hint bad" id="warn-full" hidden>«Everything, including what's
+        left» reveals what sits in every unopened location. Fine on your own
+        monitor — but the panel URLs carry it too, so in an OBS source your
+        viewers see it as well.</p>
+    </details>
+
+    <details class="card director" id="director">
+      <summary>Capture in OBS</summary>
+      <p class="hint">Every panel is also served on its own URL. Add one per
+        <b>Browser Source</b> and place them wherever you like, so you only show
+        what you want. The links below already carry the options set above.</p>
+      <table class="urls" id="urls"></table>
+    </details>
+
+  </div>
+
+</div>
+
+<script>
+const PANELS = [
+  ['summary',   'Summary and figures'],
+  ['regions',   'Progress by region'],
+  ['items',     'Item grid'],
+  ['activity',  'Activity feed'],
+  ['remaining', 'Remaining in this area'],
+];
+// The same panels narrowed to one game, to build two separate overlays.
+const PANELS_GAME = [
+  ['items',   'oot', 'Items · Ocarina of Time'],
+  ['items',   'mm',  "Items · Majora's Mask"],
+  ['regions', 'oot', 'Regions · Ocarina of Time'],
+  ['regions', 'mm',  "Regions · Majora's Mask"],
+  ['summary', 'oot', 'Summary · Ocarina of Time'],
+  ['summary', 'mm',  "Summary · Majora's Mask"],
+];
+
+const q = new URLSearchParams(location.search);
+/* The options below can be changed live from the director view, so they are
+   state, not constants: the URL only says how we start. applyOpts() is what
+   changes them — it repaints with the last state received and rewrites the
+   address bar so a reload does not lose them. */
+let chroma = q.get('chroma');
+if (chroma === 'none') document.body.classList.add('chroma-none');
+if (chroma === 'green') document.body.classList.add('chroma-green');
+
+/* Spoiler levels. What you ALREADY picked up is not a spoiler —whoever is
+   watching saw you pick it up— but what sits in an unopened location is.
+   Hence the default: show what was obtained, stay quiet about what is left. */
+let SPOILER = ['off', 'item', 'full'].includes(q.get('spoiler')) ? q.get('spoiler') : 'item';
+let showGot     = SPOILER !== 'off';
+let showPending = SPOILER === 'full';
+/* The kill switch: forces the level to `off` whatever it was, and remembers
+   the previous one so unticking it puts things back. Separate from SPOILER so
+   that flipping it twice is not destructive. */
+let HIDE_ALL = q.get('hide') === '1';
+let spoilerPrevio = SPOILER === 'off' ? 'item' : SPOILER;
+if (HIDE_ALL) { SPOILER = 'off'; showGot = false; showPending = false; }
+
+/* Game filter: ?game=oot|mm leaves the overlay with a single game, so the
+   Ocarina tracker and the Majora one can be built separately. */
+const GAME = { oot: 'Ocarina of Time', mm: "Majora's Mask" };
+const GAMEF = ['oot', 'mm'].includes(q.get('game')) ? q.get('game') : null;
+/* ?junk=hide leaves only what matters. The server is what decides what counts
+   as filler, by looking at the item inside; that way the filter keeps working
+   under ?spoiler=off, where not even the name reaches this page. */
+let PIDE_FILTRO = q.get('junk') === 'hide';
+/* ?done=hide drops the regions you have finished off the list. What counts as
+   finished follows whatever filter is on: with "only what matters" a region is
+   done once its key checks are, even if filler is left in it. Otherwise the
+   two options would fight each other and the panel would show regions at
+   3/3 next to a heading that says they are pending. */
+let OCULTA_HECHAS = q.get('done') === 'hide';
+/* Without knowing the items there is no way to tell what is filler, and
+   filtering would zero everything out. The server says whether it can. */
+let puedeFiltrar = false;
+let SOLO_CLAVE = false;
+const keepGame = (g) => !GAMEF || g === GAMEF;
+
+/* Single-panel mode: /p/<name> keeps only that block. */
+const panel = (location.pathname.match(/^\/p\/([a-z]+)/) || [])[1];
+if (panel) {
+  document.body.classList.add('panel', 'panel-' + panel);
+  document.querySelectorAll('[data-panel]').forEach(el => {
+    if (el.dataset.panel !== panel) el.remove();
+  });
+  // containers left empty get in the way of the layout
+  document.querySelectorAll('.cols > .stack, .cols').forEach(el => {
+    if (!el.querySelector('[data-panel]')) el.remove();
+  });
+  // with a game filter the panel title says so, since the repeated heading is
+  // dropped inside. `remaining` is the exception: tick() rewrites its h2.
+  if (GAMEF && ['items', 'regions'].includes(panel)) {
+    const h2 = document.querySelector('.card h2');
+    if (h2) h2.textContent = `${h2.textContent} · ${GAME[GAMEF]}`;
+  }
+  document.title = 'OoTMM · ' + panel + (GAMEF ? ' · ' + GAMEF : '');
+}
+
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+
+function panelUrl(name, game) {
+  const p = new URLSearchParams();
+  const sp = HIDE_ALL ? 'off' : ($('opt-spoiler') ? $('opt-spoiler').value : SPOILER);
+  const ch = $('opt-chroma') ? $('opt-chroma').value : (chroma || '');
+  if (game) p.set('game', game);
+  const jk = $('opt-junk') ? $('opt-junk').value : (PIDE_FILTRO ? 'hide' : '');
+  if (jk) p.set('junk', jk);
+  const dn = $('opt-done') ? $('opt-done').value : (OCULTA_HECHAS ? 'hide' : '');
+  if (dn) p.set('done', dn);
+  if (sp !== 'item') p.set('spoiler', sp);
+  if (ch) p.set('chroma', ch);
+  const qs = p.toString();
+  return `${location.origin}/p/${name}${qs ? '?' + qs : ''}`;
+}
+
+function urlRow(label, name, game, sep) {
+  const u = panelUrl(name, game);
+  return `<tr${sep ? ' class="sep"' : ''}>
+    <td class="p">${esc(label)}</td>
+    <td><code>${esc(u)}</code></td>
+    <td style="width:1%"><button class="copy" data-url="${esc(u)}">copy</button></td>
+  </tr>`;
+}
+
+function renderUrls() {
+  if (!$('urls')) return;
+  // revealing what is left is a legitimate option on the player's own monitor,
+  // but these links go to OBS and there the audience sees it
+  if ($('warn-full')) $('warn-full').hidden = SPOILER !== 'full';
+  $('urls').innerHTML =
+    PANELS.map(([n, l]) => urlRow(l, n, null, false)).join('') +
+    PANELS_GAME.map(([n, g, l], i) => urlRow(l, n, g, i === 0)).join('');
+}
+
+// last state received from the server, so we can repaint without polling
+let lastState = null;
+
+/* The selectors apply to the view you are looking at, not just to the links
+   they generate. They used to call only renderUrls(), so you would switch to
+   "only what matters" and the numbers stayed unfiltered: it looked broken. */
+function syncUrl() {
+  // so reloading (or copying the address bar) keeps what was chosen
+  const p = new URLSearchParams(location.search);
+  const set = (k, v) => v ? p.set(k, v) : p.delete(k);
+  set('spoiler', SPOILER === 'item' ? '' : SPOILER);   // 'item' is the default
+  set('junk', PIDE_FILTRO ? 'hide' : '');
+  set('done', OCULTA_HECHAS ? 'hide' : '');
+  set('chroma', chroma || '');
+  set('hide', HIDE_ALL ? '1' : '');
+  const qs = p.toString();
+  history.replaceState(null, '', location.pathname + (qs ? '?' + qs : ''));
+}
+
+function applyOpts() {
+  /* The kill switch wins over the level selector, and remembers what the level
+     was so that unticking it restores it instead of guessing a default. */
+  HIDE_ALL = !!($('opt-hide') && $('opt-hide').checked);
+  if (!HIDE_ALL) spoilerPrevio = $('opt-spoiler').value;
+  SPOILER = HIDE_ALL ? 'off' : $('opt-spoiler').value;
+  showGot = SPOILER !== 'off';
+  showPending = SPOILER === 'full';
+  if ($('opt-spoiler')) {
+    // the level selector stays visible but inert while the switch is on, so it
+    // is obvious *why* nothing is showing
+    $('opt-spoiler').disabled = HIDE_ALL;
+    $('opt-spoiler').value = HIDE_ALL ? 'off' : SPOILER;
+  }
+  const ks = document.querySelector('.killswitch');
+  if (ks) ks.classList.toggle('on', HIDE_ALL);
+
+  PIDE_FILTRO = $('opt-junk').value === 'hide';
+  OCULTA_HECHAS = $('opt-done') && $('opt-done').value === 'hide';
+  chroma = $('opt-chroma').value || null;
+  document.body.classList.toggle('chroma-none', chroma === 'none');
+  document.body.classList.toggle('chroma-green', chroma === 'green');
+  // marks that the background was set by hand, so these controls stay put
+  document.body.classList.add('opts-live');
+  syncUrl();
+  renderUrls();
+  // repaint now with the last state received, without waiting for the next poll
+  if (lastState) render(lastState);
+}
+
+if ($('urls')) {
+  // the selectors start from whatever the URL carries, or the links they
+  // generate would ignore the options already in effect
+  $('opt-spoiler').value = SPOILER;
+  $('opt-chroma').value = chroma || '';
+  $('opt-junk').value = PIDE_FILTRO ? 'hide' : '';
+  $('opt-done').value = OCULTA_HECHAS ? 'hide' : '';
+  $('opt-hide').checked = HIDE_ALL;
+  $('opt-spoiler').disabled = HIDE_ALL;
+  document.querySelector('.killswitch').classList.toggle('on', HIDE_ALL);
+  $('opt-junk').onchange = applyOpts;
+  $('opt-done').onchange = applyOpts;
+  $('opt-spoiler').onchange = applyOpts;
+  $('opt-chroma').onchange = applyOpts;
+  $('opt-hide').onchange = () => {
+    // put the previous level back when the switch is released
+    if (!$('opt-hide').checked) $('opt-spoiler').value = spoilerPrevio;
+    applyOpts();
+  };
+  $('urls').addEventListener('click', async (e) => {
+    const b = e.target.closest('button.copy');
+    if (!b) return;
+    try { await navigator.clipboard.writeText(b.dataset.url); b.textContent = 'copied'; }
+    catch { b.textContent = 'copy by hand'; }
+    setTimeout(() => { b.textContent = 'copy'; }, 1500);
+  });
+  renderUrls();
+  // ?open unfolds both menus: it means "show me the controls", and which of
+  // the two it lands on is not something the caller should have to know.
+  if (q.has('open'))
+    for (const id of ['options', 'director'])
+      if ($(id)) $(id).open = true;
+}
+
+/* Loading a spoiler from the page. Normally the items come from the ROM and
+   this is not needed at all; the button is the fallback for when that ROM's
+   placement table cannot be read. The file *contents* are uploaded, never the
+   path — an endpoint that opened whatever path it was given would be an
+   arbitrary file read, and the server can end up listening off 127.0.0.1. */
+let avisoSpoiler = null;   // outcome of the last load, until the next attempt
+if ($('load-spoiler')) {
+  $('load-spoiler').onclick = () => $('spoiler-file').click();
+  $('spoiler-file').onchange = async () => {
+    const f = $('spoiler-file').files[0];
+    if (!f) return;
+    avisoSpoiler = { txt: `loading ${f.name}…`, bad: false };
+    pintaSpoiler(lastState);
+    let aplicado = false;
+    try {
+      const r = await fetch('/spoiler', { method: 'POST', body: await f.text() });
+      const j = await r.json();
+      if (!j.ok) {
+        avisoSpoiler = { txt: `${f.name} is no good: ${j.error}`, bad: true };
+      } else {
+        // coverage is the number that says whether the filter will be of any
+        // use: for what the spoiler does not name, filler cannot be told apart
+        const flojo = j.cubiertos < j.activos * 0.9;
+        avisoSpoiler = {
+          txt: `${f.name}: covers ${j.cubiertos.toLocaleString('en')} of `
+             + `${j.activos.toLocaleString('en')} checks`
+             + (flojo ? ' — the rest cannot be classified, is it from this seed?' : ''),
+          bad: flojo,
+        };
+        /* Loading it and having nothing change is the same old trap: the
+           spoiler is precisely what makes it possible to filter filler and to
+           say what each remaining check holds, so it applies right away. */
+        await tick();   // state already carrying the spoiler, before painting
+        if ($('opt-apply') && $('opt-apply').checked) {
+          $('opt-junk').value = 'hide';
+          if (!HIDE_ALL) $('opt-spoiler').value = 'full';
+          avisoSpoiler.txt += ' · applied to the panels';
+          aplicado = true;
+        }
+      }
+    } catch (e) {
+      avisoSpoiler = { txt: 'could not upload it: ' + e.message, bad: true };
+    }
+    $('spoiler-file').value = '';   // so re-picking the same file fires onchange
+    // applyOpts repaints internally; if nothing was applied, the notice is enough
+    if (aplicado) applyOpts(); else pintaSpoiler(lastState);
+  };
+}
+
+function pintaSpoiler(s) {
+  const e = $('spoiler-state');
+  if (!e) return;
+  const rom = (s && s.rom_items_n) || 0;
+  const sp = (s && s.spoiler_n) || 0;
+  const total = (s && s.items_n) || 0;
+  /* The normal case is that the items come from the ROM and no spoiler is
+     needed. The button stays for when that ROM's placement table could not be
+     read — a seed from another version, for instance. */
+  let base;
+  if (rom && sp) base = `${rom.toLocaleString('en')} items from the ROM · ${sp.toLocaleString('en')} from the spoiler on top`;
+  else if (rom)  base = `${rom.toLocaleString('en')} items read from the ROM · no spoiler needed`;
+  else if (sp)   base = `no items in the ROM · ${sp.toLocaleString('en')} from the loaded spoiler`;
+  else           base = 'no items: cannot filter filler nor say what is left in each spot';
+  e.textContent = base + (avisoSpoiler ? ' · ' + avisoSpoiler.txt : '');
+  e.classList.toggle('bad', !!(avisoSpoiler && avisoSpoiler.bad) || !total);
+}
+
+function pct(a, b) { return b ? (100 * a / b) : 0; }
+
+function renderRegions(all, counts) {
+  let regions = all.filter(r => keepGame(r.game));
+  if (SOLO_CLAVE) regions = regions.filter(r => r.total_key > 0);
+  const conDatos = regions.length;
+  // completed follows the active filter, so the two options agree
+  const hecha = (r) => SOLO_CLAVE ? r.done_key >= r.total_key : r.done >= r.total;
+  const hechas = regions.filter(hecha).length;
+  if (OCULTA_HECHAS) regions = regions.filter(r => !hecha(r));
+  if (!regions.length)
+    return `<div class="empty">${hechas ? 'every region you have touched is done' : 'no checks yet'}</div>`;
+  /* This panel only lists regions you have touched. Without saying so the
+     numbers read as if locations were missing -- five regions adding up to 29
+     next to a headline of 670 -- so it says how many it is leaving out. The
+     not-started count only makes sense without ?game=, where the total and the
+     list are about the same set of regions; the completed one is always ours. */
+  const notas = [];
+  const haber = counts && (SOLO_CLAVE ? counts.key : counts.all);
+  if (!GAMEF && haber && haber > conDatos) notas.push(`${haber - conDatos} regions not started`);
+  if (OCULTA_HECHAS && hechas) notas.push(`${hechas} completed`);
+  const nota = notas.length ? `<div class="more">${notas.join(' · ')}</div>` : '';
+  return regions.map(r => {
+    const hechos = SOLO_CLAVE ? r.done_key : r.done;
+    const total = SOLO_CLAVE ? r.total_key : r.total;
+    const p = pct(hechos, total);
+    return `<div class="region row-${r.game}">
+      <div class="name">${esc(r.scene)}</div>
+      <div class="num">${hechos} / ${total}</div>
+      <div class="meter${p >= 100 ? ' full' : ''}"><i class="${hechos ? 'some' : ''}" style="width:${p.toFixed(1)}%"></i></div>
+    </div>`;
+  }).join('') + nota;
+}
+
+// The chip already carries the item name; repeating it with the raw id
+// (NUT (0x01)) is noise on screen. The value is only shown when it adds
+// something: an upgrade level or a counter.
+function chipValue(v) {
+  if (!v) return '';
+  const s = String(v);
+  if (/^yes$/i.test(s)) return '';
+  if (s.includes('(0x')) return '';
+  if (s.length > 12) return '';
+  return s;
+}
+
+const ICON_COLS = 16, ICON_SIDE = 32;
+
+/* Some cells fall back to text when there is no icon for them. A whole name
+   does not fit in a square cell, and truncating it is worse than not showing
+   it: initials are used instead, with the full name living in the title.
+   Linking words do not count. */
+const STOPWORDS = new Set(['of', 'the', 'a', 's']);
+function words(label) {
+  return String(label)
+    .split(/[\s'’_()\[\].,·-]+/)
+    .filter(w => /^[\p{L}\p{N}]/u.test(w) && !STOPWORDS.has(w.toLowerCase()));
+}
+/* `depth` letters of each word: 1 gives initials. ALL of them grow, not just
+   one: in the masks the last word is always "Mask" and growing that separates
+   nothing, whereas in "Goht's Remains" the telling word is the first. */
+function shortLabel(label, depth = 1) {
+  const w = words(label);
+  if (w.length >= 2) {
+    return w.slice(0, 3)
+      .map(x => x[0].toUpperCase() + x.slice(1, depth).toLowerCase())
+      .join('');
+  }
+  const one = w[0] || String(label);
+  return one.slice(0, 2 + depth).replace(/^./, c => c.toUpperCase());
+}
+
+/* Two entries with the same initials cannot be told apart: "Goht's Remains"
+   and "Gyorg's Remains" both gave "GR", and MM had four "SS". When they clash
+   within a group they grow until they separate. */
+function labelsFor(items) {
+  const out = items.map(it => shortLabel(it.label));
+  const groups = {};
+  out.forEach((s, i) => (groups[s] = groups[s] || []).push(i));
+
+  for (const idxs of Object.values(groups)) {
+    if (idxs.length < 2) continue;
+    // What they all share distinguishes nothing: four clashing masks share the
+    // word "Mask", and growing that gives KafMas / KamMas, long and unreadable.
+    // Drop what is common and disambiguate with what is left.
+    const sets = idxs.map(i => words(items[i].label).map(w => w.toLowerCase()));
+    const comun = sets[0].filter(w => sets.every(s => s.includes(w)));
+    const resto = idxs.map((i, k) => {
+      const keep = words(items[i].label).filter(w => !comun.includes(w.toLowerCase()));
+      return keep.length ? keep.join(' ') : items[i].label;
+    });
+    for (let depth = 1; depth <= 3; depth++) {
+      const tryed = resto.map(r => shortLabel(r, depth));
+      if (new Set(tryed).size === tryed.length || depth === 3) {
+        idxs.forEach((i, k) => out[i] = tryed[k].slice(0, 4));
+        break;
+      }
+    }
+  }
+  return out;
+}
+
+/* Glyphs for what the ROM does not carry: songs, remains, the notebook. On a
+   24x24 canvas so they scale with the cell. */
+const GLYPH = {
+  /* A single quaver, like the one in the game's menu: head tilted down-left,
+     stem on the right and one flag. It used to be a beamed pair of quavers,
+     which looked nothing like it. */
+  note: '<ellipse cx="8.5" cy="17.9" rx="4.6" ry="3.5" transform="rotate(-22 8.5 17.9)"/>'
+      + '<path d="M11.7 16.9V3.2l2.1-.8v14.5z"/>'
+      + '<path d="M13.8 2.4c3.7 1.5 5.6 3.6 5.6 6.3 0 1.5-.5 2.9-1.5 4 .4-3-1.2-5.1-4.1-6.4z"/>',
+  bolt: '<path d="M13.6 1.5 5 13.6h5.1L8.9 22.5 18 10h-5.2z"/>',
+  sun: '<circle cx="12" cy="12" r="4.6"/><g stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><path d="M12 1.6v3.1M12 19.3v3.1M1.6 12h3.1M19.3 12h3.1M4.6 4.6l2.2 2.2M17.2 17.2l2.2 2.2M19.4 4.6l-2.2 2.2M6.8 17.2l-2.2 2.2"/></g>',
+  horseshoe: '<path d="M6.5 21.5V13a5.5 5.5 0 0 1 11 0v8.5" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round"/>',
+  leaf: '<path d="M21 3C9.5 3.6 3.5 8.6 3.5 15.2c0 2 .7 3.6 1.2 4.4C6.4 13 12 9.4 17.4 8c-4.6 2.4-8.6 6-10.2 12.4 9.4 1.4 14.6-6.4 13.8-17.4z"/>',
+  hourglass: '<path d="M5.5 2h13v3.2L13.4 12l5.1 6.8V22h-13v-3.2L10.6 12 5.5 5.2z"/>',
+  /* A feather for the song of soaring: the up arrow did not read. */
+  soar: '<path d="M20.6 2.8c-7.4.5-12.1 4.1-13.9 9-.9 2.5-1 4.6-.7 6.2l-2.6 2.6a1.15 1.15 0 0 0 1.6 1.6l2.6-2.6c1.6.3 3.7.2 6.2-.7 4.9-1.8 8.5-6.5 9-13.9z"/>'
+      + '<g fill="none" stroke="rgba(0,0,0,.55)" stroke-width="1.3" stroke-linecap="round">'
+      + '<path d="M18.6 4.8 6.6 16.8"/><path d="M15.6 5.2 14.4 9.6"/><path d="M12 8.8l-1.2 4.4"/><path d="M8.6 12.4 7.6 16"/></g>',
+  heart: '<path d="M12 21.6S2.8 14.8 2.8 8.9A4.9 4.9 0 0 1 12 6.1a4.9 4.9 0 0 1 9.2 2.8c0 5.9-9.2 12.7-9.2 12.7z"/>',
+  wave: '<g fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M2.5 10c3.2-4.4 6.3-4.4 9.5 0s6.3 4.4 9.5 0"/><path d="M2.5 17c3.2-4.4 6.3-4.4 9.5 0s6.3 4.4 9.5 0"/></g>',
+  book: '<path d="M4 3.5h6.6c.8 0 1.4.6 1.4 1.4v15c-.5-.6-1.2-.9-1.9-.9H4z"/><path d="M20 3.5h-6.6c-.8 0-1.4.6-1.4 1.4v15c.5-.6 1.2-.9 1.9-.9H20z"/>',
+  triforce: '<path d="M12 2.4 17 11H7z"/><path d="M7 12.4 12 21H2z"/><path d="M17 12.4 22 21H12z"/>',
+  /* MM stray fairy: body with wings and a trail of sparks. Its real icon is
+     not among the 32x32 entries of the archive. */
+  fairy: '<path d="M10.6 12.2C7.4 11 4.2 8.2 3.4 4.6c3.4-.6 7 1.6 8.6 5.2z"/>'
+       + '<path d="M13.4 12.2c3.2-1.2 6.4-4 7.2-7.6-3.4-.6-7 1.6-8.6 5.2z"/>'
+       + '<circle cx="12" cy="13.6" r="3.4"/>'
+       + '<path d="M12 18.4c-1.4 1.6-2.6 2.6-4.2 3.2 1-1.8 1.8-3.2 2.4-4.6z"/>'
+       + '<path d="M12 18.4c1.4 1.6 2.6 2.6 4.2 3.2-1-1.8-1.8-3.2-2.4-4.6z"/>',
+  remains: '<path d="M12 2.2c4.6 0 7.6 3 7.6 7.2 0 2.6-1 4.4-1 6.4 0 2.4-2.6 6-6.6 6s-6.6-3.6-6.6-6c0-2-1-3.8-1-6.4 0-4.2 3-7.2 7.6-7.2z"/><circle cx="9" cy="10.4" r="1.7" fill="#0d0d0d"/><circle cx="15" cy="10.4" r="1.7" fill="#0d0d0d"/>',
+};
+
+/* Fallback silhouettes for MM's own masks, used when the archive cannot be
+   located in the ROM. Each is an outline plus one or two features; the holes
+   are semi-transparent black so they work over any background, chroma included. */
+const H = 'rgba(0,0,0,.6)';   // hueco
+const CARA = 'M12 2.4c4.7 0 7.9 3.1 7.9 7.6 0 5.4-3.4 11.6-7.9 11.6S4.1 15.4 4.1 10C4.1 5.5 7.3 2.4 12 2.4z';
+
+Object.assign(GLYPH, {
+  // peaked cap with its emblem
+  'mask-postman': `<path d="M5.5 13.5a6.5 6.5 0 0 1 13 0V15h-13z"/><path d="M1.8 15h17.5v2.6H1.8z"/><circle cx="12" cy="10.6" r="2.1" fill="${H}"/>`,
+  // huge sleepless eyes
+  'mask-allnight': `<path d="${CARA}"/><circle cx="8.6" cy="10" r="3.1" fill="${H}"/><circle cx="15.4" cy="10" r="3.1" fill="${H}"/><circle cx="8.6" cy="10" r="1.1"/><circle cx="15.4" cy="10" r="1.1"/>`,
+  // bomb with a fuse
+  'mask-blast': `<circle cx="11.5" cy="14" r="7.4"/><path d="M17 8.6c1.4-1.8 2.6-2.2 4.4-2" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="9.2" cy="12.4" r="1.5" fill="${H}"/><circle cx="14.4" cy="12.4" r="1.5" fill="${H}"/>`,
+  // flat cracked stone
+  'mask-stone': `<path d="M5.6 3.2h12.8v12.4c0 3.2-2.7 5.6-6.4 5.6s-6.4-2.4-6.4-5.6z"/><path d="M9.5 3.2 8 10l2.4 2-1.4 8.6" fill="none" stroke="${H}" stroke-width="1.5"/>`,
+  // fairy wings
+  'mask-fairy': `<path d="M12 5.5c2.9 0 4.9 2.2 4.9 5.4 0 3.9-2.3 8.6-4.9 8.6s-4.9-4.7-4.9-8.6c0-3.2 2-5.4 4.9-5.4z"/><path d="M7.4 9.6C4.6 7 2.2 6.6 1.2 7.4c-1 .9.2 3.4 3 5.2z"/><path d="M16.6 9.6c2.8-2.6 5.2-3 6.2-2.2 1 .9-.2 3.4-3 5.2z"/><circle cx="10" cy="11" r="1.2" fill="${H}"/><circle cx="14" cy="11" r="1.2" fill="${H}"/>`,
+  // leaf on top and a snout
+  'mask-deku': `<path d="${CARA}"/><path d="M12 2.6c-1.6-1.4-4-1.6-5.4-.4 1 1.9 3.2 2.9 5.4 2.6zM12 2.6c1.6-1.4 4-1.6 5.4-.4-1 1.9-3.2 2.9-5.4 2.6z"/><ellipse cx="12" cy="15.4" rx="2.9" ry="3.4" fill="${H}"/><circle cx="9" cy="9.6" r="1.3" fill="${H}"/><circle cx="15" cy="9.6" r="1.3" fill="${H}"/>`,
+  // bird beak
+  'mask-bremen': `<path d="M5.4 4h13.2v8.4c0 3.6-3 6.6-6.6 6.6S5.4 16 5.4 12.4z"/><path d="M12 12.6 15.6 22l-7.2 0z"/><circle cx="9.2" cy="9.4" r="1.6" fill="${H}"/><circle cx="14.8" cy="9.4" r="1.6" fill="${H}"/>`,
+  // rana: ojos saltones arriba
+  'mask-frog': `<path d="M12 7c4.6 0 8 2.8 8 6.8S16.6 21 12 21s-8-3.2-8-7.2S7.4 7 12 7z"/><circle cx="7.6" cy="6.2" r="3.4"/><circle cx="16.4" cy="6.2" r="3.4"/><circle cx="7.6" cy="6.2" r="1.4" fill="${H}"/><circle cx="16.4" cy="6.2" r="1.4" fill="${H}"/><path d="M7.5 15.6h9" fill="none" stroke="${H}" stroke-width="1.7" stroke-linecap="round"/>`,
+  // narizota
+  'mask-scents': `<path d="${CARA}"/><path d="M12 8.6c2.6 0 4.4 2.2 4.4 4.8S14.4 18 12 18s-4.4-2-4.4-4.6 1.8-4.8 4.4-4.8z" fill="${H}"/><circle cx="8.4" cy="8" r="1.2" fill="${H}"/><circle cx="15.6" cy="8" r="1.2" fill="${H}"/>`,
+  // round badge with a star
+  'mask-romani': `<circle cx="12" cy="12" r="9.2"/><path d="m12 5.8 1.9 3.9 4.3.6-3.1 3 .7 4.3-3.8-2-3.8 2 .7-4.3-3.1-3 4.3-.6z" fill="${H}"/>`,
+  // sad clown with a tear
+  'mask-circus': `<path d="${CARA}"/><path d="M8 16.4c2.4-2 5.6-2 8 0" fill="none" stroke="${H}" stroke-width="1.7" stroke-linecap="round"/><circle cx="8.6" cy="9.6" r="1.4" fill="${H}"/><circle cx="15.4" cy="9.6" r="1.4" fill="${H}"/><path d="M15.4 11.6c.9 1.2 1.4 2 1.4 2.7a1.4 1.4 0 0 1-2.8 0c0-.7.5-1.5 1.4-2.7z" fill="${H}"/>`,
+  // face with a fringe
+  'mask-kafei': `<path d="${CARA}"/><path d="M4.4 9.4C4.9 4.9 8 2.4 12 2.4s7.1 2.5 7.6 7c-2.4-1.6-4.6-2.4-7.6-2.4s-5.2.8-7.6 2.4z" fill="${H}"/><circle cx="8.8" cy="12" r="1.3" fill="${H}"/><circle cx="15.2" cy="12" r="1.3" fill="${H}"/>`,
+  // corazon partido en dos
+  'mask-couple': `<path d="M11.2 21.4S3 15.4 3 10.2A4.4 4.4 0 0 1 11.2 7.6z"/><path d="M12.8 21.4S21 15.4 21 10.2a4.4 4.4 0 0 0-8.2-2.6z" opacity=".72"/>`,
+  // mime: closed eyes and markings
+  'mask-kamaro': `<path d="M12 1.8c4.2 0 7.2 2.8 7.2 7 0 6.2-3.2 12.4-7.2 12.4S4.8 15 4.8 8.8c0-4.2 3-7 7.2-7z"/><path d="M6.8 9.6c1.4-1.2 2.8-1.2 4.2 0M13 9.6c1.4-1.2 2.8-1.2 4.2 0" fill="none" stroke="${H}" stroke-width="1.5" stroke-linecap="round"/><path d="M12 12.4v5" fill="none" stroke="${H}" stroke-width="1.5" stroke-linecap="round"/>`,
+  // momia vendada
+  'mask-gibdo': `<path d="${CARA}"/><path d="M4.6 7.6h15M4.4 11.2h15.2M5.4 14.8h13.4M7 18.2h10" fill="none" stroke="${H}" stroke-width="1.3"/>`,
+  // hood with glowing eyes
+  'mask-garo': `<path d="M12 2.2c4.5 0 7.6 3 7.6 7.4 0 2.4-.7 4.2-.7 6 0 3.2-3 5.8-6.9 5.8s-6.9-2.6-6.9-5.8c0-1.8-.7-3.6-.7-6 0-4.4 3.1-7.4 7.6-7.4z"/><path d="M4.8 12.6h14.4v5.6H4.8z" fill="${H}"/><circle cx="9" cy="15.2" r="1.6" fill="currentColor"/><circle cx="15" cy="15.2" r="1.6" fill="currentColor"/>`,
+  // horned helmet
+  'mask-captain': `<path d="M6.4 8.6a5.6 5.6 0 0 1 11.2 0v5.8c0 3.4-2.5 6-5.6 6s-5.6-2.6-5.6-6z"/><path d="M6.4 9.4C4 8.6 2.4 6.4 2.2 3.6c2.4.6 4 2.2 4.6 4.4zM17.6 9.4c2.4-.8 4-3 4.2-5.8-2.4.6-4 2.2-4.6 4.4z"/><circle cx="9.4" cy="12" r="1.5" fill="${H}"/><circle cx="14.6" cy="12" r="1.5" fill="${H}"/>`,
+  // big square mask
+  'mask-giant': `<path d="M3.6 4.2h16.8v10.4c0 3.8-3.6 7-8.4 7s-8.4-3.2-8.4-7z"/><path d="M6.6 8.2h4v3.2h-4zM13.4 8.2h4v3.2h-4z" fill="${H}"/><path d="M8.6 16.4h6.8" fill="none" stroke="${H}" stroke-width="1.8" stroke-linecap="round"/>`,
+  // vertical war paint
+  'mask-fierce': `<path d="${CARA}"/><path d="M8.4 4.6 7 12.2M15.6 4.6 17 12.2" fill="none" stroke="${H}" stroke-width="1.9" stroke-linecap="round"/><ellipse cx="9.2" cy="10.6" rx="1.5" ry="1.2" fill="${H}"/><ellipse cx="14.8" cy="10.6" rx="1.5" ry="1.2" fill="${H}"/><path d="M9.6 16.6h4.8" fill="none" stroke="${H}" stroke-width="1.6" stroke-linecap="round"/>`,
+});
+
+function cell(it, short) {
+  const on = it.on ? ' on' : '';
+  let inner = '';
+  if (it.img) {
+    // a hand-placed image in icons/ overrides everything else
+    inner = `<img class="usr" src="${esc(it.img)}" alt="">`;
+  } else if (it.icon !== null && it.icon !== undefined) {
+    inner = `<span class="ico" style="--cx:${it.icon % ICON_COLS};--cy:${Math.floor(it.icon / ICON_COLS)}"></span>`;
+  } else if (it.mask !== null && it.mask !== undefined) {
+    // the ROM's note used as a mask: the game supplies the shape, the overlay
+    // the colour, which is what the kaleido does when it draws it
+    inner = `<span class="msk" style="--cx:${it.mask % ICON_COLS};--cy:${Math.floor(it.mask / ICON_COLS)}${
+      it.color ? `;--c:${it.color}` : ''}"></span>`;
+  } else if (it.glyph && GLYPH[it.glyph]) {
+    inner = `<span class="gly"${it.color ? ` style="--c:${it.color}"` : ''}>`
+          + `<svg viewBox="0 0 24 24" aria-hidden="true">${GLYPH[it.glyph]}</svg></span>`;
+  } else if (it.label) {
+    inner = `<span class="txt" style="--len:${short.length}">${esc(short)}</span>`;
+  }  // no label means a free slot of the menu: left empty
+  const tip = esc(it.label) + (it.on && chipValue(it.value) ? ' · ' + esc(chipValue(it.value)) : '');
+  return `<span class="chip${on}"${it.label ? ` title="${tip}"` : ''}>${inner}${
+    it.badge ? `<span class="val">${esc(it.badge)}</span>` : ''}</span>`;
+}
+
+function renderItems(items) {
+  const games = Object.keys(items).filter(g => items[g] && items[g].length && keepGame(g));
+  if (!games.length) return '<div class="empty">no data yet</div>';
+  // with a single game the panel title already says so; repeating it is noise
+  const head = (g) => (GAMEF || games.length < 2) ? ''
+    : `<h3 style="color:var(--ink-2);font-size:12px;margin:0 0 8px">${GAME[g] || g}</h3>`;
+  return games.map(g => `<div class="gamegrid row-${g}">
+    ${head(g)}
+    ${items[g].map(grp => `<div class="grp">
+      <h3>${esc(grp.name)}</h3>
+      <div class="chips" style="--cols:${grp.cols || 6}">${
+        (l => grp.items.map((it, i) => cell(it, l[i])).join(''))(labelsFor(grp.items))
+      }</div>
+    </div>`).join('')}
+  </div>`).join('');
+}
+
+function renderFeed(all) {
+  const feed = all.filter(f => keepGame(f.game));
+  // with spoilers off the feed says you completed something, not what it was
+  return feed.map(f => showGot
+    ? `<li><span class="item">${esc(f.item || '?')}</span>
+           <span class="from">← ${esc(f.check)}</span></li>`
+    : `<li><span class="item">${esc(f.check)}</span></li>`
+  ).join('');
+}
+
+function pendVisible(here) {
+  return (here.list || []).filter(p => !(SOLO_CLAVE && p.junk));
+}
+
+function renderPend(here) {
+  const list = pendVisible(here);
+  const shown = list.slice(0, 25);
+  let html = shown.map(p => `<li${p.here ? ' class="here"' : ''}>
+    <span class="name">${esc(p.name)}</span>
+    ${showPending && p.item ? `<span class="from">→ ${esc(p.item)}</span>` : ''}
+    ${p.here ? '<span class="room">this room</span>' : ''}
+  </li>`).join('');
+  const notes = [];
+  if (list.length > shown.length) notes.push(`${list.length - shown.length} more`);
+  /* Saying so matters: these are real checks with real items, just somewhere
+     you are not. Hiding them without a word is how the panel would look wrong
+     again, from the other side. */
+  if (here.other_room) notes.push(`${here.other_room} in other rooms`);
+  if (here.other_setup) notes.push(`${here.other_setup} in another setup of this scene`);
+  if (notes.length) html += `<div class="more">and ${notes.join(' · ')}</div>`;
+  return html;
+}
+
+/* The grid must never grow a scrollbar: in an OBS source that is a visible
+   defect, and it shifts the composition as the run progresses. Instead of
+   letting the list grow, the cell shrinks until everything fits the box. */
+let lastItemsHTML = null;
+function fitItems() {
+  const box = $('items');
+  if (!box || !box.clientHeight) return;
+  // in a narrow column the headings weigh more than the cells, so when
+  // shrinking the cell is not enough we switch to compact mode and retry.
+  // Three steps, from the most faithful to the one that always fits:
+  //   1. the game's layout (fixed columns), shrinking the cell
+  //   2. the same in compact mode, with smaller headings
+  //   3. free flow: the menu shape is lost but it fits a narrow column,
+  //      which is the case of the full view with both games
+  // With fixed columns it can also overflow sideways, not only vertically.
+  box.classList.toggle('narrow', box.clientWidth < 420);
+  const fits = () => box.scrollHeight <= box.clientHeight + 1 &&
+                     box.scrollWidth <= box.clientWidth + 1;
+  // We look for the LARGEST cell that fits, not the first one that does: with
+  // the groups side by side there is usually room to spare, and leaving them
+  // small wastes the whole source.
+  for (const [compact, flow] of [[false, false], [true, false], [true, true]]) {
+    box.classList.toggle('compact', compact);
+    box.classList.toggle('flow', flow);
+    for (let c = 112; c >= 14; c -= 2) {
+      box.style.setProperty('--cell', c + 'px');
+      if (fits()) return;
+    }
+  }
+}
+addEventListener('resize', () => { fitItems(); });
+
+// In panel mode the other blocks are no longer in the DOM, so everything
+// writes through these helpers, which stay quiet if the element is missing.
+const setHTML = (id, v) => { const e = $(id); if (e) e.innerHTML = v; };
+const setText = (id, v) => { const e = $(id); if (e) e.textContent = v; };
+const setShow = (id, on) => { const e = $(id); if (e) e.style.display = on ? '' : 'none'; };
+
+async function tick() {
+  let s;
+  try {
+    s = await (await fetch('/state.json', { cache: 'no-store' })).json();
+  } catch {
+    setText('status', 'server not responding');
+    return;
+  }
+  lastState = s;
+  render(s);
+}
+
+/* Painting is separate from polling: the director-view selectors repaint with
+   the last state received, without waiting for the next poll. */
+function render(s) {
+  if (s.error) {
+    setHTML('alert', `<div class="warn"><b>No connection to the game.</b> ${esc(s.error)}</div>`);
+  } else if (!s.trusted) {
+    setHTML('alert', `<div class="warn"><b>Checks not trustworthy.</b>
+      Only ${Math.round(s.confidence * 100)}% of the bits that are set land on a known check,
+      so the custom save base is not the right one and what comes out of it is worthless.
+      Usually the Majora's Mask save was located in a stale copy; it fixes itself as soon
+      as the live one is found. Bases in use: ${
+        Object.entries(s.bases || {}).map(([g, b]) => `${g} ${b}`).join(' · ') || '—'}</div>`);
+  } else {
+    setHTML('alert', '');
+  }
+
+  puedeFiltrar = !!s.can_filter;
+  SOLO_CLAVE = PIDE_FILTRO && puedeFiltrar;
+  /* Without item data there is no way to tell what is filler and the filter
+     disables itself. Say so in the selector, or it is one more control that
+     does nothing when touched — exactly the bug being fixed here. */
+  const optJunk = $('opt-junk') && $('opt-junk').options[1];
+  if (optJunk) {
+    optJunk.disabled = !puedeFiltrar;
+    optJunk.textContent = puedeFiltrar ? 'only what matters'
+                                       : 'only what matters (needs item data)';
+  }
+  pintaSpoiler(s);
+
+  if (!s.ready) { setText('status', 'esperando datos…'); return; }
+
+  // with ?game= the percentage must be that game's, not the two together
+  const hechos = SOLO_CLAVE ? (s.done_key_by_game || {}) : (s.done_by_game || {});
+  const totales = SOLO_CLAVE ? (s.totals_key || {}) : (s.totals || {});
+  const doneN = GAMEF ? (hechos[GAMEF] || 0)
+                      : (SOLO_CLAVE ? s.done_key_total : s.done_total) || 0;
+  const totalN = GAMEF ? (totales[GAMEF] || 0)
+                       : (SOLO_CLAVE ? s.total_key : s.total) || 0;
+  const hero = $('hero');
+  if (hero) hero.firstChild.nodeValue = doneN.toLocaleString('en');
+  setText('hero-total', ' / ' + totalN.toLocaleString('en'));
+  const p = pct(doneN, totalN);
+  const hm = $('hero-meter');
+  if (hm) {
+    hm.style.width = p.toFixed(2) + '%';
+    hm.className = doneN ? 'some' : '';
+    hm.parentElement.className = 'meter full row-' + (GAMEF || 'oot');
+  }
+  setText('hero-label', `checks completed · ${p.toFixed(1)}%`);
+  setText('status', s.active ? `playing ${GAME[s.active] || s.active}` : '');
+  // when filtered the badge identifies the overlay; otherwise the active game
+  const badge = GAMEF || s.active;
+  setHTML('badges', badge
+    ? `<span class="badge ${badge}"><span class="dot"></span>${GAME[badge] || badge}</span>` : '');
+
+  const sc = [];
+  for (const g of Object.keys(s.scalars || {})) {
+    if (!keepGame(g)) continue;
+    for (const x of s.scalars[g]) sc.push(x);
+  }
+  setHTML('stats', sc.map(x =>
+    `<div class="stat"><div class="k">${esc(x.label)}</div><div class="v">${esc(x.value)}</div></div>`).join(''));
+
+  setHTML('regions', renderRegions(s.regions || [], s.regions_n));
+  const itemsHTML = renderItems(s.items || {});
+  if (itemsHTML !== lastItemsHTML) { setHTML('items', itemsHTML); lastItemsHTML = itemsHTML; fitItems(); }
+
+  const feed = (s.feed || []).filter(f => keepGame(f.game));
+  setHTML('feed', renderFeed(s.feed || []));
+  setShow('feed-empty', !feed.length);
+
+  // what is left is what is left in the area you are in, so an overlay
+  // filtered to the other game has nothing to show
+  const here = (s.pending_here && keepGame(s.pending_here.game))
+    ? s.pending_here
+    : { scene: null, game: null, room: null, live: false, setup: null,
+        other_setup: 0, other_room: 0, list: [] };
+  // the room only earns its place in the title when the scene has more than
+  // one: room 0 is every single-room area, and saying so is just noise
+  const roomTag = here.room > 0 ? ` · room ${here.room}` : '';
+  setText('pend-title', here.scene ? `Remaining in ${here.scene}${roomTag}` : 'Remaining here');
+  setHTML('pend', renderPend(here));
+  // Count what is actually VISIBLE, junk filter included: with the filter on
+  // and only junk left, the list came out empty with no message at all.
+  const visible = pendVisible(here).length;
+  setShow('pend-empty', !visible);
+  if (!visible) {
+    // "area cleared" has to mean cleared. If the list is empty only because
+    // things were put aside, say which.
+    let why = 'area cleared';
+    if (here.other_room)
+      why = `nothing left in this room · ${here.other_room} elsewhere in the area`;
+    else if (here.other_setup)
+      why = `nothing for this version of the scene · ${here.other_setup} in another setup`;
+    else if (SOLO_CLAVE && here.list.length)
+      why = `nothing important left · ${here.list.length} junk`;
+    setText('pend-empty', GAMEF && s.active && s.active !== GAMEF
+      ? `right now you are in ${GAME[s.active]}`
+      : (here.scene ? why : 'unknown area'));
+  }
+}
+
+tick();
+setInterval(tick, 700);
+
+
+</script>
+</body>
+</html>
