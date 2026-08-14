@@ -118,6 +118,9 @@ Whenever the `.exe` is rebuilt:
   `.exe` reuses the old file instead of exercising its own `mkchecks`, and the
   comparison proves nothing.
 - Check the panels still serve, including the Spanish 301 slugs.
+- **Kill any running `ootmm-tracker.exe` before rebuilding**, or PyInstaller
+  fails with `PermissionError` on `dist\`. The one-file build spawns a child
+  process, so killing the one you started is not enough — kill them by name.
 - If `Scripts/tracker.lua` was touched, check the hard link survived
   (`fsutil hardlink list`): an editor that rewrites the file breaks it, and the
   emulator then keeps an old copy without saying so.
