@@ -1778,6 +1778,19 @@ def serve(tracker, host, port, open_window=True):
             if self.path.split("?", 1)[0] != "/spoiler":
                 self.send_error(404)
                 return
+            # Only from our own page. Any website you happen to have open can
+            # POST to 127.0.0.1 —nothing stops it— and loading a spoiler turns
+            # `spoiler=full` on, so a stranger's page could reveal what is left
+            # on your stream. Browsers label their own requests and cannot be
+            # made to lie about these two headers; curl and scripts send
+            # neither, so driving it by hand still works.
+            site = self.headers.get("Sec-Fetch-Site")
+            origin = self.headers.get("Origin")
+            mine = f"http://{self.headers.get('Host', '')}"
+            if (site and site != "same-origin") or (origin and origin != mine):
+                self._json({"ok": False, "error": "spoilers can only be loaded"
+                            " from the tracker's own page"})
+                return
             n = int(self.headers.get("Content-Length") or 0)
             if n <= 0 or n > 16 * 1024 * 1024:
                 self._json({"ok": False, "error": "file empty or too large"})

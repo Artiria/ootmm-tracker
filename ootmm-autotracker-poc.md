@@ -1596,12 +1596,16 @@ The ROM names the concrete item and the spoiler the pool entry.
 
 ```
 active checks:                     5074
-  with an address:                 4995
-  with an item from the ROM:       4939   (98.9%)
+  with an address:                 5012
+  with an item from the ROM:       4956   (98.9%)
 without an item, in total:          672
   of those, Master Quest:           616   correct: they do not exist in this seed
   active and with an address:        56   (1.1%)
 ```
+
+> Re-measured on 14 Aug 2026 after the cows: the two middle figures were 4995
+> and 4939 before `cow_flags` resolved 18 more. The ratio and the 56 left over
+> are unchanged.
 
 The 56 are 25 `tree`, 7 `grass`, 5 `crate`, 5 `butterfly`, 4 `pot`, 3
 `boulder-silver`, 3 `collectible`, 2 `rock`, 1 `snowball` and 1 `npc`. They are

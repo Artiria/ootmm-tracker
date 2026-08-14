@@ -175,15 +175,20 @@ what you still want the CSVs for.
 
 | Measurement | Result |
 |---|---|
-| Checks with an address, resolved straight from the ROM | 4,939 / 4,995 |
+| Active checks with an address, resolved straight from the ROM | 4,956 / 5,012 |
 | Agreement with the spoiler on classifying filler | 5,018 / 5,018 |
 | Checks mapped overall | 5,981 / 6,043 |
 | xflag chains found by shape, across 29 ROMs | 2 per ROM, 0 false positives |
 | Versions | v32.0 and dev |
 
-The 56 checks that have an address but do not appear in the table, and the 62
-with no address at all, are known gaps rather than surprises — mostly
-caught-fish flags and MM stray fairies.
+The two denominators are different on purpose: 6,043 is every row in the pool,
+while 5,012 counts only the ones **active in this seed** — a vanilla check and
+its Master Quest twin both exist in the table, but only one of them is in any
+given ROM.
+
+The 56 active checks that have an address but do not appear in the placement
+table, and the 62 with no address at all, are known gaps rather than surprises
+— mostly caught-fish flags and MM stray fairies.
 
 ## Credit where it is due
 

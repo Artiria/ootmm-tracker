@@ -1,12 +1,12 @@
-# El boton de patrocinio del repositorio.
+# The repository's sponsor button.
 #
-# La donacion es por el tracker, que es codigo propio y no reparte nada de los
-# juegos. Todo lo que hace esta en este repositorio y nada queda detras de un
-# pago. Ver la seccion "Support" del README.
+# The donation is for the tracker, which is my own code and distributes nothing
+# from the games. Everything it does is in this repository and nothing sits
+# behind a payment. See the "Support" section of the README.
 #
-# `github:` solo pinta el boton si GitHub Sponsors esta activado en la cuenta
-# (github.com/sponsors/accounts). Si aun no lo esta, no pasa nada: el fichero
-# es valido y los otros dos aparecen igual.
+# `github:` only draws the button once GitHub Sponsors is enabled on the
+# account (github.com/sponsors/accounts). Until then the file is still valid
+# and the other two show up anyway.
 github: [Artiria]
 ko_fi: artiria
 custom: ["https://paypal.me/JuanRamos633"]
