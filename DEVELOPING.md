@@ -7,9 +7,10 @@ changing anything.
 
 ## Running from source
 
-1. Copy `Scripts\tracker.lua` into Project64-EM's `Scripts\` folder (or run
-   `python ootmm.py install-lua`, which finds it on its own). With the ROM
-   loaded: **Debugger > Scripts**, run `tracker.lua`.
+1. Copy `Scripts\tracker.lua` into Project64-EM's `Scripts\` folder — it has to
+   be in there for the emulator to list it — or run `python ootmm.py
+   install-lua`, which finds the folder on its own. With the ROM loaded:
+   **File > Lua Scripts…**, and run `tracker.lua`.
 2. Then:
 
 ```

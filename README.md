@@ -15,8 +15,9 @@ seed ROM itself.
 1. **[Download the latest release](../../releases/latest)** and unzip it.
 2. Double-click `ootmm-tracker.exe`. It finds your ROM, builds its tables and
    icons from it the first time, and opens the overlay.
-3. In Project64-EM, with the ROM loaded: **Debugger > Scripts**, run
-   `tracker.lua` — it puts it in the right folder for you. Either order works.
+3. In Project64-EM, with the ROM loaded: **File > Lua Scripts…**, and run
+   `tracker.lua`. The tracker has already put it in the emulator's `Scripts`
+   folder for you. Either order works.
 
 That is all. There is nothing to configure and no paths to type in.
 

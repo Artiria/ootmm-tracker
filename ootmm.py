@@ -333,7 +333,7 @@ def listen_for_lua(host, port, label):
     ls.bind((host, port))
     ls.listen(1)
     print(f"[{label}] listening on {host}:{port}")
-    print(f"[{label}] start tracker.lua in P64-EM (Debugger > Scripts)\n")
+    print(f"[{label}] start tracker.lua in P64-EM (File > Lua Scripts...)\n")
     sock, _ = ls.accept()
     sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
     ls.close()
@@ -1066,7 +1066,8 @@ def cmd_install_lua(args):
         "kept": f"tracker.lua left alone (another version): {dst}",
     }[status])
     if status != "kept":
-        print("In the emulator, with the ROM loaded: Debugger > Scripts, run tracker.lua")
+        print("In the emulator, with the ROM loaded: File > Lua Scripts...,"
+              " and run tracker.lua")
 
 
 def cmd_find(args):

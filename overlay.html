@@ -1113,7 +1113,8 @@ function render(s) {
   }
   if (s.waiting) {
     setHTML('alert', `<div class="warn"><b>Waiting for the emulator.</b>
-      In Project64-EM open <b>Debugger &gt; Scripts</b> and run <b>tracker.lua</b>.
+      In Project64-EM open <b>File &gt; Lua Scripts…</b> and run <b>tracker.lua</b>,
+      which is already in the emulator's <b>Scripts</b> folder.
       This page updates on its own as soon as it connects.</div>`);
   } else if (s.error) {
     setHTML('alert', `<div class="warn"><b>No connection to the game.</b> ${esc(s.error)}</div>`);
