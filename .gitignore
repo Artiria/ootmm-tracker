@@ -1,0 +1,32 @@
+# Artefactos que se generan de la ROM de cada uno. NO se reparten: cada
+# usuario los produce en su maquina a partir de su propia copia del juego.
+# Ver la seccion "Repartir el tracker" del README.
+icons.png
+icons.json
+checks.json
+discover-cache.json
+
+# Iconos que cada uno ponga a mano (ver icons/LEEME.md), menos el propio LEEME
+icons/*
+!icons/LEEME.md
+
+# Volcados de memoria y de partida: son datos de una partida concreta
+*.bin
+*.z64
+*.n64
+*.v64
+*.fla
+
+# Capturas sueltas
+Captura*.jpg
+Captura*.png
+
+__pycache__/
+*.pyc
+
+# Ajustes locales de la herramienta: llevan rutas de esta maquina
+.claude/
+
+# PyInstaller: `ootmm.spec` is source, what it produces is not
+build/
+dist/
