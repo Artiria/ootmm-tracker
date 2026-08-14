@@ -2096,6 +2096,14 @@ and that has held in all 29, but the fit is checked rather than assumed.
 | current ROMs (12) | returns **precisely the constants** `0x080B0F00` / `0x080B41D0` |
 | old ROMs (17) | `0x080948D0` / `0x08097BA0` |
 
+> **Re-run on 15 Aug 2026 over every `.z64` on the disk.** 49 files, of which
+> 42 are OoTMM seeds: **all 42 give exactly two chains and both tables located,
+> zero false positives**, now spanning three generations of the generator
+> rather than two. The other seven —the base ROM, vanilla OoT, Super Mario 64—
+> raise `ValueError` from `rom.extra_dma()`, which is the intended "that is not
+> an OoTMM seed" and not a miss: vanilla OoT is the structurally closest thing
+> there is and it still does not tempt the detector.
+
 That it returns the constants on the current ones is what turns the change into
 a **checkable no-op**: `checks.json` comes out byte for byte identical, and if
 it did not, the locator would be wrong.

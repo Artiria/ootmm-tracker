@@ -161,11 +161,17 @@ rooms[]   s16, the bit itself, no ordering
 
 So a candidate is **three consecutive uncompressed extra-DMA entries** where the
 first two have that shape and each one indexes inside the next:
-`max(scenes) < len(setups)` and `max(setups) < len(rooms)`. Across 29 ROMs
-spanning two version families that finds exactly two chains per ROM — one per
-build — with no false positives, and on current versions it returns precisely the
-`custom.h` constants. Those constants are worth keeping as a cross-check that
-prints when the two disagree.
+`max(scenes) < len(setups)` and `max(setups) < len(rooms)`.
+
+Across the **42 OoTMM seeds** on my disk, spanning three generations of the
+generator, that finds **exactly two chains per ROM** — one per build — with no
+false positives, and on current versions it returns precisely the `custom.h`
+constants. Those constants are worth keeping as a cross-check that prints when
+the two disagree.
+
+Pointed at a ROM that is not an OoTMM seed —the base ROM, vanilla OoT, an
+unrelated N64 game— it does not guess: there is no extra-DMA header, and that
+is reported rather than papered over.
 
 ## Reading the extra DMA without tripping
 
@@ -209,7 +215,7 @@ what you still want the CSVs for.
 | Active checks with an address, resolved straight from the ROM | 4,956 / 5,012 |
 | Agreement with the spoiler on classifying filler | 5,018 / 5,018 |
 | Checks mapped overall | 5,981 / 6,043 |
-| xflag chains found by shape, across 29 ROMs | 2 per ROM, 0 false positives |
+| xflag chains found by shape, across 42 seeds | 2 per ROM, 0 false positives |
 | Versions | v32.0 and dev |
 
 The two denominators are different on purpose: 6,043 is every row in the pool,
