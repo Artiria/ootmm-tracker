@@ -1990,6 +1990,21 @@ gi 600   gi.yml: Giant's Mask           ROM: Goron Lullaby
 gi 800   gi.yml: Soul of Lulu           ROM: Nayru's Love
 ```
 
+> **Re-measured on 15 Aug 2026 over every `.z64` on the disk, 42 OoTMM seeds by
+> then, and it turned up a third generation.** The counts are 12 files at 936,
+> **29 at 829 and one at 784** (`uuwB9jCT`), so **30 of 42** disagree with the
+> bundled file. The 784 one shifts just as hard —`gi 200` is
+> `Silver Rupee (Spirit Lobby)` and `gi 600` is `Dungeon Map (Great Bay)`— and
+> agrees on 135/777, the same 17%.
+>
+> **It is not multiworld**, which was the obvious suspicion: the two ROMs of a
+> multiworld seed carry byte-identical name tables. Checked on `7bFMIRol`
+> (829/829) and `dHN9YY2c` (936/936). The split is purely by generator version.
+>
+> The seven files that return 0 are the base ROM, Super Mario 64 and vanilla
+> OoT: no extra DMA header, so `find_item_names` returns `None` instead of
+> blowing up, which is the intended behaviour.
+
 So the bug was not a hypothesis: it was live across half the folder.
 
 ### When it cannot, it says so

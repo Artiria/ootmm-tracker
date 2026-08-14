@@ -76,9 +76,40 @@ key  = (ov << 24) | (sceneId << 16) | (room << 8) | actorId
 Reading `value` gives a GI index. Turning that into a name from a bundled copy
 of `gi.yml` is where trackers rot silently: the index is a *position in that
 file*, so one item inserted in the middle shifts every name behind it and
-nothing complains. Of the 29 OoTMM ROMs on my disk, **17 had 829 names where my
-bundled `gi.yml` had 936** — every one of them had been quietly handing out the
-wrong name.
+nothing complains.
+
+I checked every OoTMM seed on my disk against the `gi.yml` I was shipping. **30
+of 42 carry a table of a different length** — three generations of the
+generator, and the two older ones agree with the file on 17% of names:
+
+| `kItemNames` length | seeds | agreement with the bundled `gi.yml` |
+|---|---|---|
+| 936 (current) | 12 | 97% |
+| 829 | 29 | **17%** |
+| 784 | 1 | **17%** |
+
+Where they diverge it is not a near miss:
+
+```
+gi 200   gi.yml: Dungeon Map (Jabu)    ROM 829: Compass (Water)
+                                       ROM 784: Silver Rupee (Spirit Lobby)
+gi 600   gi.yml: Giant's Mask          ROM 829: Goron Lullaby
+                                       ROM 784: Dungeon Map (Great Bay)
+```
+
+Those 30 are seeds from **older generator versions**, not current ones — this
+does not bite someone playing today's build. It bites when a tracker is pointed
+at an older seed, which is exactly the case where nobody is suspicious, because
+it starts up and looks fine.
+
+And that is the asymmetry worth noticing: the *address* path has a guard, so an
+old seed makes `mkchecks` abort with impossible bit positions and says so. The
+*names* path had none. It was the last place where a version mismatch was wrong
+in silence.
+
+> Multiworld makes no difference here, in case it looks like it might: the two
+> ROMs of a multiworld seed carry byte-identical name tables. The split is
+> purely by generator version.
 
 The names are in the payload, which is another extra-DMA file loaded whole at a
 fixed address, so a pointer inside it is just `PAYLOAD_RAM + offset in the file`:
