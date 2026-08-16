@@ -22,9 +22,9 @@ Captura*.jpg
 Captura*.png
 
 # What capture.py records of a live session: one run's log, not code
-capture-*
-capture.out
-capture.stop
+capture*-*
+capture*.out
+capture*.stop
 
 __pycache__/
 *.pyc
