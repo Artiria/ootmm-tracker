@@ -65,6 +65,42 @@ PLAY_RESCAN_SECONDS = 10.0
 # scorings, so it must not run on every poll while a run has no progress yet.
 CUSTOM_RESCAN_SECONDS = 10.0
 
+# How many locations the ROM's placement table has to resolve before "the ROM
+# did not place it" is taken to mean "this spot is not a check in this seed".
+# Any real seed places hundreds (chests alone are 500-odd); below this the
+# table is treated as unread and every row is shown, as it always was.
+PLACEMENT_KNOWN_MIN = 100
+
+# The live scene flags, inside the PlayState. Chests and collectibles are the
+# two kinds of check that only reach the save context when the scene is left:
+# OoTMM's mark.c calls SetChestFlag(play, ...) / Flags_SetCollectible(play, ...)
+# for the scene you are in, and those write play->actorCtx flags, which the
+# game copies into perm[scene] on exit. Measured live (16 Aug 2026): Mido's
+# four chests appeared the second the player stepped out; pots and trees
+# (xflags, written straight to gSharedCustomSave) appeared at once. So for the
+# scene you are standing in, the live copy is OR-ed onto the saved one.
+#
+# Offsets are vanilla structs, verified against combo/{oot,mm}/play.h and
+# actor.h (ASSERT_OFFSETs) and zeldaret/mm z64actor.h:
+#   OoT  PlayState.actorCtx 0x1C24 + ActorContext.flags 0x104 -> 0x1D28
+#        { swch, tempSwch, unk0, unk1, chest, clear, tempClear, collect, tempCollect }
+#   MM   PlayState.actorCtx 0x1CA0 + ActorContext.sceneFlags 0x1B8 -> 0x1E58
+#        { switches[4], chest, clearedRoom, clearedRoomTemp, collectible[4] }
+#        (collectible[0] is the permanent word: Play_SaveCycleSceneFlags)
+# In both, chest sits at +0x10 and the permanent collect word at +0x1C.
+LIVE_FLAGS = {"oot": (0x1D28, 0x24), "mm": (0x1E58, 0x2C)}
+LIVE_FIELDS = {"chest": 0x10, "collect": 0x1C}
+# MM keeps one flag table for a scene and its seasonal / inverted twin
+# (mmSceneId() in mark.c); the twin's live flags belong to the base scene.
+MM_SCENE_ALIASES = {
+    "MM_TEMPLE_STONE_TOWER_INVERTED": "MM_TEMPLE_STONE_TOWER",
+    "MM_SOUTHERN_SWAMP_CLEAR": "MM_SOUTHERN_SWAMP",
+    "MM_MOUNTAIN_VILLAGE_SPRING": "MM_MOUNTAIN_VILLAGE_WINTER",
+    "MM_GORON_VILLAGE_SPRING": "MM_GORON_VILLAGE_WINTER",
+    "MM_TWIN_ISLANDS_SPRING": "MM_TWIN_ISLANDS_WINTER",
+    "MM_STONE_TOWER_INVERTED": "MM_STONE_TOWER",
+}
+
 # How many scene checks have to be done before "and not one xflag" counts as
 # evidence that the custom save base is wrong. Low, because the two kinds of
 # check are spread all over the game and doing several of one and none at all
@@ -415,6 +451,21 @@ class Tracker:
         self.worlds = {
             (c["game"], c["name"]): c["player"] for c in table["checks"] if c.get("player")
         }
+        # Whether the ROM's placement table was read for this checks.json. When
+        # it was, a row without an item is a spot the generator did not make a
+        # location in this seed -- see is_active().
+        self.placement_known = (
+            (table.get("placement") or {}).get("resolved", 0) >= PLACEMENT_KNOWN_MIN)
+        # perm-table index for each MM scene, aliases resolved (see MM_SCENE_ALIASES)
+        self.scene_alias = {}
+        try:
+            import mkchecks
+            ids = mkchecks.load_scenes()
+            for a, b in MM_SCENE_ALIASES.items():
+                if a in ids and b in ids:
+                    self.scene_alias[("mm", ids[a])] = ids[b]
+        except Exception:
+            pass
         self._rebuild_items()
         self.lock = threading.Lock()
         self.state = {
@@ -429,6 +480,11 @@ class Tracker:
             "done_total": 0,
             "total": sum(n for _, _, n, _k in self.regions),
             "total_key": sum(k for _, _, _n, k in self.regions),
+            # Rows with an address that this seed does not shuffle, so they are
+            # left out of every count. Said out loud, like every other thing a
+            # panel leaves out: on a seed with grass and rocks vanilla it is
+            # thousands, and a total that silently shrank would look wrong.
+            "not_in_seed": self.not_in_seed,
             "regions": [],
             "items": {"oot": [], "mm": []},
             "feed": [],
@@ -555,6 +611,10 @@ class Tracker:
         self.plan, self.regions = build_plan(
             self.table, self.is_active,
             (lambda n: self.junk.get(n, False)) if items else None)
+        self.not_in_seed = sum(
+            1 for c in self.table["checks"]
+            if c["addr"] is not None and "anchor" in c
+            and self._active_version(c) and not self.is_active(c))
         # Whether this seed actually placed anything on the custom anchor: those
         # checks carry an item only if they are in the ROM's placement table. A
         # seed generated without xsanity simply has no xflags, and then "no
@@ -602,11 +662,33 @@ class Tracker:
                 "total_key": self.state["total_key"],
             }
 
-    def is_active(self, c):
-        """Whether this row is the one that exists in this seed (vanilla or MQ)."""
+    def _active_version(self, c):
+        """The vanilla row or its Master Quest twin: only one exists in a seed."""
         if c.get("mq"):
             return c["scene"] in self.mq_scenes
         return c["scene"] not in self.mq_scenes
+
+    def is_active(self, c):
+        """Whether this row exists in this seed.
+
+        Two things decide it: the vanilla / Master Quest choice, and -- once the
+        ROM's placement table has been read -- whether the ROM placed anything
+        there at all. The pool CSVs are a superset: the generator drops a
+        location entirely when its category is not shuffled (grass, rocks,
+        pots...) or when it is unreachable, and only the survivors get an entry
+        in COMBO_VROM_CHECKS. So a row the ROM does not list is not a check in
+        this seed. It used to be shown as pending all the same: on a seed with
+        grass and rocks left vanilla, 31 of the 52 "still to do" in Kokiri
+        Forest were things nobody had to look at.
+
+        Without a placement table (no ROM, or one that could not be read) the
+        old behaviour stands and every row is shown.
+        """
+        if not self._active_version(c):
+            return False
+        if self.placement_known and (c["game"], c["name"]) not in self.items:
+            return False
+        return True
 
     # -- lectura ----------------------------------------------------------
 
@@ -889,6 +971,45 @@ class Tracker:
         cands = custom_candidates(bases, active)
         return cands[0] if cands else None
 
+    def with_live_flags(self, blob, game, scene_id):
+        """The save-context block with the live scene's chest and collectible
+        flags OR-ed onto its perm entry, so those checks count the moment they
+        happen instead of when the scene is left. See LIVE_FLAGS.
+
+        Only the scene the PlayState says is loaded, only those two words, and
+        only OR: nothing the save already has is ever cleared. If anything is
+        off -- no PlayState address, a scene outside the table, a short read --
+        the block comes back untouched.
+        """
+        addr = self._play.get(game)
+        lay = (self.table.get("layout") or {}).get(game)
+        if addr is None or lay is None or scene_id is None:
+            return blob
+        scene_id = self.scene_alias.get((game, scene_id), scene_id)
+        if not (0 <= scene_id < lay["scene_count"]):
+            return blob
+        off, size = LIVE_FLAGS[game]
+        try:
+            raw = self.link.read_block(addr + off, size)
+        except (ConnectionError, OSError, struct.error):
+            return blob
+        if len(raw) < size:
+            return blob
+        out = None
+        for field, at in LIVE_FIELDS.items():
+            live = struct.unpack_from(">I", raw, at)[0]
+            if not live or field not in lay["fields"]:
+                continue
+            pos = lay["scene_flags"] + scene_id * lay["scene_size"] + lay["fields"][field]
+            if pos + 4 > len(blob):
+                continue
+            saved = struct.unpack_from(">I", blob, pos)[0]
+            if live & ~saved:
+                if out is None:
+                    out = bytearray(blob)
+                struct.pack_into(">I", out, pos, saved | live)
+        return bytes(out) if out is not None else blob
+
     def poll_once(self):
         import inventory
 
@@ -902,6 +1023,16 @@ class Tracker:
         # is accusing, and it is not one of the two the page used to list
         self._custom_addr = anchors.get("custom")
 
+        # Where the player is, first: the live scene flags below hang off it.
+        # The PlayState is the live answer; the save context is the fallback,
+        # and it lags (see SCENE_OFF).
+        scene, room, live = None, None, False
+        got = self.play_cached(active) if active is not None else None
+        if got is not None:
+            scene, room = got
+            live = True
+            self._last_scene[active] = got
+
         done = set()
         conf, bits = 1.0, 0
         por_ancla = {}
@@ -911,6 +1042,8 @@ class Tracker:
             blob = self.link.read_block(anchors[anchor], p["span"])
             if anchor == "custom":
                 conf, bits = confidence(blob, p["checks"], self.xflag_ranges)
+            elif anchor == active and got is not None:
+                blob = self.with_live_flags(blob, active, scene)
             por_ancla[anchor] = read_flags(blob, p["checks"])
 
         # A bad base landing in a zeroed area gives confidence 1.0 without a
@@ -953,16 +1086,6 @@ class Tracker:
             items["oot"] = inventory.snapshot(self.link.read_block(bases["oot"], 0x1500))
         if "mm" in bases:
             items["mm"] = inventory.mm_snapshot(self.link.read_block(bases["mm"], 0x1500))
-
-        # Where the player is. The PlayState is the live answer; the save
-        # context is the fallback, and it lags (see SCENE_OFF).
-        scene, room, live = None, None, False
-        if active is not None:
-            got = self.play_cached(active)
-            if got is not None:
-                scene, room = got
-                live = True
-                self._last_scene[active] = got
 
         # A scene transition rewrites the PlayState, so for a poll or two it
         # stops validating. Falling straight through to the save context there
@@ -1138,6 +1261,7 @@ class Tracker:
             s["custom_bits"] = self._custom_bits
             s["custom_ok"] = self._custom_ok
             s["custom_source"] = self._custom_source
+            s["not_in_seed"] = self.not_in_seed
             s["done_total"] = len(done)
             s["done_key_total"] = sum(1 for n in done if not self.junk.get(n, False))
             s["can_filter"] = self.hay_spoiler

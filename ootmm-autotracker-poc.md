@@ -2227,6 +2227,47 @@ and a line saying so.
 
 ---
 
+## Live test of the fresh save, and two things it showed (16 Aug 2026)
+
+Seed `8vXrrPP2`, generated and opened that day, `capture.py` recording
+`/state.json` once a second plus the overlay's console. The prediction was
+printed from the ROM alone before the emulator was touched, and it held:
+bases `0x8011A5D0 / 0x8044BE18`, `gSharedCustomSave 0x8044B570` running OoT;
+crossing to MM at 12:14:54 moved bases and custom save to `0x8076C4F0 /
+0x801EF678 / 0x8076BC50` **in the same second**; `custom_source = rom`
+throughout, confidence 1.0 at 0, 1 and 10 bits, `trusted` never dropped, and
+Mido's four chests (scene checks with four xflags behind them) did not trip
+the "scene checks and no xflag" suspicion. The RAM of that run is
+`ram-fresh-mm.bin`, the fifth reference dump.
+
+Two things the record showed, both fixed and both guarded:
+
+- **Rows the seed does not shuffle were shown as pending.** In Kokiri Forest
+  31 of the 52 "still to do" had no item -- grass, rocks, rupees the ROM does
+  not place because the category is vanilla. The rule is the pool's own: the
+  CSVs are a superset and the ROM the census, so once the placement table has
+  been read (`placement.resolved >= 100`) a row without an item is not a
+  location in this seed. `is_active()` applies it, `not_in_seed` goes to the
+  state and the page says it next to the percentage. On the four full-shuffle
+  dumps the total goes 5,012 -> 4,956 and `not_in_seed = 56` -- exactly the 56
+  the generator removes by hand, already counted in the essay; on the fresh
+  seed 5,012 -> 2,415 with 2,597 out. Done counts unchanged everywhere.
+- **Chests and collectibles appeared on leaving the scene; xflags and npc at
+  once.** Not the tracker's doing: `mark.c` calls `SetChestFlag(play, ...)` /
+  `Flags_SetCollectible(play, ...)` for the current scene -- the PlayState's
+  live flags -- and `perm[scene]` only gets them when the game saves the scene
+  on exit. `with_live_flags()` now reads the loaded scene's live flags
+  (`play+0x1D28` OoT / `play+0x1E58` MM, `chest` at +0x10 and `collect` at
+  +0x1C in both; vanilla structs, verified against the OoTMM headers and
+  zeldaret/mm) and ORs those two words onto the live scene's perm entry before
+  the checks are read. Only that scene, only those two words, only OR; MM's
+  scene aliases (`mmSceneId()`) resolved by name from `scenes.yml`. Guard: a
+  dump with collectible bit 10 set by hand in Clock Town South's PlayState
+  marks `Clock Town Platform HP` (20 -> 21) and drops it from pending; the same
+  bit in `clearedRoom` marks nothing; the five real dumps keep their counts.
+
+---
+
 ## Multiworld, first session
 
 **14 Aug 2026, and it closes P4** — the question that had been open since the

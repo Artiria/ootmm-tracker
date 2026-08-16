@@ -1200,7 +1200,10 @@ function render(s) {
     hm.className = doneN ? 'some' : '';
     hm.parentElement.className = 'meter full row-' + (GAMEF || 'oot');
   }
-  setText('hero-label', `checks completed · ${p.toFixed(1)}%`);
+  /* the ROM says which spots this seed shuffles; the rest are not counted,
+     and the total would look wrong without saying how many that is */
+  setText('hero-label', `checks completed · ${p.toFixed(1)}%` +
+    (s.not_in_seed ? ` · ${s.not_in_seed.toLocaleString('en')} not shuffled in this seed` : ''));
   setText('status', s.active ? `playing ${GAME[s.active] || s.active}` : '');
   // when filtered the badge identifies the overlay; otherwise the active game
   const badge = GAMEF || s.active;
