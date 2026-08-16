@@ -540,6 +540,113 @@ def layout_complete(lay):
 
 
 # --------------------------------------------------------------------------
+# The soul bitmaps (souls.py; behind features.ENABLE_SOULS)
+# --------------------------------------------------------------------------
+#
+#   u16 coins[4]; u16 ocarinaButtonMaskOot; u16 ocarinaButtonMaskMm;
+#   u8 soulsEnemyOot[8]; u8 soulsEnemyMm[8]; u8 soulsBossOot[2]; u8 soulsBossMm[1];
+#   u8 soulsNpcOot[8]; u8 soulsNpcMm[8]; [u8 soulsAnimalsOot[2]; u8 soulsAnimalsMm[2];]
+#   u8 soulsMiscOot[1]; u8 soulsMiscMm[1];
+#   u8 caughtChildFishWeight[20]; u8 caughtAdultFishWeight[20]; u8 caughtFishFlags[5];
+#
+# The bitmaps sit between the ocarina button masks and the child fish weights,
+# and every one of them is referenced by the code (souls.c loads each array's
+# address to pass it to BITMAP8_SET). Two anchors, independent of each other,
+# and they must agree when both are there:
+#   * the fish: caughtFishFlags is already located by shape (layout), the child
+#     weights start 0x28 before it, and the block ends right there;
+#   * the coins: four u16 in a row, then two more (the ocarina masks), all six
+#     referenced, then the block starts.
+# Which arrays exist comes from the ROM's own soul tables (souls.arrays_for):
+# the 784 generation had no animal pair. Measured: v32.0 +0x7EC..0x815,
+# gen-829 +0x7CC..0x7F5, gen-784 +0x6BC..0x6E1 (fish anchor there too).
+
+COINS_SHAPE = (0, 2, 4, 6, 8, 10)     # coins[4], ocarinaButtonMaskOot, ocarinaButtonMaskMm
+CHILD_FISH_BEFORE_FLAGS = 0x28        # caughtChildFishWeight[20] + caughtAdultFishWeight[20]
+
+
+def _pooled_refs(scans, located, size):
+    """(indexed, any) reference counters into the custom save, both payloads."""
+    idx = collections.Counter()
+    any_ = collections.Counter()
+    for game in ("oot", "mm"):
+        sc = scans.get(game)
+        base = located.get(game, {}).get("custom")
+        if sc is None or not base:
+            continue
+        for off, (c, ic) in custom_offsets(sc, base[0], size).items():
+            idx[off] += ic
+            any_[off] += c
+    return idx, any_
+
+
+def souls_block(rom_bytes, located, arrays):
+    """Where the soul bitmaps sit in gSharedCustomSave.
+
+    `located` is locate()'s answer (its scans are reused when it kept them);
+    `arrays` is [(type, game, size)] in struct order, from souls.arrays_for.
+    Returns {"arrays": {"enemy_oot": off, ...}, "start", "end", "by"} with
+    offsets relative to the custom save, or {"why": reason}. Never a guess: if
+    the two anchors disagree, or the derived array starts are not the offsets
+    the code references, it says so instead.
+    """
+    if not arrays:
+        return {"why": "no soul arrays for this version"}
+    scans = located.get("_scans") or {g: Scan(rom_bytes, g) for g in ("oot", "mm")}
+    size = max(located["oot"]["custom"][1], located["mm"]["custom"][1])
+    idx, any_ = _pooled_refs(scans, located, size)
+    length = sum(sz for _, _, sz in arrays)
+    lay = located.get("layout") or {}
+    mm = lay.get("mm") or {}
+    mm_end = (mm.get("base") or 0) + (mm.get("xflags_count") or 0)
+
+    fish = (lay.get("oot") or {}).get("caughtFishFlags")
+    by_fish = fish - CHILD_FISH_BEFORE_FLAGS - length if fish is not None else None
+
+    # the coins anchor: six referenced u16 in a row, then a block whose every
+    # array start is referenced and that ends on a referenced byte (the fish)
+    def _fits(start):
+        off = start
+        for _, _, sz in arrays:
+            if any_.get(off, 0) == 0:
+                return False
+            off += sz
+        return any_.get(off, 0) > 0
+
+    # u16 fields sit at even offsets; the MM half may end on an odd one
+    by_coins = [c + 12 for c in range(mm_end + (mm_end & 1), size - 12 - length, 2)
+                if all(any_.get(c + d, 0) > 0 for d in COINS_SHAPE) and _fits(c + 12)]
+
+    if by_fish is not None and by_coins:
+        if by_coins != [by_fish]:
+            return {"why": f"anchors disagree: fish says +{by_fish:#x}, coins say "
+                           f"{[hex(x) for x in by_coins]}"}
+        start, by = by_fish, "fish+coins"
+    elif by_fish is not None:
+        start, by = by_fish, "fish"
+    elif len(by_coins) == 1:
+        start, by = by_coins[0], "coins"
+    elif by_coins:
+        return {"why": f"coins shape fits at {[hex(x) for x in by_coins]}, no fish anchor to choose"}
+    else:
+        return {"why": "neither the fish nor the coins anchor is there"}
+    if not _fits(start):
+        return {"why": f"block at +{start:#x} has an array start the code never references"}
+
+    out = {}
+    off = start
+    for t, g, sz in arrays:
+        out[f"{t}_{g}"] = off
+        off += sz
+    # nothing else may be referenced strictly inside the block: a reference to
+    # a byte that is not an array start means the struct is not this one
+    inside = [o for o in any_ if start < o < off and o not in out.values()]
+    if inside:
+        return {"why": f"unexpected references inside the block: {[hex(o) for o in inside]}"}
+    return {"arrays": out, "start": start, "end": off, "by": by, "length": length}
+
+
+# --------------------------------------------------------------------------
 # One call for the tracker
 # --------------------------------------------------------------------------
 
@@ -579,6 +686,9 @@ def locate(rom_bytes, verbose=False):
         size = max(out["oot"]["custom"][1], out["mm"]["custom"][1])
         out["layout"] = layout(scans["oot"], scans["mm"],
                                out["oot"]["custom"][0], out["mm"]["custom"][0], size)
+    # kept for whoever wants more out of the same scan (souls_block); private,
+    # and mkchecks' _payload_json only copies what it names
+    out["_scans"] = scans
     if verbose:
         for game in ("oot", "mm"):
             b = out.get(game, {})

@@ -33,6 +33,7 @@ import json
 import os
 import re
 
+import features
 import paths
 
 CACHE = paths.user("discover-cache.json")
@@ -279,8 +280,11 @@ def ensure_tables(rom, spoiler, verbose=True):
     # `payload` is what mkchecks reads out of the ROM's code (payload.py):
     # a checks.json without the key was built before that existed, and the
     # overlay would fall back to sweeping for gSharedCustomSave without a word.
+    # FEATURE: souls -- a table built with the switch off has no `souls` key;
+    # with it on, that table is stale in the same way.
     if (not os.path.exists(checks) or not _same(_built_from(checks), rom)
-            or not _has_key(checks, "payload")):
+            or not _has_key(checks, "payload")
+            or (features.ENABLE_SOULS and not _has_key(checks, "souls"))):
         argv = ["--rom", rom]
         if spoiler:
             argv += ["--spoiler", spoiler]

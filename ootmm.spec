@@ -39,6 +39,11 @@ a = Analysis(
         # reached through importlib, not through an import statement
         "mkchecks",
         "mkicons",
+        # FEATURE: souls -- imported only inside `if features.ENABLE_SOULS`
+        # branches, which the switch keeps out of the default build; named
+        # here so the module travels regardless of the switch's value at
+        # build time. `features` is a plain top-level import and needs no help.
+        "souls",
     ],
     hookspath=[],
     runtime_hooks=[],

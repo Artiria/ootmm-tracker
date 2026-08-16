@@ -290,7 +290,12 @@ button.peek:hover { color: var(--ink); border-color: var(--muted); }
 .more { color: var(--muted); font-size: 12px; padding-top: 8px; }
 .empty { color: var(--muted); font-size: 13px; }
 
-.stack { display: grid; gap: 12px; align-content: start; }
+/* A stacked column must not grow with what it holds: a grid of fixed cells is
+   fitted by measuring its box, and a box that widens to fit its content always
+   "fits". min-width: 0 on the stack and on its cards keeps the column at its
+   track and lets the fitting see the overflow. */
+.stack { display: grid; gap: 12px; align-content: start; grid-template-columns: minmax(0, 1fr); min-width: 0; }
+.stack > .card { min-width: 0; }
 
 /* -- vista de director --------------------------------------------------- */
 /* Two collapsible menus plus the kill switch. They share the show/hide rules
@@ -428,9 +433,18 @@ body.chroma-green .card { background: var(--surface); }
        to be readable. Swapped in the markup rather than with CSS `order`, so
        reading order and visual order stay the same thing. -->
   <div class="cols">
-    <div class="card" data-panel="items">
-      <h2>Items</h2>
-      <div id="items" class="scroll pane-tall"><div class="empty">no data yet</div></div>
+    <div class="stack">
+      <div class="card" data-panel="items">
+        <h2>Items</h2>
+        <div id="items" class="scroll pane-tall"><div class="empty">no data yet</div></div>
+      </div>
+      <!-- Souls (soul shuffle). Only shown when the server sends `souls`, i.e.
+           with the feature switch on and a seed that shuffles some; otherwise
+           the card stays hidden and takes no room. -->
+      <div class="card" data-panel="souls" id="souls-card" hidden>
+        <h2 id="souls-title">Souls</h2>
+        <div id="souls" class="scroll pane-tall"><div class="empty" id="souls-empty">no souls in this seed</div></div>
+      </div>
     </div>
 
     <div class="stack">
@@ -585,6 +599,13 @@ const PANELS_GAME = [
   ['summary', 'oot', 'Summary · Ocarina of Time'],
   ['summary', 'mm',  "Summary · Majora's Mask"],
 ];
+// Souls (soul shuffle): listed only once the server has sent `souls`, which
+// it does with the feature switch on. Same shape as the two lists above.
+const PANELS_SOULS = [['souls', 'Souls']];
+const PANELS_SOULS_GAME = [
+  ['souls', 'oot', 'Souls · Ocarina of Time'],
+  ['souls', 'mm',  "Souls · Majora's Mask"],
+];
 
 const q = new URLSearchParams(location.search);
 /* The options below can be changed live from the director view, so they are
@@ -686,13 +707,19 @@ function renderUrls() {
   // revealing what is left is a legitimate option on the player's own monitor,
   // but these links go to OBS and there the audience sees it
   if ($('warn-full')) $('warn-full').hidden = SPOILER !== 'full';
+  const souls = !!(lastState && lastState.souls);
   $('urls').innerHTML =
     PANELS.map(([n, l]) => urlRow(l, n, null, false)).join('') +
-    PANELS_GAME.map(([n, g, l], i) => urlRow(l, n, g, i === 0)).join('');
+    (souls ? PANELS_SOULS.map(([n, l]) => urlRow(l, n, null, false)).join('') : '') +
+    PANELS_GAME.map(([n, g, l], i) => urlRow(l, n, g, i === 0)).join('') +
+    (souls ? PANELS_SOULS_GAME.map(([n, g, l]) => urlRow(l, n, g, false)).join('') : '');
 }
 
 // last state received from the server, so we can repaint without polling
 let lastState = null;
+// whether the URL list already knows about the souls panel: it is rebuilt
+// once when the first state with `souls` arrives
+let urlsHaveSouls = false;
 
 /* The selectors apply to the view you are looking at, not just to the links
    they generate. They used to call only renderUrls(), so you would switch to
@@ -1166,8 +1193,10 @@ function renderPend(here) {
    defect, and it shifts the composition as the run progresses. Instead of
    letting the list grow, the cell shrinks until everything fits the box. */
 let lastItemsHTML = null;
-function fitItems() {
-  const box = $('items');
+let lastSoulsHTML = null;
+// The same fitting serves the item grid and the souls grid: `id` names the box.
+function fitItems(id = 'items') {
+  const box = $(id);
   if (!box || !box.clientHeight) return;
   // in a narrow column the headings weigh more than the cells, so when
   // shrinking the cell is not enough we switch to compact mode and retry.
@@ -1192,7 +1221,7 @@ function fitItems() {
     }
   }
 }
-addEventListener('resize', () => { fitItems(); });
+addEventListener('resize', () => { fitItems(); fitItems('souls'); });
 
 // In panel mode the other blocks are no longer in the DOM, so everything
 // writes through these helpers, which stay quiet if the element is missing.
@@ -1332,6 +1361,37 @@ function render(s) {
   setHTML('regions', renderRegions(s.regions || [], s.regions_n));
   const itemsHTML = renderItems(s.items || {});
   if (itemsHTML !== lastItemsHTML) { setHTML('items', itemsHTML); lastItemsHTML = itemsHTML; fitItems(); }
+
+  /* Souls (soul shuffle). The server sends `souls` only with the feature switch
+     on; without it, or on a seed that shuffles none, the card stays hidden. The
+     grid reuses the item cells: text chips, one group per kind of soul. */
+  const so = s.souls;
+  const soulsCard = $('souls-card');
+  if (soulsCard) {
+    const show = !!(so && so.ok && so.total > 0);
+    if (soulsCard.hidden === show) {
+      // the card appearing or going changes the column, and with it the room
+      // the item grid was fitted into (a page scrollbar alone is 15px):
+      // fit that one again once the layout has settled
+      soulsCard.hidden = !show;
+      requestAnimationFrame(() => fitItems());
+    }
+    if (show) {
+      const grid = so.grid || {};
+      const games = Object.keys(grid).filter(keepGame);
+      let have = 0, total = 0;
+      const bg = so.by_game || {};
+      for (const g of games) { have += (bg[g] || {}).have || 0; total += (bg[g] || {}).total || 0; }
+      setText('souls-title', (total ? `Souls · ${have} of ${total}` : 'Souls') + (GAMEF ? ` · ${GAME[GAMEF]}` : ''));
+      const soulsHTML = games.length ? renderItems(grid) : '';
+      if (soulsHTML !== lastSoulsHTML) {
+        setHTML('souls', soulsHTML || `<div class="empty">${esc(so.why || (GAMEF ? 'no souls in this game' : 'no data yet'))}</div>`);
+        lastSoulsHTML = soulsHTML;
+        fitItems('souls');
+      }
+    }
+    if (!!so !== urlsHaveSouls) { urlsHaveSouls = !!so; renderUrls(); }
+  }
 
   const feed = (s.feed || []).filter(f => keepGame(f.game));
   setHTML('feed', renderFeed(s.feed || []));

@@ -76,6 +76,8 @@ read from the ROM.
 | `mkchecks.py` | generates `checks.json` from `data/` and the ROM |
 | `placement.py` | what item is in each location and what it is called, read from the ROM |
 | `payload.py` | where OoTMM's own globals live (`gSharedCustomSave`, the other game's save buffer, the layout inside), read from the payload's MIPS code |
+| `souls.py` | the soul shuffle's catalogue and bitmaps, read from the ROM — behind `features.ENABLE_SOULS` (see [Feature switches](#feature-switches)) |
+| `features.py` | switches for work that is built but not yet watched live |
 | `entrances.py` | the seed's shuffled entrances, read from the ROM (`COMBO_VROM_ENTRANCES`) and labelled with `data/entrances.yml` |
 | `mkicons.py` | extracts the icons from the ROM |
 | `discover.py` | finds the ROM and spoiler, regenerates whatever is stale |
@@ -85,6 +87,31 @@ read from the ROM.
 | `capture.py` | records a live session: prints what the ROM predicts, runs the overlay, keeps `/state.json` and the console, dumps RAM at the end |
 | `release.py` | builds, signs, verifies and zips the `.exe`; refuses to zip an unsigned build unless told to — see [Releasing](#releasing) |
 | `data/` | data from the OoTMM repository (pool, scenes, npc) — see [`THIRD-PARTY.md`](THIRD-PARTY.md) |
+
+## Feature switches
+
+`features.py` holds switches for work that is built and guarded but has not
+been watched working in a live game yet. A switch is **off** by default, and
+off means the code changes nothing that ships — not `checks.json`, not
+`/state.json`, not the page — proven by the guards below run with and without
+it. Set the environment variable of the same name to `1` to try one without
+editing the file (`set ENABLE_SOULS=1` before starting the tracker; the `.exe`
+honours it too, so a build can be tested without rebuilding).
+
+Once a feature is good, the switch is deleted along with every `if` that reads
+it — each site is tagged `FEATURE:` in a comment, so `grep -rn "FEATURE: <name>"`
+lists them. Today: `ENABLE_SOULS` (the soul-shuffle panel).
+
+The off/on guard, on the six dumps, is what a switch has to pass:
+
+```
+python guard.py off && ENABLE_SOULS=1 python guard.py on   # pseudo; see below
+```
+
+Concretely, `checks.json` must come out **byte-identical** with the switch off
+(`python mkchecks.py --rom SEED.z64`, compare), and `/state.json` served over
+`fakelua.py` must match the pre-switch capture on every dump. With the switch
+on, the only difference allowed is the feature's own additions (`souls` key).
 
 ## Testing without an emulator
 
