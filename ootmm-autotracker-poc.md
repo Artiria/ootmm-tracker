@@ -2240,7 +2240,21 @@ Mido's four chests (scene checks with four xflags behind them) did not trip
 the "scene checks and no xflag" suspicion. The RAM of that run is
 `ram-fresh-mm.bin`, the fifth reference dump.
 
-Two things the record showed, both fixed and both guarded:
+The same afternoon, the oldest seed on the disk (`uuwB9jCT`, Nov 2025, the
+784-name generation): new file, then the co-op multiworld with its server.
+Predicted `0x8043F210 / 0x8043F958` running OoT -- that MM buffer is not in
+`KNOWN_BASES` and was found first try through the ROM's hint -- and
+`0x8076F6C0 / 0x8076FE00` running MM, both observed; the co-op sync poured in
+hundreds of checks and it ended at **368 checks, 190 xflag bits, confidence
+1.0**, with the MM half at `+0x2E0` and `shops` at `+0x27D` (a shop check
+marked right that the constant would have put 29 bytes off). Dump:
+`ram-old-uuwB9jCT.bin`, the first from another generation.
+
+Two things the record showed, both fixed and both guarded, plus two small
+ones from the second session (Tingle's maps are filler now: `^World Map of `
+in `JUNK_PATTERNS`; and a drop of the done count below half has to hold three
+polls before it is believed -- a poll landing mid-crossing read everything as
+zero and the feed re-announced the whole session, `DONE_DROP_POLLS`):
 
 - **Rows the seed does not shuffle were shown as pending.** In Kokiri Forest
   31 of the 52 "still to do" had no item -- grass, rocks, rupees the ROM does

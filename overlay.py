@@ -101,6 +101,16 @@ MM_SCENE_ALIASES = {
     "MM_STONE_TOWER_INVERTED": "MM_STONE_TOWER",
 }
 
+# How many polls in a row a big drop in the done count has to hold before it
+# is believed. A poll that lands mid-crossing between OoT and MM reads the old
+# bases while RAM is being rebuilt and everything comes back as zeros -- 23
+# done -> 0 -> 23 within two polls, measured 16 Aug 2026 -- and believing that
+# empty poll made the feed announce every check of the session again as new.
+# Nothing a run has done ever comes undone (xflags and perm bits are only ever
+# set), so a drop is either that transient or a different file being loaded,
+# and the second keeps looking that way. Three polls is a second and a half.
+DONE_DROP_POLLS = 3
+
 # How many scene checks have to be done before "and not one xflag" counts as
 # evidence that the custom save base is wrong. Low, because the two kinds of
 # check are spread all over the game and doing several of one and none at all
@@ -168,6 +178,9 @@ JUNK_PATTERNS = [
     # `Heart Container` is NOT here: that is a whole heart. Neither is
     # `Recovery Heart`, which is already filler two patterns up.
     r"^Piece of Heart" + JUEGO + r"$",
+    # Tingle's maps: nothing depends on them, and on a seed that shuffles his
+    # shop the six of them sat as pending "key" checks in Clock Town South.
+    r"^World Map of ",
 ]
 
 # --- pond fish --------------------------------------------------------------
@@ -536,6 +549,7 @@ class Tracker:
         }
         self._done = set()
         self._seeded = False
+        self._drop_polls = 0
         self._bases = None
         self._play = {}          # game -> PlayState address, cached like the bases
         self._play_retry = {}    # game -> when the next full scan is allowed
@@ -1123,6 +1137,16 @@ class Tracker:
             self._user_icons_stamp = stamp
 
         active, done, conf, items, scene, room, live, setup_raw = self.poll_once()
+
+        # A drop to less than half of what was done is not believed at once:
+        # see DONE_DROP_POLLS. Until it holds, last poll's picture stands and
+        # nothing is fed.
+        if self._seeded and self._done and len(done) < len(self._done) // 2:
+            self._drop_polls += 1
+            if self._drop_polls < DONE_DROP_POLLS:
+                done = self._done
+        else:
+            self._drop_polls = 0
 
         # the first poll sets the baseline silently: otherwise the feed starts
         # by spitting out everything you had already done
