@@ -85,8 +85,10 @@ body.chroma-none .card, body.chroma-green .card { backdrop-filter: blur(2px); }
 .badge.oot .dot { background: var(--oot); }
 .badge.mm  .dot { background: var(--mm); }
 
+/* Plain rich text: `display: flex` here turned every text node and <code> into
+   its own column, and the ROM warning came out as six narrow stacks. */
 .warn {
-  display: flex; gap: 8px; align-items: flex-start;
+  display: block; line-height: 1.45;
   border: 1px solid var(--warning); border-radius: 8px;
   padding: 8px 12px; font-size: 13px; color: var(--ink-2);
   background: color-mix(in oklab, var(--warning) 10%, var(--surface));
@@ -269,6 +271,12 @@ ul.feed li:first-child, ul.pend li:first-child { border-top: 0; }
 .feed .item { font-weight: 600; }
 .feed .from, .pend .from { color: var(--muted); font-size: 12px; }
 .entr li.todo .item, .entr li.todo .from { opacity: .45; }
+.hints li.done .item { opacity: .6; text-decoration: line-through; }
+.hintbox input { flex: 1 1 200px; min-width: 160px; background: var(--card-2, transparent); color: var(--ink);
+  border: 1px solid var(--line, #444); border-radius: 6px; padding: 5px 8px; font: inherit; font-size: 12px; }
+button.peek { margin-left: 6px; font-size: 11px; line-height: 1; padding: 1px 6px; border-radius: 8px;
+  border: 1px solid var(--line, #444); background: transparent; color: var(--muted); cursor: pointer; }
+button.peek:hover { color: var(--ink); border-color: var(--muted); }
 .entr li.maybe .from i { font-style: normal; color: var(--muted); }
 .world {
   font-size: 10px; font-weight: 700; letter-spacing: .04em;
@@ -455,6 +463,13 @@ body.chroma-green .card { background: var(--surface); }
           <div class="empty" id="entr-empty">—</div>
         </div>
       </div>
+      <div class="card" data-panel="hints">
+        <h2 id="hints-title">Hints</h2>
+        <div class="scroll pane-third">
+          <ul class="feed hints" id="hints"></ul>
+          <div class="empty" id="hints-empty">no hints taken</div>
+        </div>
+      </div>
     </div>
   </div>
 
@@ -508,6 +523,17 @@ body.chroma-green .card { background: var(--surface); }
           </select>
         </label>
       </div>
+      <!-- Hints you give yourself, by degrees, and the audience sees the same
+           degree: game, then region, then the exact check. Levels only go up
+           and everything taken is counted, so a hint has a visible cost. -->
+      <div class="spoilerbox hintbox">
+        <input list="hint-items" id="hint-item" placeholder="where is… (an item)" autocomplete="off">
+        <datalist id="hint-items"></datalist>
+        <button class="act" data-hint="1">game</button>
+        <button class="act" data-hint="2">region</button>
+        <button class="act" data-hint="3">exact check</button>
+        <span class="hint" id="hint-state"></span>
+      </div>
       <div class="spoilerbox">
         <button class="act" id="load-spoiler">Load spoiler…</button>
         <label class="chk" title="Switches the panels to «only what matters» and shows what each remaining check holds">
@@ -548,6 +574,7 @@ const PANELS = [
   ['activity',  'Activity feed'],
   ['remaining', 'Remaining in this area'],
   ['entrances', 'Entrances gone through'],
+  ['hints',     'Hints taken'],
 ];
 // The same panels narrowed to one game, to build two separate overlays.
 const PANELS_GAME = [
@@ -758,6 +785,19 @@ if ($('urls')) {
    arbitrary file read, and the server can end up listening off 127.0.0.1. */
 let avisoSpoiler = null;   // outcome of the last load, until the next attempt
 if ($('load-spoiler')) {
+  document.querySelectorAll('button[data-hint]').forEach(b => b.onclick = async () => {
+    const item = ($('hint-item').value || '').trim();
+    if (!item) { $('hint-state').textContent = 'type an item first'; return; }
+    const r = await fetch('/hint', { method: 'POST', body: JSON.stringify({ item, level: +b.dataset.hint }) });
+    const j = await r.json();
+    $('hint-state').textContent = j.ok ? `hint taken: ${item} (${['', 'game', 'region', 'exact check'][j.hint.level]})` : (j.error || 'no');
+    if (lastState) render(lastState);
+  });
+  document.addEventListener('click', async (ev) => {
+    const b = ev.target.closest('button.peek');
+    if (!b) return;
+    await fetch('/reveal', { method: 'POST', body: JSON.stringify({ game: b.dataset.game, name: b.dataset.name }) });
+  });
   $('load-spoiler').onclick = () => $('spoiler-file').click();
   $('spoiler-file').onchange = async () => {
     const f = $('spoiler-file').files[0];
@@ -1085,6 +1125,18 @@ function renderEntrances(en) {
   return html;
 }
 
+/* The hints panel: each item asked about, with as much as was revealed. */
+function renderHints(h) {
+  const items = (h.items || []).filter(x => keepGame(x.game));
+  const lvl = (x) => [
+    `<span class="item">${esc(x.item)}</span>`,
+    `<span class="from">${x.game === 'mm' ? "Majora's Mask" : 'Ocarina of Time'}${
+      x.level >= 2 ? ' · ' + esc(x.region || '?') : ''}${
+      x.level >= 3 ? ' · ' + esc(x.check || '?') : ''}${x.done ? ' · <b>found</b>' : ''}</span>`,
+  ].join(' ');
+  return items.map(x => `<li${x.done ? ' class="done"' : ''}>${lvl(x)}</li>`).join('');
+}
+
 function pendVisible(here) {
   return (here.list || []).filter(p => !(SOLO_CLAVE && p.junk));
 }
@@ -1094,8 +1146,10 @@ function renderPend(here) {
   const shown = list.slice(0, 25);
   let html = shown.map(p => `<li${p.here ? ' class="here"' : ''}>
     <span class="name">${esc(p.name)}</span>
-    ${showPending && p.item ? `<span class="from">→ ${esc(p.item)}</span>${world(p.world)}` : ''}
+    ${(showPending || p.revealed) && p.item ? `<span class="from">→ ${esc(p.item)}</span>${world(p.world)}` : ''}
     ${p.here ? '<span class="room">this room</span>' : ''}
+    ${(!panel && !showPending && !p.revealed && p.item)
+        ? `<button class="peek" data-game="${esc(here.game)}" data-name="${esc(p.name)}" title="reveal what this check holds (counts as a hint)">?</button>` : ''}
   </li>`).join('');
   const notes = [];
   if (list.length > shown.length) notes.push(`${list.length - shown.length} more`);
@@ -1282,6 +1336,18 @@ function render(s) {
   const feed = (s.feed || []).filter(f => keepGame(f.game));
   setHTML('feed', renderFeed(s.feed || []));
   setShow('feed-empty', !feed.length);
+
+  const hs = s.hints || { used: 0, items: [], checks: [] };
+  const hsHTML = renderHints(hs);
+  setHTML('hints', hsHTML);
+  if ($('hints-title')) $('hints-title').textContent = hs.used ? `Hints · ${hs.used} taken` : 'Hints';
+  setShow('hints-empty', !hsHTML);
+  if ($('hint-items')) {
+    const cur = new Set(Array.from($('hint-items').options).map(o => o.value));
+    const want = s.hint_items || [];
+    if (want.length !== cur.size || want.some(w => !cur.has(w)))
+      $('hint-items').innerHTML = want.map(w => `<option value="${esc(w)}">`).join('');
+  }
 
   const en = s.entrances || { total: 0, found: [], all: [] };
   const enHTML = renderEntrances(en);

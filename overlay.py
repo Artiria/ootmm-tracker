@@ -134,7 +134,10 @@ SCENE_CHECKS_SUSPICIOUS = 3
 # Each panel is also served on its own at /p/<name>, so the streamer captures
 # only the ones they want to show, wherever they want them. The names have to
 # match the data-panel attributes in overlay.html.
-PANELS = ["summary", "regions", "items", "activity", "remaining", "entrances"]
+PANELS = ["summary", "regions", "items", "activity", "remaining", "entrances", "hints"]
+
+# The hint ladder: what a hint about an item gives away at each level.
+HINT_LEVELS = {1: "game", 2: "region", 3: "check"}
 
 # The old Spanish names still answer. They are what any Browser Source set up
 # before the rename points at, and a renamed URL breaks an OBS scene silently:
@@ -514,6 +517,10 @@ class Tracker:
             self._ent_keys.add((e["game"], e["src"]))
         self._entrance = {}          # game -> last save entrance value seen
         self._entrances_found = {}   # (game, src) -> {"t", "sure"}
+        # Hints the streamer gave themselves (see hint() / reveal()): by item,
+        # with the level reached, and checks whose item was revealed outright.
+        self.hints = collections.OrderedDict()   # item -> {level, game, region, check, t}
+        self.revealed = set()                    # "game:name"
         self._rebuild_items()
         self.lock = threading.Lock()
         self.state = {
@@ -565,6 +572,11 @@ class Tracker:
             # been gone through (newest first) and, for ?spoiler=full, all of
             # them. Empty `all` means the seed does not shuffle entrances.
             "entrances": {"total": len(self.entrances), "found": [], "all": self.entrances},
+            # Hints given so far, and what can still be asked about (the items
+            # of the checks not done, filler left out). Both audience-visible:
+            # the point is that viewers see the same hint the streamer took.
+            "hints": {"used": 0, "items": [], "checks": []},
+            "hint_items": [],
             # The seed is from another OoTMM version than data/. Addresses hold
             # —they come from the ROM— but every check NAME comes from the
             # v32.0 CSVs, so a bit can be marked under the wrong name and the
@@ -1031,6 +1043,66 @@ class Tracker:
         cands = custom_candidates(bases, active)
         return cands[0] if cands else None
 
+    def hint(self, item, level):
+        """A hint about where `item` is, up to `level` (1 game, 2 region, 3 the
+        check itself). Picks one holder: the first not-done check carrying that
+        item in table order, so asking again lands on the same one; a
+        progressive item with several copies gives away one location, not all.
+        Levels only ever go up. Returns the hint entry or None."""
+        level = max(1, min(3, int(level)))
+        cur = self.hints.get(item)
+        if cur is None:
+            holders = [c for c in self.table["checks"]
+                       if c["addr"] is not None and self.is_active(c)
+                       and self.item_de(c["game"], c["name"]) == item]
+            if not holders:
+                return None
+            c = next((h for h in holders if h["name"] not in self._done), holders[0])
+            # the region is the scene, made readable: the pool's `hint` column
+            # is a hint-group id and NONE on 98% of the rows, so it will not do
+            region = (c["scene"] or "").replace("_", " ").title()
+            cur = {"item": item, "level": 0, "game": c["game"], "region": region,
+                   "check": c["name"], "t": time.time()}
+            self.hints[item] = cur
+        if level > cur["level"]:
+            cur["level"] = level
+            cur["t"] = time.time()
+        return cur
+
+    def reveal(self, game, name):
+        """Show what one pending check holds, from now on, at any spoiler
+        level: the location-side hint."""
+        key = f"{game}:{name}"
+        if any(c["game"] == game and c["name"] == name for c in self.table["checks"]):
+            self.revealed.add(key)
+            return True
+        return False
+
+    def hints_state(self, done):
+        used = sum(h["level"] for h in self.hints.values()) + len(self.revealed)
+        out = []
+        for h in self.hints.values():
+            e = {"item": h["item"], "level": h["level"], "t": h["t"], "game": h["game"],
+                 "done": h["check"] in done}
+            if h["level"] >= 2:
+                e["region"] = h["region"]
+            if h["level"] >= 3:
+                e["check"] = h["check"]
+            out.append(e)
+        out.sort(key=lambda e: -e["t"])
+        return {"used": used, "items": out, "checks": sorted(self.revealed)}
+
+    def hint_items(self, done):
+        """What can be asked about: items of the checks not done, filler out."""
+        seen = set()
+        for c in self.table["checks"]:
+            if c["addr"] is None or c["name"] in done or not self.is_active(c):
+                continue
+            it = self.item_de(c["game"], c["name"])
+            if it and not self.junk.get(c["name"], False):
+                seen.add(it)
+        return sorted(seen)
+
     def watch_entrance(self, game, value, prev_scene):
         """The save's entrance changed: was it one of the shuffled ones?
 
@@ -1369,6 +1441,11 @@ class Tracker:
                     "junk": self.junk.get(c["name"], False),
                     "room": croom,
                     "here": croom is not None and croom == room,
+                    # the item shows regardless of the spoiler level once the
+                    # streamer asked for it, or a level-3 hint named this check
+                    "revealed": (f"{c['game']}:{c['name']}" in self.revealed
+                                 or any(h["level"] >= 3 and h["check"] == c["name"] and h["game"] == c["game"]
+                                        for h in self.hints.values())),
                 })
             # What is in this very room first, then the ones with no room of
             # their own. Otherwise the chests and NPCs of the whole scene sit
@@ -1392,6 +1469,8 @@ class Tracker:
             s["custom_ok"] = self._custom_ok
             s["custom_source"] = self._custom_source
             s["not_in_seed"] = self.not_in_seed
+            s["hints"] = self.hints_state(done)
+            s["hint_items"] = self.hint_items(done)
             found = sorted(self._entrances_found.items(), key=lambda kv: -kv[1]["t"])
             by_key = {(e["game"], e["src"]): e for e in self.entrances}
             s["entrances"] = {
@@ -2241,7 +2320,8 @@ def serve(tracker, host, port, open_window=True):
             # that opened whatever path it was handed would be an arbitrary
             # file read, and the server can end up listening off 127.0.0.1
             # with --http-host.
-            if self.path.split("?", 1)[0] != "/spoiler":
+            route = self.path.split("?", 1)[0]
+            if route not in ("/spoiler", "/hint", "/reveal"):
                 self.send_error(404)
                 return
             # Only from our own page. Any website you happen to have open can
@@ -2262,7 +2342,18 @@ def serve(tracker, host, port, open_window=True):
                 self._json({"ok": False, "error": "file empty or too large"})
                 return
             try:
-                self._json(cargar_spoiler(tracker, self.rfile.read(n)))
+                raw = self.rfile.read(n)
+                if route == "/hint":
+                    req = json.loads(raw.decode("utf-8"))
+                    got = tracker.hint(str(req.get("item", "")), req.get("level", 1))
+                    self._json({"ok": got is not None, "hint": got,
+                                "error": None if got else "no pending check holds that item"})
+                elif route == "/reveal":
+                    req = json.loads(raw.decode("utf-8"))
+                    ok = tracker.reveal(str(req.get("game", "")), str(req.get("name", "")))
+                    self._json({"ok": ok, "error": None if ok else "unknown check"})
+                else:
+                    self._json(cargar_spoiler(tracker, raw))
             except Exception as ex:
                 self._json({"ok": False, "error": f"{type(ex).__name__}: {ex}"})
 
