@@ -22,7 +22,8 @@ is up, and reconnects if you restart it. The page is served from the start, so
 you can set up an OBS source before the emulator is even running.
 
 Only Python's standard library is needed. Build the `.exe` with
-`python -m PyInstaller ootmm.spec`.
+`python -m PyInstaller ootmm.spec`; `python release.py` does that and then
+signs, verifies and zips it — see [Releasing](#releasing).
 
 ## Subcommands
 
@@ -82,6 +83,7 @@ read from the ROM.
 | `rom.py` | reading the ROM: Yaz0, dmadata, extra DMA |
 | `fakelua.py` | a fake `tracker.lua` that serves a dump: testing without an emulator |
 | `capture.py` | records a live session: prints what the ROM predicts, runs the overlay, keeps `/state.json` and the console, dumps RAM at the end |
+| `release.py` | builds, signs, verifies and zips the `.exe`; refuses to zip an unsigned build unless told to — see [Releasing](#releasing) |
 | `data/` | data from the OoTMM repository (pool, scenes, npc) — see [`THIRD-PARTY.md`](THIRD-PARTY.md) |
 
 ## Testing without an emulator
@@ -133,6 +135,45 @@ Whenever the `.exe` is rebuilt:
   the `[auto] ROM:` line the console prints: once, on the very first launch of
   a fresh build, the tables came out as another seed's despite `--rom`; not
   reproduced since, but that line is what would show it.
+
+## Releasing
+
+```
+python release.py
+```
+
+builds the `.exe` with the spec above and then, in this order: signs it, has
+`signtool verify` check the signature (chain, timestamp, who signed), reads the
+PE header itself to confirm a certificate table is there, runs the signed exe
+once with `--help` (a one-file build finds its archive by scanning back from
+the end of the file, which is exactly where the signature goes), zips it with
+`LICENSE` and `THIRD-PARTY.md`, reopens the zip to check that the exe inside
+is the signed one, and writes the SHA-256 of both next to it. Any of those
+failing stops the release; in particular **no certificate means no zip**, not
+an unsigned zip that looks finished. `--unsigned` is the explicit way to
+package without signing, and it names the file `*-unsigned.zip` so it cannot be
+mistaken for a release later.
+
+The certificate is Certum's *Open Source Code Signing* in the cloud
+(SimplySign). It is only visible in `Cert:\CurrentUser\My` while SimplySign
+Desktop is running and logged in, with the subject `Open Source Developer,
+<name>` — which is what the UAC prompt shows. `python release.py --check` says
+which signtool and which certificate would be used, and whether the exe in
+`dist/` is signed, without touching anything. `--no-build` signs and packages
+the exe already in `dist/`; `--subject`, `--thumbprint` and `--tsa` override
+the defaults (Certum's timestamp server first, DigiCert's as fallback). The
+timestamp is not optional: it is what keeps the signature valid after the
+certificate expires, and Certum's lasts a year.
+
+Signing does not replace the guards above — the `/state.json` comparison, the
+panels and the hard link are still by hand, and `release.py` says so at the
+end. Then `gh release create v<version> dist/ootmm-tracker-<version>-win64.zip`.
+
+What the user sees changes only in part: the UAC prompt names the publisher
+instead of *unknown*, but SmartScreen builds trust from download counts, so a
+fresh release can still warn until it has some. If it keeps warning after a
+while, submit the signed file at Microsoft's
+[Security Intelligence](https://www.microsoft.com/wdsi/filesubmission) page.
 
 ## What gets distributed
 
