@@ -333,9 +333,32 @@ def mm_covered_offsets():
     return out
 
 
-# In MM the cycle clock runs constantly; without excluding it the log is
-# useless. +0x0C is `time` according to the header's ASSERT_OFFSETs.
-MM_NOISE = set(range(0x0C, 0x14))
+# In MM two fields run on their own and would drown the log. Measured live over
+# 20 s with MM as the running game, in the same coordinates that put items[] at
+# +0x68:
+#
+#   +0x04  climbs ~0x13C per second
+#   +0x36  climbs 0x14 per second -- 20, the frame rate, exactly like OoT's
+#          naviTimer at +0x38
+#
+# This used to be range(0x0C, 0x14), on the header's ASSERT_OFFSETs saying
+# `time` sits at +0x0C. Nothing in 0x0C..0x13 moves: the old range silenced an
+# empty gap while these four bytes came through as `unidentified`, 19 times each
+# in 20 s. The calibration pass in `items` hid it by silencing them again at
+# run time, which is why it never looked broken.
+#
+# And now checked against combo/mm/save.h, remembering that this base is
+# MmSave + 8 (the one that puts the ZELDA3 signature at +0x1C):
+#
+#   +0x04 = MmSave+0x0C  u16 time        ASSERT_OFFSET(MmSave, time, 0x000c)
+#   +0x36 = MmSave+0x3E  u16 tatlTimer   info(0x24) + playerData.tatlTimer(0x1A)
+#
+# The old comment had `time` "at +0x0C per the header" -- the header's 0x0C is
+# from MmSave, not from this base, hence the 8-byte slip. And the payload's own
+# code confirms the first: it reads MmSave+0x0C as the clock (payload.py, refs
+# relative to gSaveContext). tatlTimer is MM's naviTimer, the same field OoT's
+# NOISE silences at +0x38.
+MM_NOISE = set(range(0x04, 0x06)) | set(range(0x36, 0x38))
 
 
 # OoT's per-scene flag table: perm[124], 0x1C bytes per scene.

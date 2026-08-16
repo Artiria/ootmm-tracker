@@ -508,7 +508,7 @@ def bases_coherentes(bases):
     return sum(1 for b in bases.values() if b < RDRAM_MID) == 1
 
 
-def locate_saves(link, verbose=True):
+def locate_saves(link, verbose=True, hints=()):
     """Locate the save contexts by signature, and **validate** what turns up.
 
     This has to happen on every startup: crossing between OoT and MM
@@ -518,9 +518,18 @@ def locate_saves(link, verbose=True):
     The signature is necessary but not sufficient: static copies and stale
     buffers carry it too. Every candidate is tried and the first one that also
     has plausible contents wins.
+
+    `hints` are (base, game) pairs to try BEFORE the known list: the overlay
+    passes the buffers the ROM's own code names (payload.py, via checks.json),
+    so a build that moved them is found without the 8 MB scan and without
+    anyone adding a line to KNOWN_BASES.
     """
     cands = {"oot": [], "mm": []}
-    for base, game in KNOWN_BASES:
+    seen = set()
+    for base, game in list(hints) + KNOWN_BASES:
+        if (base, game) in seen:
+            continue
+        seen.add((base, game))
         sig = SIG_OOT if game == "oot" else SIG_MM
         if link.read_block(base + SIG_OFFSET, 8)[:6] == sig:
             cands[game].append(base)

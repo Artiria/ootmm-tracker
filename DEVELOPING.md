@@ -74,11 +74,13 @@ read from the ROM.
 | `inventory.py` | both games' inventory map and the id table |
 | `mkchecks.py` | generates `checks.json` from `data/` and the ROM |
 | `placement.py` | what item is in each location and what it is called, read from the ROM |
+| `payload.py` | where OoTMM's own globals live (`gSharedCustomSave`, the other game's save buffer, the layout inside), read from the payload's MIPS code |
 | `mkicons.py` | extracts the icons from the ROM |
 | `discover.py` | finds the ROM and spoiler, regenerates whatever is stale |
 | `overlay.py` / `overlay.html` | the tracker you actually look at |
 | `rom.py` | reading the ROM: Yaz0, dmadata, extra DMA |
 | `fakelua.py` | a fake `tracker.lua` that serves a dump: testing without an emulator |
+| `capture.py` | records a live session: prints what the ROM predicts, runs the overlay, keeps `/state.json` and the console, dumps RAM at the end |
 | `data/` | data from the OoTMM repository (pool, scenes, npc) — see [`THIRD-PARTY.md`](THIRD-PARTY.md) |
 
 ## Testing without an emulator

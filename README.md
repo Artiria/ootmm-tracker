@@ -65,6 +65,7 @@ anyway. `?spoiler=full` reveals what is in the checks you have not done.
 | ✅ Single player, OoT and MM, including crossing between them | tested against live saves and four RAM dumps |
 | ✅ 5,981 of 6,043 checks | the missing 62 are `caughtFishFlags` and MM stray fairies |
 | ✅ Item placement and names read from the ROM | no spoiler log, on v32.0 and dev builds |
+| ✅ Addresses read from the ROM's own code | `gSharedCustomSave` and the other game's save buffer are found in the payload's code, so a build that moves them needs no update; measured over 42 seeds, six builds |
 | ✅ OBS overlay, one URL per panel | transparent background, five standalone panels |
 | ⚠️ Multiworld | tracks your own world; see below |
 | ❓ Emulators other than Project64-EM | not tried yet |

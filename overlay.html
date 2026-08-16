@@ -1116,7 +1116,36 @@ function render(s) {
      place — and every item shown is then someone else's. The ratio is the tell:
      a current seed covers ~90%, an older one less but usable, a wrong one
      almost nothing. */
-  if (s.same_version_as_data === false) {
+  /* The untrusted case goes FIRST, and it used to go last. On an old seed both
+     fire at once, and the version one ends with "counts and completed totals
+     are still meaningful" — which is exactly false when the custom anchor was
+     thrown away and 5,207 checks stopped counting. The more severe one wins and
+     mentions the other. */
+  if (!s.trusted && !s.waiting && !s.error) {
+    const otra = s.same_version_as_data === false
+      ? ` This seed is also from a <b>different OoTMM version</b> than the bundled
+          tables, which is the likely reason: a version that moves the struct puts
+          the block somewhere the sweep does not accept.` : '';
+    /* Zero bits and bits-in-the-wrong-place are different failures and used to
+       share one sentence, which then read "0% of the bits that are set" about a
+       block where nothing is set at all. */
+    const detalle = s.custom_bits
+      ? `Of the ${s.custom_bits} bits set in it, only
+         ${Math.round(s.confidence * 100)}% land on a check this table knows.`
+      : `Nothing is set anywhere in it, on a file that has progress elsewhere —
+         so it is not the block, it is an address that landed on empty memory.`;
+    setHTML('alert', `<div class="warn"><b>Checks not trustworthy.</b>
+      The shared custom save could not be pinned down${
+        s.custom_ok === false ? (s.custom_source === 'guess'
+          ? ', and the address in use is a guess that nothing validated'
+          : ', and the address in use is the fallback guess') : ''}.
+      ${detalle}
+      ${s.custom_n || 0} checks hang off it —every xflag— and are <b>not being
+      counted</b> while this shows; the items panel and the two save contexts are
+      unaffected.${otra}
+      <br>gSharedCustomSave ${esc(s.custom_base || '—')} · ${
+        Object.entries(s.bases || {}).map(([g, b]) => `${g} ${b}`).join(' · ') || '—'}</div>`);
+  } else if (s.same_version_as_data === false) {
     setHTML('alert', `<div class="warn"><b>This seed is from a different OoTMM version.</b>
       The addresses come from the ROM and hold, but every check <i>name</i> comes from
       the bundled v32.0 tables — so a check can be marked under the wrong name, in the
@@ -1135,13 +1164,6 @@ function render(s) {
       This page updates on its own as soon as it connects.</div>`);
   } else if (s.error) {
     setHTML('alert', `<div class="warn"><b>No connection to the game.</b> ${esc(s.error)}</div>`);
-  } else if (!s.trusted) {
-    setHTML('alert', `<div class="warn"><b>Checks not trustworthy.</b>
-      Only ${Math.round(s.confidence * 100)}% of the bits that are set land on a known check,
-      so the custom save base is not the right one and what comes out of it is worthless.
-      Usually the Majora's Mask save was located in a stale copy; it fixes itself as soon
-      as the live one is found. Bases in use: ${
-        Object.entries(s.bases || {}).map(([g, b]) => `${g} ${b}`).join(' · ') || '—'}</div>`);
   } else {
     setHTML('alert', '');
   }

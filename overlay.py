@@ -458,6 +458,25 @@ class Tracker:
             # wrong region. This is the one the user cannot possibly work out
             # on their own, which is why it gets said out loud.
             "same_version_as_data": table.get("same_version_as_data"),
+            # What the "not trustworthy" warning is actually about, in numbers.
+            # It used to name only the two save bases —which are located by
+            # signature and were never the problem— and then blame a stale MM
+            # copy, which is one cause out of several. The address it is
+            # accusing is `custom_base`, and `custom_bits` says whether there
+            # was anything to measure at all: zero bits is "the block was not
+            # found", not "the bits landed elsewhere", and the two need
+            # different words. `custom_n` is what stops counting when it fails.
+            "custom_base": None,
+            "custom_bits": 0,
+            "custom_ok": None,
+            "custom_n": len((self.plan.get("custom") or {}).get("checks", [])),
+            # Where the address came from: "rom" (the ROM's own code names it,
+            # see payload.py), "measured" (swept and validated by its bits) or
+            # "guess" (the constant, nothing validated). A fresh save with no
+            # bits anywhere used to end up as "guess"; with the ROM it is
+            # "rom", and that is the difference between a first minute that
+            # says "not trustworthy" and one that just works.
+            "custom_source": None,
         }
         self._done = set()
         self._seeded = False
@@ -472,6 +491,18 @@ class Tracker:
         self._custom_gap = {}
         self._custom_retry = 0
         self._custom_active = None
+        # Whether the address in use was validated or is just the constant we
+        # fall back to. The page says something different for each.
+        self._custom_ok = None
+        self._custom_addr = None
+        self._custom_bits = 0
+        self._custom_source = None
+        # What the ROM's code says about its own globals, per running game
+        # (mkchecks writes it, payload.py reads it). Empty on a checks.json
+        # built without a ROM or before this existed: then everything below
+        # falls back to sweeping, as it always did.
+        self.payload = table.get("payload") or {}
+        self._payload_warned = set()
         self._xflag_peak = 0
         self._started = time.time()
         self.scene_names = {
@@ -601,9 +632,54 @@ class Tracker:
             # crossing between games moves both: they have to be found again
             self._bases = None
 
-        bases = self.locate(self.link, verbose=False)
+        hints = self.payload_hints()
+        bases = self.locate(self.link, verbose=False, hints=hints) if hints \
+            else self.locate(self.link, verbose=False)
         self._bases = bases or None
         return bases
+
+    def payload_hints(self):
+        """(base, game) pairs the ROM's code names, for locate_saves to try
+        first. The foreign buffer of each layout, plus the running game's own
+        save context (vanilla, and already first in KNOWN_BASES, but it costs
+        nothing to say it)."""
+        out = []
+        for running, foreign in (("oot", "mm"), ("mm", "oot")):
+            b = self.payload.get(running) or {}
+            if b.get("foreign_base"):
+                out.append((b["foreign_base"], foreign))
+            if b.get("own"):
+                # the tracker's MM base is MmSave + 8 (signature at +0x1C)
+                out.append((b["own"] + (8 if running == "mm" else 0), running))
+        return out
+
+    def rom_custom(self, bases, active):
+        """gSharedCustomSave for the running game, as the ROM's code has it.
+
+        Returns (address, agrees) or (None, None). `agrees` says whether the
+        buffer the signature found for the OTHER game is where the ROM puts it:
+        when it is not, either checks.json was built from another ROM or the
+        signature picked a stale buffer, and the address is handed over with
+        that doubt attached -- the confidence measure gets the last word.
+        """
+        if not active:
+            return None, None
+        b = self.payload.get(active) or {}
+        addr = b.get("custom")
+        if not addr:
+            return None, None
+        ajeno = "mm" if active == "oot" else "oot"
+        agrees = None
+        if ajeno in bases and b.get("foreign_base"):
+            agrees = bases[ajeno] == b["foreign_base"]
+            if not agrees and ("foreign", active) not in self._payload_warned:
+                self._payload_warned.add(("foreign", active))
+                print(f"[overlay] the ROM's code puts the {ajeno} buffer at "
+                      f"0x{b['foreign_base']:08X} while the signature found it at "
+                      f"0x{bases[ajeno]:08X}: checks.json may be another ROM's, "
+                      "or that is a stale buffer. gSharedCustomSave will be "
+                      "trusted only if its bits validate.")
+        return addr, agrees
 
     def setup_loaded(self, game, scene_id, wanted):
         """Which alternate scene header is really loaded, or None if unknown.
@@ -740,6 +816,38 @@ class Tracker:
             return None
         span = plan_custom["span"]
 
+        # The ROM's own code names the address (payload.py). It needs no bits
+        # to be believed, which is the whole point: on a save with no progress
+        # the sweep below has nothing to score and used to end in a guess. The
+        # bits still get the last word when there ARE any -- if they do not
+        # land on this table's checks, the table is another ROM's or the
+        # buffer is stale, and then it is measured as before.
+        rom_addr, agrees = self.rom_custom(bases, active)
+        if rom_addr is not None:
+            try:
+                blob = self.link.read_block(rom_addr, span)
+            except (ConnectionError, OSError, struct.error):
+                blob = None
+            if blob is not None:
+                c, bits = confidence(blob, plan_custom["checks"], self.xflag_ranges)
+                # With no bits the ROM's word is all there is, and it is enough
+                # -- unless the other buffer is not where the ROM puts it, in
+                # which case this may be another build's address and there is
+                # nothing here to tell; then it is swept for like before.
+                if (bits == 0 and agrees is not False) or (bits > 0 and c >= CONFIDENCE_MIN):
+                    if self._custom_source != "rom":
+                        print(f"[overlay] gSharedCustomSave at 0x{rom_addr:08X}: "
+                              f"named by the ROM's code"
+                              + (f", {bits} bits validate" if bits else ", no bits yet"))
+                    self._custom_ok = True
+                    self._custom_source = "rom"
+                    return rom_addr
+                if ("bits", active) not in self._payload_warned:
+                    self._payload_warned.add(("bits", active))
+                    print(f"[overlay] the ROM's code puts gSharedCustomSave at "
+                          f"0x{rom_addr:08X} but only {c:.0%} of its {bits} bits land on "
+                          "known checks; sweeping for it instead")
+
         ajeno = "mm" if active == "oot" else "oot" if active == "mm" else None
         gap = self._custom_gap.get(ajeno) if ajeno else None
         if gap is not None and ajeno in bases:
@@ -751,14 +859,33 @@ class Tracker:
             if blob is not None:
                 c, bits = confidence(blob, plan_custom["checks"], self.xflag_ranges)
                 if c >= CONFIDENCE_MIN and bits > 0:
+                    self._custom_ok = True
+                    self._custom_source = "measured"
                     return addr
             self._custom_gap.pop(ajeno, None)
 
         medida = self.find_custom(bases, active)
         if medida is not None:
+            self._custom_ok = True
+            self._custom_source = "measured"
             return medida
         # Nothing validated -- a fresh file with no progress anywhere looks like
         # this too. Fall back to the constant so the anchor is not left unset.
+        # It is a guess, and the page has to be able to say so: read off a
+        # version that moved the struct it lands on nothing at all, and then
+        # "0% of the bits that are set land on a known check" is a sentence
+        # about zero bits.
+        if self._custom_ok is not False:
+            print("[overlay] gSharedCustomSave did not validate at any address in "
+                  f"the window off the {ajeno or '?'} buffer; falling back to the "
+                  "known gap. Every xflag hangs off it, so they stop counting "
+                  "until it does validate.")
+        self._custom_ok = False
+        self._custom_source = "guess"
+        # the ROM's address is a better guess than the v32.0 constant, doubt
+        # and all: it at least belongs to this build
+        if rom_addr is not None:
+            return rom_addr
         cands = custom_candidates(bases, active)
         return cands[0] if cands else None
 
@@ -771,6 +898,9 @@ class Tracker:
 
         mejor = self.custom_base(bases, active)
         anchors = rebase(self.table, bases, active, mejor)
+        # kept for the state: the warning has to be able to name the address it
+        # is accusing, and it is not one of the two the page used to list
+        self._custom_addr = anchors.get("custom")
 
         done = set()
         conf, bits = 1.0, 0
@@ -801,11 +931,17 @@ class Tracker:
         escena = len(por_ancla.get("oot", ())) + len(por_ancla.get("mm", ()))
         antes = self._xflag_peak > 8
         arranque = escena >= SCENE_CHECKS_SUSPICIOUS and self._custom_live
-        if bits == 0 and escena > 0 and (antes or arranque):
+        # Neither signal applies when the ROM's own code named the address:
+        # then "no xflag set yet" is a fact about the run, not about the base.
+        # This is the fresh-file case -- three chests opened, no pot broken --
+        # and it used to read as "not trustworthy" for exactly as long as the
+        # player had not yet found a bit to validate with.
+        if bits == 0 and escena > 0 and (antes or arranque) and self._custom_source != "rom":
             conf = 0.0
         elif escena == 0 and bits == 0:
             self._xflag_peak = 0      # partida nueva: se olvida lo visto
         self._xflag_peak = max(self._xflag_peak, bits)
+        self._custom_bits = bits
 
         for anchor, hechos in por_ancla.items():
             if anchor == "custom" and conf < CONFIDENCE_MIN:
@@ -997,6 +1133,11 @@ class Tracker:
             s["confidence"] = round(conf, 3)
             s["trusted"] = conf >= CONFIDENCE_MIN
             s["bases"] = {g: f"0x{b:08X}" for g, b in (self._bases or {}).items()}
+            s["custom_base"] = (
+                f"0x{self._custom_addr:08X}" if self._custom_addr else None)
+            s["custom_bits"] = self._custom_bits
+            s["custom_ok"] = self._custom_ok
+            s["custom_source"] = self._custom_source
             s["done_total"] = len(done)
             s["done_key_total"] = sum(1 for n in done if not self.junk.get(n, False))
             s["can_filter"] = self.hay_spoiler

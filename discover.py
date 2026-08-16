@@ -227,6 +227,21 @@ def _same(a, b):
     return bool(a) and bool(b) and os.path.normcase(os.path.abspath(a)) == os.path.normcase(os.path.abspath(b))
 
 
+def _has_key(path, key):
+    """Whether the JSON at `path` carries `key` at all (null counts as yes).
+
+    Tells a table built by an older generator -- which lacks the key -- from
+    one where the generator looked and found nothing, which stores null. Only
+    the first should trigger a rebuild, or a ROM that cannot be read would be
+    regenerated on every start.
+    """
+    try:
+        with open(path, encoding="utf-8") as fh:
+            return key in json.load(fh)
+    except (OSError, ValueError):
+        return False
+
+
 def _generate(module, argv, verbose):
     """Run one of the generators, in-process, and return its exit code.
 
@@ -261,7 +276,11 @@ def ensure_tables(rom, spoiler, verbose=True):
         return hecho
 
     checks = paths.user("checks.json")
-    if not os.path.exists(checks) or not _same(_built_from(checks), rom):
+    # `payload` is what mkchecks reads out of the ROM's code (payload.py):
+    # a checks.json without the key was built before that existed, and the
+    # overlay would fall back to sweeping for gSharedCustomSave without a word.
+    if (not os.path.exists(checks) or not _same(_built_from(checks), rom)
+            or not _has_key(checks, "payload")):
         argv = ["--rom", rom]
         if spoiler:
             argv += ["--spoiler", spoiler]

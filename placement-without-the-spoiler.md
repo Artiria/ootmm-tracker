@@ -173,6 +173,51 @@ Pointed at a ROM that is not an OoTMM seed —the base ROM, vanilla OoT, an
 unrelated N64 game— it does not guess: there is no extra-DMA header, and that
 is reported rather than papered over.
 
+## 5. The payload's own globals, read out of its code
+
+There is one more class of version constant, and it is the one that hurts a
+tracker most: the RAM addresses of OoTMM's **own** globals. The buffer holding
+the game that is *not* running (`gMmSave` when OoT runs, `gOotSave` when MM
+runs), `gSharedCustomSave` (where every xflag, npc, shop, scrub and silver-rupee
+flag lives), and the layout inside that struct — because `XFLAGS_COUNT_*` is
+generated per version and everything behind the xflags array moves with it.
+Across the 42 seeds on my disk that is **six different builds and three
+different layouts**; the constants I had were the current build's and nothing
+else's, and on an older seed 2,912 checks were being read from the wrong byte
+without a word.
+
+None of it needs a constant. The payload is MIPS code linked at a fixed address
+(`0x80400000` for OoT's, `0x80720000` for MM's — `defs.h`), and code that
+touches a global carries its address in the instructions. `save.c` in
+particular does
+
+```c
+Flash_ReadWrite(0x8000 + 0x8000 * fileIndex,  &gMmSave,           sizeof(gMmSave),           OS_READ);
+Flash_ReadWrite(0x18000 + 0x4000 * fileIndex, &gSharedCustomSave, sizeof(gSharedCustomSave), OS_READ);
+```
+
+which compiles to a `lui`/`addiu` pair for the address and a `li` for the size,
+right before the `jal` — so one call site hands over both. The whole thing is
+about 300 lines (`payload.py`): walk the payload once keeping `lui` + low-half
+pairs, snapshot `a0..a3` at every call, and
+
+- `Flash_ReadWrite` is the callee that is called with `a1 = &global`, `a2 =
+  literal`, `a3 in {0, 1}` for several distinct globals — nothing else has that
+  calling shape;
+- of its buffers, the one outside the payload's region is the running game's
+  own `gSaveContext`; the one whose size is **the same in both payloads** is the
+  shared custom save; the other is the foreign buffer;
+- the layout inside is a shape over the offsets the code indexes from the custom
+  base: `xflags[N] npc[32] shops[8] scrubs[8] sr[16]` means N, N+0x20, N+0x28,
+  N+0x30 all indexed, and N is `XFLAGS_COUNT_OOT`; the MM half likewise.
+
+Measured: 42/42 ROMs, one unambiguous answer each, and on the four RAM dumps
+every derived address is exactly where the run-time measurement had put it. It
+also gives the tracker something it did not have: on a **fresh save**, with no
+bits set anywhere, the confidence measure has nothing to score — and it used to
+end in a guess. Now the address comes from the ROM and the bits only get to
+veto it.
+
 ## Reading the extra DMA without tripping
 
 The header is at `COMBO_META_ROM = 0x03FFF000`: a u32 with the physical address
@@ -216,6 +261,7 @@ what you still want the CSVs for.
 | Agreement with the spoiler on classifying filler | 5,018 / 5,018 |
 | Checks mapped overall | 5,981 / 6,043 |
 | xflag chains found by shape, across 42 seeds | 2 per ROM, 0 false positives |
+| `gSharedCustomSave` and layout from the payload's code, across 42 seeds | 42 / 42, one fit each |
 | Versions | v32.0 and dev |
 
 The two denominators are different on purpose: 6,043 is every row in the pool,

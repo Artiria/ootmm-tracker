@@ -39,6 +39,7 @@ import struct
 import sys
 
 import paths
+import payload
 import rom
 
 # `data/` ships with the program; `checks.json` is generated, and inside the
@@ -342,6 +343,91 @@ def locate_xflag_tables(rom_bytes, scenes, verbose=True):
             print("   this seed is from another OoTMM version; the pool CSVs are")
             print("   still v32.0's, so watch for collisions below")
     return found
+
+
+# --------------------------------------------------------------------------
+# gSharedCustomSave and the MM buffer, from the payload's code
+# --------------------------------------------------------------------------
+#
+# CUSTOM_BASE, LAYOUT["mm"]["base"], CUSTOM_OOT, CUSTOM_MM_OFF, CUSTOM_MM and
+# XFLAGS_COUNT above are all v32.0's, and every one of them is a global of the
+# payload or a field offset inside one -- which is to say, they move with the
+# build. Measured over the 42-seed corpus: three generations, three different
+# gSharedCustomSave addresses AND three different layouts inside it (the xflags
+# array is 0x25D, 0x2E8 or 0x2FA bytes long, so npc/shops/scrubs/sr and the
+# whole MM half sit at different offsets). On an older seed the constants would
+# put every npc/shop/scrub/silver-rupee check on the wrong byte without a word.
+#
+# payload.locate() reads all of them out of the code that uses them (see
+# payload.py). What it returns replaces the constants; the constants stay as
+# the cross-check and get printed when they disagree, the way
+# locate_xflag_tables() treats custom.h's VROMs.
+
+def apply_payload_layout(rom_bytes, verbose=True):
+    """Override the custom-save constants with what the ROM's code says.
+
+    Returns the located block for checks.json (so the overlay can use the
+    same addresses at run time), or None when the ROM did not give a complete
+    answer -- in which case nothing is touched and it says so.
+    """
+    global CUSTOM_BASE, CUSTOM_OOT, CUSTOM_MM_OFF, CUSTOM_MM, XFLAGS_COUNT
+    try:
+        pl = payload.locate(rom_bytes)
+    except Exception as ex:  # a scan bug must not take mkchecks down
+        if verbose:
+            print(f"payload: could not scan the payload ({type(ex).__name__}: {ex});"
+                  " keeping the v32.0 constants")
+        return None
+    oot = pl.get("oot", {})
+    lay = pl.get("layout", {})
+    if "custom" not in oot or "foreign_base" not in oot or not payload.layout_complete(lay):
+        if verbose:
+            print("payload: gSharedCustomSave not pinned from the ROM's code;"
+                  " keeping the v32.0 constants")
+            if lay.get("oot", {}).get("_ambiguous"):
+                print(f"   the OoT half fits at more than one offset: "
+                      f"{[hex(x) for x in lay['oot']['_ambiguous']]}")
+        return None
+
+    old = {
+        "gSharedCustomSave (running OoT)": (CUSTOM_BASE, oot["custom"][0]),
+        "MM buffer (running OoT)": (LAYOUT["mm"]["base"], oot["foreign_base"]),
+        "oot.npc": (CUSTOM_OOT["npc"], lay["oot"]["npc"]),
+        "oot.shops": (CUSTOM_OOT["shops"], lay["oot"]["shops"]),
+        "oot.scrubs": (CUSTOM_OOT["scrubs"], lay["oot"]["scrubs"]),
+        "oot.sr": (CUSTOM_OOT["sr"], lay["oot"]["sr"]),
+        "mm (MmCustomSave)": (CUSTOM_MM_OFF, lay["mm"]["base"]),
+        "mm.npc": (CUSTOM_MM["npc"], lay["mm"]["npc"]),
+        "mm.shops": (CUSTOM_MM["shops"], lay["mm"]["shops"]),
+        "mm.halfDays": (CUSTOM_MM["halfDays"], lay["mm"]["halfDays"]),
+        "XFLAGS_COUNT_OOT": (XFLAGS_COUNT["oot"], lay["oot"]["xflags_count"]),
+        "XFLAGS_COUNT_MM": (XFLAGS_COUNT["mm"], lay["mm"]["xflags_count"]),
+    }
+    CUSTOM_BASE = oot["custom"][0]
+    LAYOUT["mm"]["base"] = oot["foreign_base"]
+    ANCHOR_BASE["mm"] = LAYOUT["mm"]["base"]
+    ANCHOR_BASE["custom"] = CUSTOM_BASE
+    CUSTOM_OOT = {"xflags": 0, "npc": lay["oot"]["npc"], "shops": lay["oot"]["shops"],
+                  "scrubs": lay["oot"]["scrubs"], "sr": lay["oot"]["sr"]}
+    CUSTOM_MM_OFF = lay["mm"]["base"]
+    CUSTOM_MM = {"xflags": lay["mm"]["xflags"], "npc": lay["mm"]["npc"],
+                 "shops": lay["mm"]["shops"], "halfDays": lay["mm"]["halfDays"]}
+    XFLAGS_COUNT = {"oot": lay["oot"]["xflags_count"], "mm": lay["mm"]["xflags_count"]}
+
+    moved = {k: v for k, v in old.items() if v[0] != v[1]}
+    if verbose:
+        print(f"payload: gSharedCustomSave {CUSTOM_BASE:#x} ({oot['custom'][1]:#x} bytes),"
+              f" MM buffer {LAYOUT['mm']['base']:#x}, xflags {XFLAGS_COUNT['oot']:#x}/{XFLAGS_COUNT['mm']:#x}"
+              f" bytes, MmCustomSave at +{CUSTOM_MM_OFF:#x} -- read from the ROM's code")
+        if moved:
+            print("   NOTE: these differ from the v32.0 constants; this seed is from")
+            print("   another OoTMM version and the ROM's values are the ones used:")
+            for k, (a, b) in moved.items():
+                print(f"      {k}: {b:#x} (v32.0: {a:#x})")
+        if len(lay["oot"].get("_candidates", [])) > 1 or len(lay["mm"].get("_candidates", [])) > 1:
+            print("   (the layout had more than one fit; the first, structurally"
+                  " the right one, was taken -- see payload.layout)")
+    return pl
 
 
 class XflagTables:
@@ -964,6 +1050,27 @@ def collisions(checks):
     return out
 
 
+def _payload_json(pl):
+    """payload.locate()'s answer, JSON-shaped: only what the overlay uses."""
+    if not pl:
+        return None
+    out = {}
+    for game in ("oot", "mm"):
+        b = pl.get(game, {})
+        if "custom" not in b or "foreign_base" not in b:
+            continue
+        out[game] = {
+            "custom": b["custom"][0], "custom_size": b["custom"][1],
+            "foreign_base": b["foreign_base"], "foreign_size": b["foreign"][1],
+            "own": b.get("own", (None,))[0], "custom_gap": b["custom_gap"],
+        }
+    lay = pl.get("layout")
+    if lay:
+        out["layout"] = {g: {k: v for k, v in lay[g].items() if not k.startswith("_")}
+                         for g in ("oot", "mm")}
+    return out or None
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--rom", help="the seed's .z64 ROM; without it the xflags stay unresolved")
@@ -976,6 +1083,7 @@ def main(argv=None):
 
     tables = {}
     rom_bytes = None
+    located = None
     if args.rom:
         # careful: do not call it `rom`, that shadows the module of that name
         rom_bytes = pathlib.Path(args.rom).read_bytes()
@@ -983,6 +1091,9 @@ def main(argv=None):
             rom.extra_dma(rom_bytes)
         except ValueError as ex:
             sys.exit(str(ex))
+        # before anything reads XFLAGS_COUNT / CUSTOM_*: XflagTables takes its
+        # bit limit from it at construction
+        located = apply_payload_layout(rom_bytes)
         vroms = locate_xflag_tables(rom_bytes, scenes) or {}
         for g in XFLAG_TABLES:
             tables[g] = XflagTables(rom_bytes, g, vroms.get(g))
@@ -1175,6 +1286,12 @@ def main(argv=None):
         # every check carries "anchor" and "off"; these are the bases the
         # absolute "addr" was computed with, so it can be relocated at start
         "anchors": ANCHOR_BASE,
+        # What the ROM's own code says about where its globals live, per
+        # running game (payload.py). Null when it could not be read, and then
+        # everything above is the v32.0 constant. The overlay uses it to put
+        # gSharedCustomSave where the ROM says instead of measuring it from
+        # bits that a fresh save does not have.
+        "payload": _payload_json(located),
         # scenes whose Master Quest version is the one this seed has. With a
         # spoiler and no MQ it is an empty list, meaning "every MQ row is
         # surplus"; without a spoiler it is null, meaning "unknown".

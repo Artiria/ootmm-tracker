@@ -2151,6 +2151,82 @@ sizes. Now `rom.extra_dma()` checks once and says
 
 ---
 
+## The payload's globals come out of its code
+
+**Done 16 Aug 2026.** Everything measured is in the corpus folder's
+`FINDINGS.md`; this is the short form.
+
+Three things were still constants of one build, or measured at run time from
+bits: the buffer of the game that is NOT running (`KNOWN_BASES`),
+`gSharedCustomSave` (the window sweep, `CUSTOM_BEFORE`), and the layout inside
+it (`CUSTOM_OOT`, `CUSTOM_MM`, `CUSTOM_MM_OFF`, `XFLAGS_COUNT`). All three are
+globals of the payload, and the payload is MIPS code linked at a fixed address:
+`save.c` calls `Flash_ReadWrite(0x18000 + 0x4000 * fileIndex,
+&gSharedCustomSave, sizeof(gSharedCustomSave), dir)`, and that call site
+carries the address (`lui`/`addiu`) and the size (`li`) in the instructions.
+
+`payload.py` walks each payload once, keeps every `lui` + low-half pair
+(with `addu` propagation, so array indexing is seen), snapshots `a0..a3` at
+every `jal`/`j`, recognises `Flash_ReadWrite` by its calling shape (`a1 =
+&global`, `a2 = literal`, `a3 in {0,1}`, several distinct globals), and reads
+the buffers off it: the one outside the payload is the running game's
+`gSaveContext`, the one whose size repeats in both payloads is the shared
+custom save, the other is the foreign buffer. The layout is a shape over the
+offsets the code indexes from the custom base (`xflags[N] npc[32] shops[8]
+scrubs[8] sr[16]` -> N, N+0x20, N+0x28, N+0x30 all indexed; the MM half at a
+16-aligned B: B, B+M, B+M+0x20 indexed, B+M+0x24 touched).
+
+| | v32.0 | dev-542a121 | 829-gen (x3 builds) | 784-gen |
+|---|---|---|---|---|
+| `gSharedCustomSave`, running OoT | `0x8044B570` | `0x8044C6A0` | `0x804430D0` / `0x80443100` / `0x80443110` | `0x8043F210` |
+| sizeof | `0x8A0` | `0x8D0` | `0x870` | `0x740` |
+| `XFLAGS_COUNT` oot / mm | `0x2FA` / `0x350` | same | `0x2E8` / `0x34A` | `0x25D` / `0x2C9` |
+| `MmCustomSave` at | `+0x380` | `+0x380` | `+0x370` | `+0x2E0` |
+
+42 of 42 seeds, one fit each, 0.14 s per ROM; the four RAM dumps confirm every
+derived address (signatures at the derived bases, `halfDays = 0x3F`, the 12 and
+7 xflag bits, the `shops[0] = 0x02` byte `CUSTOM_BASE` was first worked out
+from). **The 829 generation is three builds** with the same layout and three
+custom-save addresses, so even a per-generation table would have been wrong.
+
+Wired in three places, each guarded:
+
+- **`mkchecks.apply_payload_layout()`** overrides the constants with the ROM's
+  values and prints them next to v32.0's when they differ; `checks.json`
+  carries a `payload` block. Guard: v32.0 seed -> byte-identical `checks.json`
+  plus the new block; dev seed -> `off`/`bit` identical, absolute `addr` and
+  `anchors` moved by the constant delta the overlay used to absorb at run time.
+  On `babwDeM1` (829-gen) **2,912 checks change (offset, bit)**: all 2,406 MM
+  xflags (16 bytes off) and every npc/shop/scrub/silver-rupee of both games.
+  They had been read from the wrong byte on every seed of that generation.
+- **`overlay.custom_base()`** asks the ROM first (`rom_custom`): the address is
+  accepted with **zero bits** as long as the other buffer sits where the ROM
+  says, and with bits only above the threshold -- else the sweep runs as
+  before. `custom_source` (`rom` / `measured` / `guess`) goes to `/state.json`,
+  and the "scene checks done but no xflag" suspicion in `poll_once` does not
+  fire on a ROM-named address. Guard: the four dumps give `/state.json`
+  identical key for key except `custom_source: measured -> rom`; the fresh-save
+  simulation (custom save zeroed) goes from `trusted: false, guess` to
+  `trusted: true, rom` at the same address. **This closes the "fresh save"
+  item** that was blocking the release.
+- **`ootmm.locate_saves(hints=...)`** tries the ROM's foreign buffers before
+  `KNOWN_BASES`, and `discover` rebuilds a `checks.json` that predates the
+  block.
+
+Cross-checks that fell out of the same pass (offsets the code touches relative
+to `gSaveContext`): OoT `gCowFlags` at `+0x1E0` (6 refs) and MM `perm` at
+`MmSave+0xF8` = base+`0xF0` -- both were "pending in game" -- and MM `time` at
+`MmSave+0x0C` = base+`0x04`, which identifies the `MM_NOISE` field; `+0x36` is
+`tatlTimer` by the header. `gsFlags` is not referenced by the payload and stays
+pending. There is **no version string** anywhere in the ROM; the code is the
+only witness.
+
+Fails closed: a build that passed the size through a register or wrapped
+`Flash_ReadWrite` would leave `layout_complete()` false, the constants in place
+and a line saying so.
+
+---
+
 ## Multiworld, first session
 
 **14 Aug 2026, and it closes P4** — the question that had been open since the
