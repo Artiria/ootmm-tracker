@@ -109,7 +109,7 @@ ROM the first time you run it.
 
 ## License
 
-MIT — see [`LICENSE`](LICENSE). Copyright © 2026 Juan Ramos (Artiria).
+MIT — see [`LICENSE`](LICENSE). Copyright © 2026 Juan Ramos Ruiz (Artiria).
 Third-party material is covered in [`THIRD-PARTY.md`](THIRD-PARTY.md).
 
 ## For developers
