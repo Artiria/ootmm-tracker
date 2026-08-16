@@ -126,6 +126,12 @@ Whenever the `.exe` is rebuilt:
 - If `Scripts/tracker.lua` was touched, check the hard link survived
   (`fsutil hardlink list`): an editor that rewrites the file breaks it, and the
   emulator then keeps an old copy without saying so.
+- **Kill by name after the guard too** (`taskkill /IM ootmm-tracker.exe /F`):
+  killing the process you started leaves the one-file child serving on the
+  same ports, and the next comparison may be talking to the orphan. And read
+  the `[auto] ROM:` line the console prints: once, on the very first launch of
+  a fresh build, the tables came out as another seed's despite `--rom`; not
+  reproduced since, but that line is what would show it.
 
 ## What gets distributed
 

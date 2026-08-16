@@ -1009,7 +1009,11 @@ def cmd_overlay(args):
         try:
             import discover
 
-            _, spoiler_path, hecho = discover.resolve(args.rom, args.spoiler)
+            rom_path, spoiler_path, hecho = discover.resolve(args.rom, args.spoiler)
+            # Always said, --rom or not: the one time the tables came out as
+            # another seed's, nothing in the console named the ROM they were
+            # built from, and that is the first thing anyone needs to see.
+            print(f"[auto] ROM: {rom_path or '(none found)'}")
             if hecho:
                 print(f"[auto] rebuilt: {', '.join(hecho)}")
             # From the .exe the script is inside the bundle, so nobody can copy
