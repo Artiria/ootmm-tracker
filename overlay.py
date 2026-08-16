@@ -180,7 +180,14 @@ JUNK_PATTERNS = [
     r"^Piece of Heart" + JUEGO + r"$",
     # Tingle's maps: nothing depends on them, and on a seed that shuffles his
     # shop the six of them sat as pending "key" checks in Clock Town South.
-    r"^World Map of ",
+    # The ROM writes "World Map (Clock Town)", the spoiler "World Map of Clock
+    # Town"; both are covered.
+    r"^World Map\b",
+    # Traps are the opposite of an item. The ROM names the trap; the spoiler
+    # adds what it pretends to be: "Ice Trap (cloaked as Cojiro)".
+    r"^(Ice|Fire|Shock|Drain|Anti-Magic|Knockback) Trap( \(cloaked as .*\))?" + JUEGO + r"$",
+    # and a Rupoor takes rupees away
+    r"^Rupoor" + JUEGO + r"$",
 ]
 
 # --- pond fish --------------------------------------------------------------
@@ -1173,20 +1180,23 @@ class Tracker:
                 if not self.junk.get(c["name"], False):
                     by_scene_key[(c["game"], c["scene"])] += 1
 
+        # Every region goes to the page, the untouched ones included: whether
+        # to list those is the viewer's choice (?untouched=show), and the page
+        # says how many it is leaving out when it does not. Touched first, by
+        # progress; the rest by name, so a "what is left" list reads like a map.
         regions = []
         for rgame, rscene, total, total_key in self.regions:
             got = by_scene.get((rgame, rscene), 0)
-            if got:
-                regions.append({
-                    "game": rgame, "scene": rscene, "done": got, "total": total,
-                    "done_key": by_scene_key.get((rgame, rscene), 0),
-                    "total_key": total_key,
-                })
-        regions.sort(key=lambda r: (-r["done"] / r["total"], -r["total"]))
-        # How many regions exist at all, so the panel can say how many it is
-        # NOT showing. It only lists the ones you have touched, and without
-        # saying so the totals read as if locations were missing: five regions
-        # adding up to 29 key checks next to a headline of 670.
+            regions.append({
+                "game": rgame, "scene": rscene, "done": got, "total": total,
+                "done_key": by_scene_key.get((rgame, rscene), 0),
+                "total_key": total_key,
+            })
+        regions.sort(key=lambda r: (r["done"] == 0, -r["done"] / r["total"], -r["total"],
+                                    r["game"], r["scene"]))
+        # How many regions exist at all. The page works out what it is not
+        # showing from the list itself now that the whole list travels, but
+        # this stays: it is cheap and older panels read it.
         regions_n = {
             "all": len(self.regions),
             "key": sum(1 for _, _, _n, k in self.regions if k),
@@ -1474,10 +1484,15 @@ DEFAULT_ICON_BY_KEY = {
 
 # Songs and other things with no icon in the ROM: these get drawn.
 #
-# The six warp-song colours are the game's own, not invented: forest green,
-# fire red, water blue, spirit orange, shadow purple, light yellow. The other
-# songs the game paints white, and there what tells them apart is the glyph: a
-# bolt for storms, a horseshoe for Epona, a sun for the Sun's Song...
+# Where the game paints a song in a colour of its own, that colour is used and
+# not invented: OoT's six warp songs (z_kaleido_collect.c, sSongsPrim*) and
+# MM's five area songs (z_kaleido_collect.c, sQuestSongsPrim*: Sonata green,
+# Goron Lullaby red, Bossa Nova blue, Elegy orange, Oath magenta). Every other
+# song both games paint white, and there each one gets a glyph AND a colour
+# so that at a glance -- on a stream, at chip size -- they read apart: leaf
+# green for Saria, bolt yellow for storms, heart pink for healing, orange sun,
+# blue hourglass for time, chestnut horseshoe for Epona, pale feather for
+# soaring. Where a song exists in both games it keeps one look.
 #
 # (glyph, colour) — colour None = normal ink
 GLYPH_BY_KEY = {
@@ -1488,22 +1503,22 @@ GLYPH_BY_KEY = {
     "quest:Requiem of Spirit": ("note", "#e08b33"),
     "quest:Nocturne of Shadow": ("note", "#9459d6"),
     "quest:Prelude of Light": ("note", "#e6d44f"),
-    # OoT, the rest: the glyph is the data
+    # the songs the games paint white: glyph and colour both carry the name
     "quest:Zelda's Lullaby": ("triforce", "#e6d44f"),
-    "quest:Epona's Song": ("horseshoe", None),
-    "quest:Saria's Song": ("leaf", None),
-    "quest:Sun's Song": ("sun", None),
-    "quest:Song of Time": ("hourglass", None),
-    "quest:Song of Storms": ("bolt", None),
-    # MM
-    "quest:Song of Healing": ("heart", None),
-    "quest:Song of Soaring": ("soar", None),
-    "quest:New Wave Bossa Nova": ("wave", None),
-    "quest:Elegy of Emptiness": ("note", None),
-    "quest:Oath to Order": ("note", None),
-    "quest:Goron Lullaby": ("note", None),
-    "quest:Goron Lullaby (half)": ("note", None),
-    "quest:Song of Awakening": ("note", None),
+    "quest:Epona's Song": ("horseshoe", "#c8813f"),
+    "quest:Saria's Song": ("leaf", "#4cc25f"),
+    "quest:Sun's Song": ("sun", "#f0862e"),
+    "quest:Song of Time": ("hourglass", "#5fa8e6"),
+    "quest:Song of Storms": ("bolt", "#f0d24a"),
+    "quest:Song of Healing": ("heart", "#ea6fae"),
+    "quest:Song of Soaring": ("soar", "#a9dcef"),
+    # MM, area songs: the game's own colours (sQuestSongsPrim*)
+    "quest:New Wave Bossa Nova": ("wave", "#6496ff"),
+    "quest:Elegy of Emptiness": ("note", "#ffa000"),
+    "quest:Oath to Order": ("note", "#ff64ff"),
+    "quest:Goron Lullaby": ("note", "#ff5028"),
+    "quest:Goron Lullaby (half)": ("note", "#ff5028"),
+    "quest:Song of Awakening": ("note", "#96ff64"),
     "quest:Bombers' Notebook": ("book", None),
     "quest:Odolwa's Remains": ("remains", "#4faa5a"),
     "quest:Goht's Remains": ("remains", "#d0761f"),

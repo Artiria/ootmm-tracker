@@ -114,6 +114,7 @@ body.chroma-none .card, body.chroma-green .card { backdrop-filter: blur(2px); }
 .region .name { font-size: 13px; color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .region .num { font-size: 12px; color: var(--ink-2); font-variant-numeric: tabular-nums; }
 .region .meter { grid-column: 1 / -1; }
+.region.untouched .name, .region.untouched .num { opacity: .55; }
 
 .legend { display: flex; gap: 14px; margin-bottom: 12px; font-size: 12px; color: var(--ink-2); }
 .legend span { display: inline-flex; align-items: center; gap: 6px; }
@@ -484,6 +485,12 @@ body.chroma-green .card { background: var(--surface); }
             <option value="hide">hide completed</option>
           </select>
         </label>
+        <label>Not started
+          <select id="opt-untouched">
+            <option value="">hidden</option>
+            <option value="show">show</option>
+          </select>
+        </label>
         <label>Background
           <select id="opt-chroma">
             <option value="">normal</option>
@@ -578,6 +585,10 @@ let PIDE_FILTRO = q.get('junk') === 'hide';
    two options would fight each other and the panel would show regions at
    3/3 next to a heading that says they are pending. */
 let OCULTA_HECHAS = q.get('done') === 'hide';
+/* ?untouched=show lists the regions you have not set foot in as well, at 0/N,
+   so the panel doubles as a "what is left" map. Off by default: on a stream
+   the touched-only list is the one that reads as progress. */
+let MOSTRAR_SIN_EMPEZAR = q.get('untouched') === 'show';
 /* Without knowing the items there is no way to tell what is filler, and
    filtering would zero everything out. The server says whether it can. */
 let puedeFiltrar = false;
@@ -616,6 +627,8 @@ function panelUrl(name, game) {
   if (jk) p.set('junk', jk);
   const dn = $('opt-done') ? $('opt-done').value : (OCULTA_HECHAS ? 'hide' : '');
   if (dn) p.set('done', dn);
+  const un = $('opt-untouched') ? $('opt-untouched').value : (MOSTRAR_SIN_EMPEZAR ? 'show' : '');
+  if (un) p.set('untouched', un);
   if (sp !== 'item') p.set('spoiler', sp);
   if (ch) p.set('chroma', ch);
   const qs = p.toString();
@@ -654,6 +667,7 @@ function syncUrl() {
   set('spoiler', SPOILER === 'item' ? '' : SPOILER);   // 'item' is the default
   set('junk', PIDE_FILTRO ? 'hide' : '');
   set('done', OCULTA_HECHAS ? 'hide' : '');
+  set('untouched', MOSTRAR_SIN_EMPEZAR ? 'show' : '');
   set('chroma', chroma || '');
   set('hide', HIDE_ALL ? '1' : '');
   const qs = p.toString();
@@ -679,6 +693,7 @@ function applyOpts() {
 
   PIDE_FILTRO = $('opt-junk').value === 'hide';
   OCULTA_HECHAS = $('opt-done') && $('opt-done').value === 'hide';
+  MOSTRAR_SIN_EMPEZAR = $('opt-untouched') && $('opt-untouched').value === 'show';
   chroma = $('opt-chroma').value || null;
   document.body.classList.toggle('chroma-none', chroma === 'none');
   document.body.classList.toggle('chroma-green', chroma === 'green');
@@ -697,11 +712,13 @@ if ($('urls')) {
   $('opt-chroma').value = chroma || '';
   $('opt-junk').value = PIDE_FILTRO ? 'hide' : '';
   $('opt-done').value = OCULTA_HECHAS ? 'hide' : '';
+  $('opt-untouched').value = MOSTRAR_SIN_EMPEZAR ? 'show' : '';
   $('opt-hide').checked = HIDE_ALL;
   $('opt-spoiler').disabled = HIDE_ALL;
   document.querySelector('.killswitch').classList.toggle('on', HIDE_ALL);
   $('opt-junk').onchange = applyOpts;
   $('opt-done').onchange = applyOpts;
+  $('opt-untouched').onchange = applyOpts;
   $('opt-spoiler').onchange = applyOpts;
   $('opt-chroma').onchange = applyOpts;
   $('opt-hide').onchange = () => {
@@ -796,28 +813,30 @@ function pct(a, b) { return b ? (100 * a / b) : 0; }
 function renderRegions(all, counts) {
   let regions = all.filter(r => keepGame(r.game));
   if (SOLO_CLAVE) regions = regions.filter(r => r.total_key > 0);
-  const conDatos = regions.length;
+  /* The server sends every region; touched means at least one check done in
+     it, whatever the filter. Untouched ones are listed only on request. */
+  const tocadas = regions.filter(r => r.done > 0);
+  const sinEmpezar = regions.length - tocadas.length;
+  if (!MOSTRAR_SIN_EMPEZAR) regions = tocadas;
   // completed follows the active filter, so the two options agree
   const hecha = (r) => SOLO_CLAVE ? r.done_key >= r.total_key : r.done >= r.total;
   const hechas = regions.filter(hecha).length;
   if (OCULTA_HECHAS) regions = regions.filter(r => !hecha(r));
   if (!regions.length)
-    return `<div class="empty">${hechas ? 'every region you have touched is done' : 'no checks yet'}</div>`;
-  /* This panel only lists regions you have touched. Without saying so the
-     numbers read as if locations were missing -- five regions adding up to 29
-     next to a headline of 670 -- so it says how many it is leaving out. The
-     not-started count only makes sense without ?game=, where the total and the
-     list are about the same set of regions; the completed one is always ours. */
+    return `<div class="empty">${hechas ? 'every region you have touched is done' : 'no checks yet'}</div>`
+      + (sinEmpezar && !MOSTRAR_SIN_EMPEZAR ? `<div class="more">${sinEmpezar} regions not started</div>` : '');
+  /* Without saying so the numbers read as if locations were missing -- five
+     regions adding up to 29 next to a headline of 670 -- so the panel says how
+     many it is leaving out, and the same for the completed ones it hides. */
   const notas = [];
-  const haber = counts && (SOLO_CLAVE ? counts.key : counts.all);
-  if (!GAMEF && haber && haber > conDatos) notas.push(`${haber - conDatos} regions not started`);
+  if (!MOSTRAR_SIN_EMPEZAR && sinEmpezar) notas.push(`${sinEmpezar} regions not started`);
   if (OCULTA_HECHAS && hechas) notas.push(`${hechas} completed`);
   const nota = notas.length ? `<div class="more">${notas.join(' · ')}</div>` : '';
   return regions.map(r => {
     const hechos = SOLO_CLAVE ? r.done_key : r.done;
     const total = SOLO_CLAVE ? r.total_key : r.total;
     const p = pct(hechos, total);
-    return `<div class="region row-${r.game}">
+    return `<div class="region row-${r.game}${r.done ? '' : ' untouched'}">
       <div class="name">${esc(r.scene)}</div>
       <div class="num">${hechos} / ${total}</div>
       <div class="meter${p >= 100 ? ' full' : ''}"><i class="${hechos ? 'some' : ''}" style="width:${p.toFixed(1)}%"></i></div>
