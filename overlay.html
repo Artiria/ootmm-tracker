@@ -942,6 +942,13 @@ const GLYPH = {
        + '<path d="M12 18.4c-1.4 1.6-2.6 2.6-4.2 3.2 1-1.8 1.8-3.2 2.4-4.6z"/>'
        + '<path d="M12 18.4c1.4 1.6 2.6 2.6 4.2 3.2-1-1.8-1.8-3.2-2.4-4.6z"/>',
   remains: '<path d="M12 2.2c4.6 0 7.6 3 7.6 7.2 0 2.6-1 4.4-1 6.4 0 2.4-2.6 6-6.6 6s-6.6-3.6-6.6-6c0-2-1-3.8-1-6.4 0-4.2 3-7.2 7.6-7.2z"/><circle cx="9" cy="10.4" r="1.7" fill="#0d0d0d"/><circle cx="15" cy="10.4" r="1.7" fill="#0d0d0d"/>',
+  /* MM owl statue: a squat body with two ear tufts and big ringed eyes */
+  owl: '<path d="M6 8.5 4.6 3.4 8.6 6.2h6.8l4-2.8L18 8.5c1 1.6 1.4 3.4 1.4 5.3 0 4.6-3.3 7.8-7.4 7.8s-7.4-3.2-7.4-7.8c0-1.9.4-3.7 1.4-5.3z"/>'
+     + '<circle cx="9.3" cy="11.6" r="2.6" fill="rgba(0,0,0,.6)"/><circle cx="14.7" cy="11.6" r="2.6" fill="rgba(0,0,0,.6)"/>'
+     + '<circle cx="9.3" cy="11.6" r="1.1"/><circle cx="14.7" cy="11.6" r="1.1"/><path d="M12 13.4l-1.3 2h2.6z" fill="rgba(0,0,0,.6)"/>',
+  /* a clock face: ring and two hands */
+  clock: '<circle cx="12" cy="12" r="9.2"/><circle cx="12" cy="12" r="7" fill="rgba(0,0,0,.6)"/>'
+       + '<path d="M12 6.4V12l3.8 2.4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>',
 };
 
 /* Fallback silhouettes for MM's own masks, used when the archive cannot be
@@ -1170,12 +1177,15 @@ function render(s) {
       the bundled v32.0 tables — so a check can be marked under the wrong name, in the
       wrong region. If you are seeing progress in places you have never been, that is
       this. Counts and completed totals are still meaningful; names are not.</div>`);
-  } else if (s.placement_ratio !== undefined && s.placement_ratio < 0.4 && s.rom_items_n) {
-    setHTML('alert', `<div class="warn"><b>These tables look like another seed's.</b>
-      Only ${Math.round(s.placement_ratio * 100)}% of the checks have an item, which
-      usually means the ROM was changed without restarting the tracker — it works out
-      which seed you are on once, at startup. Close it and open it again.
-      ${s.rom_of_table ? `Built from: <code>${esc(s.rom_of_table)}</code>` : ''}</div>`);
+  } else if (s.rom_mismatch) {
+    /* Project64 says which ROM it has open; if it is not the one the tables were
+       built from, every item shown belongs to another seed. This used to be
+       guessed from the share of checks with an item, which a lightly shuffled
+       seed drops below the threshold with nothing wrong. */
+    setHTML('alert', `<div class="warn"><b>The emulator has another ROM open.</b>
+      The tables were built from <code>${esc(s.rom_of_table || '?')}</code>, but
+      Project64 has <code>${esc(s.rom_open || '?')}</code> loaded. The tracker works out
+      which seed you are on once, at startup: close it and open it again.</div>`);
   } else if (s.waiting) {
     setHTML('alert', `<div class="warn"><b>Waiting for the emulator.</b>
       In Project64-EM open <b>File &gt; Lua Scripts…</b> and run <b>tracker.lua</b>,

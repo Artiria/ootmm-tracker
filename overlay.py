@@ -65,6 +65,13 @@ PLAY_RESCAN_SECONDS = 10.0
 # scorings, so it must not run on every poll while a run has no progress yet.
 CUSTOM_RESCAN_SECONDS = 10.0
 
+# How often to look at which ROM the emulator has open. Project64 writes the
+# path it loads to `Recent Rom 0` in its .cfg, and that is the one signal that
+# says "the ROM changed under the tracker": the placement ratio it used to go
+# by is a property of the seed (a seed with little shuffled sits at 0.36 with
+# nothing wrong) and cannot tell one seed from another of the same version.
+ROM_CHECK_SECONDS = 10.0
+
 # How many locations the ROM's placement table has to resolve before "the ROM
 # did not place it" is taken to mean "this spot is not a check in this seed".
 # Any real seed places hundreds (chests alone are 500-odd); below this the
@@ -89,7 +96,13 @@ PLACEMENT_KNOWN_MIN = 100
 #        (collectible[0] is the permanent word: Play_SaveCycleSceneFlags)
 # In both, chest sits at +0x10 and the permanent collect word at +0x1C.
 LIVE_FLAGS = {"oot": (0x1D28, 0x24), "mm": (0x1E58, 0x2C)}
-LIVE_FIELDS = {"chest": 0x10, "collect": 0x1C}
+# live word -> the perm field it is saved into. MM's stray fairies are switch
+# bits (mark.c, setStrayFairyMarkMm), so its two permanent switch words count
+# too; OoT keeps only chests and collectibles here.
+LIVE_FIELDS = {
+    "oot": {"chest": 0x10, "collect": 0x1C},
+    "mm": {"switch0": 0x00, "switch1": 0x04, "chest": 0x10, "collect": 0x1C},
+}
 # MM keeps one flag table for a scene and its seasonal / inverted twin
 # (mmSceneId() in mark.c); the twin's live flags belong to the base scene.
 MM_SCENE_ALIASES = {
@@ -188,6 +201,11 @@ JUNK_PATTERNS = [
     r"^(Ice|Fire|Shock|Drain|Anti-Magic|Knockback) Trap( \(cloaked as .*\))?" + JUEGO + r"$",
     # and a Rupoor takes rupees away
     r"^Rupoor" + JUEGO + r"$",
+    # Dungeon maps and compasses: nothing depends on them (his call, 16 Aug).
+    # The ROM says "Dungeon Map (Deku)" / "Compass (Deku)" and, unqualified,
+    # "Dungeon Map" / "Compass"; the spoiler "Map (Deku Tree)".
+    r"^(Dungeon )?Map( \(.*\))?" + JUEGO + r"$",
+    r"^Compass( \(.*\))?" + JUEGO + r"$",
 ]
 
 # --- pond fish --------------------------------------------------------------
@@ -528,6 +546,11 @@ class Tracker:
                 len(self.rom_items) / max(1, sum(
                     1 for c in table["checks"] if c["addr"] is not None)), 3),
             "rom_of_table": table.get("rom"),
+            # The ROM the emulator has open right now, and whether it is the
+            # one the tables were built from. Read from Project64's own config
+            # every ROM_CHECK_SECONDS; null when there is no emulator to ask.
+            "rom_open": None,
+            "rom_mismatch": False,
             # The seed is from another OoTMM version than data/. Addresses hold
             # —they come from the ROM— but every check NAME comes from the
             # v32.0 CSVs, so a bit can be marked under the wrong name and the
@@ -574,6 +597,8 @@ class Tracker:
         self._custom_addr = None
         self._custom_bits = 0
         self._custom_source = None
+        self._rom_check_at = 0.0
+        self._rom_open = None
         # What the ROM's code says about its own globals, per running game
         # (mkchecks writes it, payload.py reads it). Empty on a checks.json
         # built without a ROM or before this existed: then everything below
@@ -1017,7 +1042,7 @@ class Tracker:
         if len(raw) < size:
             return blob
         out = None
-        for field, at in LIVE_FIELDS.items():
+        for field, at in LIVE_FIELDS[game].items():
             live = struct.unpack_from(">I", raw, at)[0]
             if not live or field not in lay["fields"]:
                 continue
@@ -1057,11 +1082,13 @@ class Tracker:
         done = set()
         conf, bits = 1.0, 0
         por_ancla = {}
+        custom_blob = None
         for anchor, p in self.plan.items():
             if anchor not in anchors:
                 continue
             blob = self.link.read_block(anchors[anchor], p["span"])
             if anchor == "custom":
+                custom_blob = blob
                 conf, bits = confidence(blob, p["checks"], self.xflag_ranges)
             elif anchor == active and got is not None:
                 blob = self.with_live_flags(blob, active, scene)
@@ -1103,10 +1130,20 @@ class Tracker:
             done |= hechos
 
         items = {}
-        if "oot" in bases:
-            items["oot"] = inventory.snapshot(self.link.read_block(bases["oot"], 0x1500))
+        oot_blk = self.link.read_block(bases["oot"], 0x1500) if "oot" in bases else None
+        if oot_blk is not None:
+            items["oot"] = inventory.snapshot(oot_blk)
         if "mm" in bases:
-            items["mm"] = inventory.mm_snapshot(self.link.read_block(bases["mm"], 0x1500))
+            # MM's clocks live in the shared custom save (mm.halfDays); the
+            # block was read above for the checks, and the offset is the one
+            # mkchecks took from the ROM
+            half_days = None
+            cs = (self.table.get("custom_save") or {}).get("mm") or {}
+            if custom_blob is not None and cs.get("halfDays") is not None \
+                    and cs["halfDays"] < len(custom_blob) and self._custom_ok:
+                half_days = custom_blob[cs["halfDays"]]
+            items["mm"] = inventory.mm_snapshot(
+                self.link.read_block(bases["mm"], 0x1500), oot_blk, half_days)
 
         # A scene transition rewrites the PlayState, so for a poll or two it
         # stops validating. Falling straight through to the save context there
@@ -1336,8 +1373,37 @@ class Tracker:
             self.state["waiting"] = False
             self.state["error"] = msg
 
+    def check_rom_open(self):
+        """Which ROM the emulator has open, against the one the tables are from.
+
+        Project64 writes the ROM it loads to `Recent Rom 0` the moment it opens
+        it, so this catches "changed seed, did not restart the tracker" without
+        guessing from the data. Cheap (one small file every ROM_CHECK_SECONDS)
+        and honest: with no emulator config to read it says nothing.
+        """
+        if time.time() < self._rom_check_at:
+            return
+        self._rom_check_at = time.time() + ROM_CHECK_SECONDS
+        try:
+            import discover
+            emu = discover.find_emulator()
+            recent = discover.recent_roms(emu) if emu else []
+        except Exception:
+            recent = []
+        abierta = recent[0] if recent else None
+        de_tabla = self.table.get("rom")
+        mismatch = bool(abierta and de_tabla and not discover._same(abierta, de_tabla))
+        with self.lock:
+            self.state["rom_open"] = abierta
+            self.state["rom_mismatch"] = mismatch
+        if mismatch and self._rom_open != abierta:
+            print(f"[overlay] the emulator has another ROM open: {abierta}; the tables are "
+                  f"{de_tabla}'s. Restart the tracker to rebuild them.")
+        self._rom_open = abierta
+
     def run(self, interval=POLL_SECONDS):
         while True:
+            self.check_rom_open()
             if self.link is None:
                 time.sleep(0.5)      # nothing to poll until the Lua connects
                 continue
@@ -1368,6 +1434,8 @@ GROUPS = [
     ("key", "Keys"),
     ("boss", "Bosses"),
     ("fairy", "Fairies"),
+    ("owl", "Owls"),
+    ("clock", "Clocks"),
 ]
 
 # Which dungeon each `dungeonKeys` index is, and which ones have keys. They
@@ -1407,7 +1475,7 @@ FAIRIES_PER_DUNGEON = 15
 #              medallions, warp songs, ocarina songs, and the stones with the
 #              rest.
 COLS = {"Items": 6, "Masks": 6, "Equipment": 3, "Progress": 6, "Upgrades": 4,
-        "Keys": 5, "Bosses": 6, "Fairies": 4}
+        "Keys": 5, "Bosses": 6, "Fairies": 4, "Owls": 5, "Clocks": 6}
 MM_MASK_FIRST = 24   # from here on, MM's item[] entries are masks
 
 # Icons: mkicons.py pulls them from the ROM and the sheet index is the item
@@ -1520,6 +1588,12 @@ GLYPH_BY_KEY = {
     "quest:Goron Lullaby (half)": ("note", "#ff5028"),
     "quest:Song of Awakening": ("note", "#96ff64"),
     "quest:Bombers' Notebook": ("book", None),
+    # owl statues and clocks: one glyph each, the label tells them apart
+    **{f"owl:{n}": ("owl", "#d9b56a") for n in
+       ["Great Bay", "Zora Cape", "Snowhead", "Mountain Village", "Clock Town",
+        "Milk Road", "Woodfall", "Southern Swamp", "Ikana Canyon", "Stone Tower"]},
+    **{f"clock:{n}": ("clock", "#9ad0ff" if n.startswith("Day") else "#7f86c9") for n in
+       ["Day 1", "Night 1", "Day 2", "Night 2", "Day 3", "Night 3"]},
     "quest:Odolwa's Remains": ("remains", "#4faa5a"),
     "quest:Goht's Remains": ("remains", "#d0761f"),
     "quest:Gyorg's Remains": ("remains", "#3f83e0"),
@@ -1687,9 +1761,12 @@ def scan_user_icons():
     return found
 # scalars that go to the figures row, not to the grid
 SCALARS = {
-    "oot": ["rupees", "hearts", "max hearts", "skulltulas", "deaths"],
+    "oot": ["rupees", "hearts", "max hearts", "skulltulas", "deaths", "triforce"],
     "mm": ["heart pieces", "swamp skulltulas", "ocean skulltulas"],
 }
+# Only shown when non-zero: a seed without a Triforce hunt would otherwise
+# carry a permanent "triforce 0".
+SCALARS_OPTIONAL = {"triforce"}
 # the padding bits of the equipment nibbles and the unnamed slots add nothing
 # to a grid
 JUNK = ("bit 3",)
@@ -1972,7 +2049,7 @@ def item_grid(game, snap, icons=None, user_icons=None):
         pos = {n: i for i, n in enumerate(orden_prog)}
         groups["Progress"].sort(key=lambda it: pos.get(it["label"], len(pos)))
 
-    order = ["Items", "Masks", "Equipment", "Upgrades", "Keys", "Bosses", "Fairies", "Progress"]
+    order = ["Items", "Masks", "Equipment", "Upgrades", "Keys", "Bosses", "Fairies", "Owls", "Clocks", "Progress"]
     return [
         {"name": k, "cols": COLS.get(k, 6), "items": groups[k]}
         for k in order
@@ -1986,6 +2063,8 @@ def item_scalars(game, snap):
     out = []
     for key in SCALARS.get(game, []):
         if key in snap:
+            if key in SCALARS_OPTIONAL and not snap[key]:
+                continue
             out.append({"label": key, "value": inventory.fmt(key, snap[key], game)})
     return out
 

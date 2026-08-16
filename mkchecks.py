@@ -234,6 +234,7 @@ FLASH_FILE_STRIDE = 0x4000
 # even when the addresses move).
 ANCHOR_OF = {
     "scene": "game",
+    "mm_stray_fairy": "game",
     "gs_flags": "oot",
     "cow_flags": "oot",
     "custom": "custom",
@@ -409,6 +410,11 @@ def apply_payload_layout(rom_bytes, verbose=True):
     ANCHOR_BASE["custom"] = CUSTOM_BASE
     CUSTOM_OOT = {"xflags": 0, "npc": lay["oot"]["npc"], "shops": lay["oot"]["shops"],
                   "scrubs": lay["oot"]["scrubs"], "sr": lay["oot"]["sr"]}
+    # caughtFishFlags is a field of the shared struct, not of the OoT half,
+    # but the fish checks are OoT's and TYPE_TARGET files them under `custom`
+    # with the OoT map: it goes in here, when the ROM gives it.
+    if lay["oot"].get("caughtFishFlags") is not None:
+        CUSTOM_OOT["caughtFishFlags"] = lay["oot"]["caughtFishFlags"]
     CUSTOM_MM_OFF = lay["mm"]["base"]
     CUSTOM_MM = {"xflags": lay["mm"]["xflags"], "npc": lay["mm"]["npc"],
                  "shops": lay["mm"]["shops"], "halfDays": lay["mm"]["halfDays"]}
@@ -419,6 +425,10 @@ def apply_payload_layout(rom_bytes, verbose=True):
         print(f"payload: gSharedCustomSave {CUSTOM_BASE:#x} ({oot['custom'][1]:#x} bytes),"
               f" MM buffer {LAYOUT['mm']['base']:#x}, xflags {XFLAGS_COUNT['oot']:#x}/{XFLAGS_COUNT['mm']:#x}"
               f" bytes, MmCustomSave at +{CUSTOM_MM_OFF:#x} -- read from the ROM's code")
+        if "caughtFishFlags" in CUSTOM_OOT:
+            print(f"payload: caughtFishFlags at +{CUSTOM_OOT['caughtFishFlags']:#x} (the pond fish)")
+        else:
+            print("payload: caughtFishFlags not found by shape; the 33 pond-fish checks stay unresolved")
         if moved:
             print("   NOTE: these differ from the v32.0 constants; this seed is from")
             print("   another OoTMM version and the ROM's values are the ones used:")
@@ -854,6 +864,12 @@ def check_from_key(game, key, etiquetas=None, tables=None, xflag_errors=None,
 
     bit = csv_id
     addr = None
+    # MM stray fairies live in the scene's own flag table, split by id the way
+    # setStrayFairyMarkMm() in mark.c does it: 0x30 and up are collectible
+    # bits, 0x20..0x2F switch1, below that switch0 -- always bit `id & 0x1f`.
+    if target == "mm_stray_fairy" and bit is not None and game == "mm":
+        field = "collect" if bit >= 0x30 else "switch1" if bit >= 0x20 else "switch0"
+        bit = bit & 0x1F
     if (
         field
         and scene_id is not None
@@ -1313,7 +1329,7 @@ def main(argv=None):
             "custom": "caughtFishFlags missing",
             "gs_flags": "gsFlags not located (bit = id - 8)",
             "cow_flags": "gCowFlags not located",
-            "mm_stray_fairy": "not located",
+            "mm_stray_fairy": "",
             "xflags": "" if tables else "needs --rom",
         }.get(k, "")
         if ok[k] == v:

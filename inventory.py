@@ -182,6 +182,9 @@ def snapshot(save):
     for i in range(OOT_KEYS_LEN):
         st[f"key:{i}"] = read(save, None, OOT_KEYS_ADDR + i, 1, signed=True)
 
+    # Triforce hunt: how many pieces so far. Zero on any other seed, and the
+    # page hides it then.
+    st["triforce"] = read(save, None, OOT_TRIFORCE_ADDR, 4)
     return st
 
 
@@ -287,8 +290,18 @@ def mm_slot_name(i):
     return f"slot {i}"
 
 
-def mm_snapshot(save):
+def mm_snapshot(save, oot_save=None, half_days=None):
+    """`oot_save` is OoT's block, where OoTMM keeps the owl flags of both
+    games; `half_days` is the byte of gSharedCustomSave.mm.halfDays. Either
+    may be None, and then those rows are simply not produced."""
     st = {}
+    if oot_save is not None:
+        owls = read(oot_save, None, MM_OWL_FLAGS_ADDR, 4)
+        for i, name in enumerate(MM_OWLS):
+            st[f"owl:{name}"] = 1 if owls & (1 << i) else 0
+    if half_days is not None:
+        for i, name in enumerate(MM_CLOCKS):
+            st[f"clock:{name}"] = 1 if half_days & (1 << i) else 0
     for name, off, size, signed in MM_SCALARS:
         st[name] = read(save, None, off, size, signed)
 
@@ -360,6 +373,25 @@ def mm_covered_offsets():
 # NOISE silences at +0x38.
 MM_NOISE = set(range(0x04, 0x06)) | set(range(0x36, 0x38))
 
+
+# OoTMM's extra records: twenty-odd u32 of its own that squat in the `unk`
+# field of OoT's per-scene flag table (SAVE_EXTRA_RECORD in combo/save.h:
+# gOotSave + 0xD4 + 0x1C * index + 0x10). Both games' records live in OoT's
+# save whichever one is running. The two below feed the grid:
+#   gTriforceCount  index 18   ++ on every Triforce piece (item_add.c)
+#   gMmOwlFlags     index 11   |= 1 << owl on every owl statue (item_add.c)
+EXTRA_RECORD = lambda i: 0xD4 + 0x10 + 0x1C * i
+OOT_TRIFORCE_ADDR = EXTRA_RECORD(18)
+MM_OWL_FLAGS_ADDR = EXTRA_RECORD(11)
+
+# Owl statues, in the bit order the item table gives them (gi.yml, `add:
+# [OWL, n]`); 15 is the hidden one and is not shown.
+MM_OWLS = ["Great Bay", "Zora Cape", "Snowhead", "Mountain Village", "Clock Town",
+           "Milk Road", "Woodfall", "Southern Swamp", "Ikana Canyon", "Stone Tower"]
+
+# MM's clocks: gSharedCustomSave.mm.halfDays, one bit per half-day
+# (addItemClockMm: halfDays |= 1 << param; gi.yml: Day 1, Night 1, ... Night 3).
+MM_CLOCKS = ["Day 1", "Night 1", "Day 2", "Night 2", "Day 3", "Night 3"]
 
 # OoT's per-scene flag table: perm[124], 0x1C bytes per scene.
 PERM_ADDR = 0xD4

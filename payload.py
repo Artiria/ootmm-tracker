@@ -501,6 +501,22 @@ def layout(scan_oot, scan_mm, custom_oot, custom_mm, size):
         out["mm"] = {"base": None, "xflags": None, "npc": None, "shops": None,
                      "halfDays": None, "xflags_count": None, "_candidates": []}
 
+    # caughtFishFlags[5], the last check bitmap of the struct. It sits behind
+    # caughtChildFishWeight[20] and caughtAdultFishWeight[20] (save.h), and the
+    # code indexes it (BITMAP8_SET) and the adult weights (weight[len]); the
+    # child array shows mostly as its length byte. So: F indexed, F-0x14
+    # indexed, F-0x28 touched, past the MM half. One fit or nothing. Measured:
+    # 0x83D on v32.0 (adult 0x829, child 0x815, RespawnData at 0x844 right
+    # behind), 0x869 on dev-542a121; older builds have no such trio.
+    fish = None
+    mm_end = (out["mm"].get("base") or 0) + (out["mm"].get("xflags_count") or 0)
+    fish_cands = [f for f in range(mm_end + 0x40, size - 5)
+                  if idx.get(f, 0) >= 2 and idx.get(f - 0x14, 0) >= 1 and any_.get(f - 0x28, 0) >= 1]
+    if len(fish_cands) == 1:
+        fish = fish_cands[0]
+    out["oot"]["caughtFishFlags"] = fish
+    out["oot"]["_fish_candidates"] = fish_cands
+
     # The OoT half comes first in the struct, so the smallest fit is the one --
     # but only if every other fit falls inside the MM half (MmCustomSave has
     # npc[32] shops[4] and then arrays too, and on v32.0 that mimics the OoT
