@@ -9,7 +9,7 @@ P4 and P6) and a build on any machine other than the author's. Until those are
 closed, whoever downloads it should know what they are picking up.
 """
 
-__version__ = "0.1.1-beta"
+__version__ = "0.1.2-beta"
 
 # One line, shown next to the version wherever there is room for it.
 STAGE_NOTE = "early beta - single player is tested, multiworld is not"

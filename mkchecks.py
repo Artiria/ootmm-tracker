@@ -1276,6 +1276,20 @@ def main(argv=None):
                 print("           the check names and regions come from the v32.0")
                 print("           CSVs and can be wrong for this seed.")
 
+    # The shuffled entrances, read from the ROM like the placement (see
+    # entrances.py). Null without a ROM; an empty list on a seed that does not
+    # shuffle any (the fixed OoT<->MM link is in the list, flagged `link`).
+    entradas = None
+    if rom_bytes is not None:
+        try:
+            import entrances as entrances_mod
+            entradas = entrances_mod.resolve(rom_bytes)
+            reales = sum(1 for e in entradas if not e["link"])
+            print(f"entrances: {reales} shuffled in this seed" if reales
+                  else "entrances: none shuffled in this seed")
+        except Exception as ex:
+            print(f"entrances: could not be read ({type(ex).__name__}: {ex})")
+
     resolved = [c for c in checks if c["addr"] is not None]
     import collections
     bytarget = collections.Counter(c["target"] for c in checks)
@@ -1285,6 +1299,7 @@ def main(argv=None):
         "rom": args.rom,
         # where each row's item came from; null when generated without a ROM
         "placement": colocacion,
+        "entrances": entradas,
         # False when the ROM's item names disagree with data/gi.yml, i.e. the
         # seed is from another OoTMM version. Null when built without a ROM.
         "same_version_as_data": misma_version,

@@ -75,6 +75,7 @@ read from the ROM.
 | `mkchecks.py` | generates `checks.json` from `data/` and the ROM |
 | `placement.py` | what item is in each location and what it is called, read from the ROM |
 | `payload.py` | where OoTMM's own globals live (`gSharedCustomSave`, the other game's save buffer, the layout inside), read from the payload's MIPS code |
+| `entrances.py` | the seed's shuffled entrances, read from the ROM (`COMBO_VROM_ENTRANCES`) and labelled with `data/entrances.yml` |
 | `mkicons.py` | extracts the icons from the ROM |
 | `discover.py` | finds the ROM and spoiler, regenerates whatever is stale |
 | `overlay.py` / `overlay.html` | the tracker you actually look at |

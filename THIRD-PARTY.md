@@ -26,6 +26,7 @@ tracker" section of the README).
 | `data/scenes.yml` | `data/defs/scenes.yml` | scene name -> index |
 | `data/npc.yml` | `data/defs/npc.yml` | npc symbol -> index |
 | `data/gi.yml` | `data/defs/gi.yml` | symbolic id from the GI table (`placement.py`) |
+| `data/entrances.yml` | `data/defs/entrances.yml` | entrance names and areas (`entrances.py`) |
 | `data/ref/items.h` | `packages/generator/include/combo/data/items.h` | item ids, parsed at runtime |
 | `data/ref/mark.c` | `packages/generator/src/common/mark.c` | reference for the mark format |
 | `data/ref/xflags.c` | `packages/generator/src/common/xflags.c` | reference for the xflag format |

@@ -134,7 +134,7 @@ SCENE_CHECKS_SUSPICIOUS = 3
 # Each panel is also served on its own at /p/<name>, so the streamer captures
 # only the ones they want to show, wherever they want them. The names have to
 # match the data-panel attributes in overlay.html.
-PANELS = ["summary", "regions", "items", "activity", "remaining"]
+PANELS = ["summary", "regions", "items", "activity", "remaining", "entrances"]
 
 # The old Spanish names still answer. They are what any Browser Source set up
 # before the rename points at, and a renamed URL breaks an OBS scene silently:
@@ -504,6 +504,16 @@ class Tracker:
                     self.scene_alias[("mm", ids[a])] = ids[b]
         except Exception:
             pass
+        # Entrance shuffle: the ROM's overrides (mkchecks, entrances.py) and
+        # what the run has been seen to go through. See watch_entrance().
+        self.entrances = [e for e in (table.get("entrances") or []) if not e.get("link")]
+        self._ent_by_dst = collections.defaultdict(list)
+        self._ent_keys = set()
+        for e in self.entrances:
+            self._ent_by_dst[(e["dst_game"], e["dst"])].append(e)
+            self._ent_keys.add((e["game"], e["src"]))
+        self._entrance = {}          # game -> last save entrance value seen
+        self._entrances_found = {}   # (game, src) -> {"t", "sure"}
         self._rebuild_items()
         self.lock = threading.Lock()
         self.state = {
@@ -551,6 +561,10 @@ class Tracker:
             # every ROM_CHECK_SECONDS; null when there is no emulator to ask.
             "rom_open": None,
             "rom_mismatch": False,
+            # Entrance shuffle: how many entrances this seed moves, which have
+            # been gone through (newest first) and, for ?spoiler=full, all of
+            # them. Empty `all` means the seed does not shuffle entrances.
+            "entrances": {"total": len(self.entrances), "found": [], "all": self.entrances},
             # The seed is from another OoTMM version than data/. Addresses hold
             # —they come from the ROM— but every check NAME comes from the
             # v32.0 CSVs, so a bit can be marked under the wrong name and the
@@ -1017,6 +1031,36 @@ class Tracker:
         cands = custom_candidates(bases, active)
         return cands[0] if cands else None
 
+    def watch_entrance(self, game, value, prev_scene):
+        """The save's entrance changed: was it one of the shuffled ones?
+
+        `value` is what gSaveContext.entrance now holds -- the DESTINATION id,
+        because Play_TransitionDone resolves the override before the scene
+        loads. If it is a destination in the table, the player came through
+        the matching source. That is certain when the destination's own
+        vanilla entrance is itself shuffled (then nothing else lands here) and
+        merely probable otherwise; the scene the player was in before the
+        transition (`from_map` in entrances.yml) settles it when it can.
+        """
+        cands = self._ent_by_dst.get((game, value)) or (
+            self._ent_by_dst.get((game, value & ~0xF)) if game == "mm" and value < 0x10000 else None)
+        if not cands:
+            return
+        prev_name = self.scene_names.get((game, prev_scene)) if prev_scene is not None else None
+        for e in cands:
+            key = (e["game"], e["src"])
+            if key in self._entrances_found:
+                continue
+            sure = (e["dst_game"], e["dst"]) in self._ent_keys
+            fm = e.get("from_map") or ""
+            if not sure and fm and fm != "NONE" and prev_name:
+                sure = fm == f"{game.upper()}_{prev_name}"
+            elif not sure and (not fm or fm == "NONE"):
+                sure = prev_scene is None      # a spawn: nothing before it
+            self._entrances_found[key] = {"t": time.time(), "sure": bool(sure)}
+            print(f"[overlay] entrance: {e['from_area']} -> {e['to_area']}"
+                  + ("" if sure else " (probable)"))
+
     def with_live_flags(self, blob, game, scene_id):
         """The save-context block with the live scene's chest and collectible
         flags OR-ed onto its perm entry, so those checks count the moment they
@@ -1072,6 +1116,7 @@ class Tracker:
         # Where the player is, first: the live scene flags below hang off it.
         # The PlayState is the live answer; the save context is the fallback,
         # and it lags (see SCENE_OFF).
+        prev_scene = self._last_scene.get(active, (None, None))[0] if active else None
         scene, room, live = None, None, False
         got = self.play_cached(active) if active is not None else None
         if got is not None:
@@ -1133,6 +1178,20 @@ class Tracker:
         oot_blk = self.link.read_block(bases["oot"], 0x1500) if "oot" in bases else None
         if oot_blk is not None:
             items["oot"] = inventory.snapshot(oot_blk)
+
+        # The running game's save entrance: OoT keeps it at +0x00, MM at
+        # MmSave+0x00, eight bytes before the base this project uses.
+        if active in bases and self.entrances:
+            try:
+                if active == "oot":
+                    ent = struct.unpack_from(">i", oot_blk, 0)[0]
+                else:
+                    ent = struct.unpack(">i", self.link.read_block(bases["mm"] - 8, 4))[0]
+            except (ConnectionError, OSError, struct.error):
+                ent = None
+            if ent is not None and ent != self._entrance.get(active):
+                self._entrance[active] = ent
+                self.watch_entrance(active, ent & 0xFFFFFFFF, prev_scene)
         if "mm" in bases:
             # MM's clocks live in the shared custom save (mm.halfDays); the
             # block was read above for the checks, and the offset is the one
@@ -1333,6 +1392,13 @@ class Tracker:
             s["custom_ok"] = self._custom_ok
             s["custom_source"] = self._custom_source
             s["not_in_seed"] = self.not_in_seed
+            found = sorted(self._entrances_found.items(), key=lambda kv: -kv[1]["t"])
+            by_key = {(e["game"], e["src"]): e for e in self.entrances}
+            s["entrances"] = {
+                "total": len(self.entrances),
+                "found": [dict(by_key[k], **v) for k, v in found if k in by_key][:FEED_MAX],
+                "all": self.entrances,
+            }
             s["done_total"] = len(done)
             s["done_key_total"] = sum(1 for n in done if not self.junk.get(n, False))
             s["can_filter"] = self.hay_spoiler
