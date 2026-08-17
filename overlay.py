@@ -43,7 +43,6 @@ import time
 import urllib.parse
 import webbrowser
 
-import features
 import paths
 from version import STAGE_NOTE, __version__
 
@@ -147,10 +146,7 @@ SCENE_CHECKS_SUSPICIOUS = 3
 # Each panel is also served on its own at /p/<name>, so the streamer captures
 # only the ones they want to show, wherever they want them. The names have to
 # match the data-panel attributes in overlay.html.
-PANELS = ["summary", "regions", "items", "activity", "remaining", "entrances", "hints"]
-# FEATURE: souls -- the panel only exists with the switch on
-if features.ENABLE_SOULS:
-    PANELS.append("souls")
+PANELS = ["summary", "regions", "items", "activity", "remaining", "entrances", "hints", "souls"]
 
 # The hint ladder: what a hint about an item gives away at each level.
 HINT_LEVELS = {1: "game", 2: "region", 3: "check"}
@@ -551,14 +547,12 @@ class Tracker:
         # with the level reached, and checks whose item was revealed outright.
         self.hints = collections.OrderedDict()   # item -> {level, game, region, check, t}
         self.revealed = set()                    # "game:name"
-        # FEATURE: souls (features.ENABLE_SOULS). The soul bitmaps of the
-        # shared custom save and the ROM's catalogue (souls.py), read from
-        # checks.json's `souls` block. None with the switch off: nothing below
-        # then knows souls exist, and /state.json is what it always was.
-        self.souls = None
-        if features.ENABLE_SOULS:
-            import souls as souls_mod
-            self.souls = souls_mod.Decoder.from_table(table)
+        # The soul bitmaps of the shared custom save and the ROM's catalogue
+        # (souls.py), read from checks.json's `souls` block. The Decoder is
+        # harmless on a seed that shuffles no souls: it reports not-ok and the
+        # panel stays hidden.
+        import souls as souls_mod
+        self.souls = souls_mod.Decoder.from_table(table)
         self._rebuild_items()
         self.lock = threading.Lock()
         self.state = {
@@ -722,8 +716,8 @@ class Tracker:
         self.plan, self.regions = build_plan(
             self.table, self.is_active,
             (lambda n: self.junk.get(n, False)) if items else None)
-        # FEATURE: souls. The bitmaps sit past the last check of the custom
-        # save on some seeds (no pond fish placed, say): read that far.
+        # The soul bitmaps sit past the last check of the custom save on some
+        # seeds (no pond fish placed, say): read that far.
         if self.souls is not None and self.souls.ok and "custom" in self.plan:
             need = (self.souls.end + BLOCK_PAD + 3) // 4 * 4
             self.plan["custom"]["span"] = max(self.plan["custom"]["span"], need)
@@ -1608,12 +1602,11 @@ class Tracker:
             s["custom_bits"] = self._custom_bits
             s["custom_ok"] = self._custom_ok
             s["custom_source"] = self._custom_source
-            # FEATURE: souls -- the key exists only with the switch on. The
-            # bitmaps are read off the same custom-save block as the checks,
+            # The souls are read off the same custom-save block as the checks,
             # and only once that block validated: a guessed base would light
-            # souls up out of whatever bytes it landed on.
-            if self.souls is not None:
-                s["souls"] = self.souls.state(self._custom_blob, bool(self._custom_ok))
+            # souls up out of whatever bytes it landed on. On a seed with no
+            # souls the state reports not-ok and the panel stays hidden.
+            s["souls"] = self.souls.state(self._custom_blob, bool(self._custom_ok))
             s["not_in_seed"] = self.not_in_seed
             s["hints"] = self.hints_state(done)
             s["hint_items"] = self.hint_items(done)

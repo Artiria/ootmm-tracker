@@ -36,9 +36,6 @@ their bytes.
 
     python souls.py ROM.z64 [ROM.z64 ...]     what each ROM says
     python souls.py --corpus DIR              every .z64 in DIR, one line each
-
-Everything here sits behind features.ENABLE_SOULS until it has been seen
-working live.
 """
 
 import struct

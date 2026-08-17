@@ -7,7 +7,7 @@ straight into OBS: inventory, songs, masks, equipment, upgrades and checks.
 **No spoiler log needed.** What item sits in each location is read from the
 seed ROM itself.
 
-> **0.1.0-beta.** Single player is tested and measured; multiworld has had one
+> **0.1.2-beta.** Single player is tested and measured; multiworld has had one
 > session. Expect rough edges, and please report what you find.
 
 ## Install
@@ -65,9 +65,10 @@ anyway. `?spoiler=full` reveals what is in the checks you have not done.
 | ✅ Single player, OoT and MM, including crossing between them | tested against live saves and four RAM dumps |
 | ✅ 6,043 of 6,043 checks | every location in the pool has an address (stray fairies and pond fish included) |
 | ✅ Entrances gone through | read from the ROM, no spoiler; shown as you take them (`/p/entrances`), the whole list only with `?spoiler=full` |
+| ✅ Souls (soul shuffle) | every soul read from the ROM, grouped by kind; a compact per-kind summary by default, the full names on demand (`/p/souls`) |
 | ✅ Item placement and names read from the ROM | no spoiler log, on v32.0 and dev builds |
 | ✅ Addresses read from the ROM's own code | `gSharedCustomSave` and the other game's save buffer are found in the payload's code, so a build that moves them needs no update; measured over 42 seeds, six builds |
-| ✅ OBS overlay, one URL per panel | transparent background, five standalone panels |
+| ✅ OBS overlay, one URL per panel | transparent background, a standalone panel each |
 | ⚠️ Multiworld | tracks your own world; see below |
 | ❓ Emulators other than Project64-EM | not tried yet |
 | ❌ Logic and maps | not attempted — that is what The Last Tracker does |

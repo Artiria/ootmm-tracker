@@ -38,7 +38,6 @@ import re
 import struct
 import sys
 
-import features
 import paths
 import payload
 import rom
@@ -1291,12 +1290,10 @@ def main(argv=None):
         except Exception as ex:
             print(f"entrances: could not be read ({type(ex).__name__}: {ex})")
 
-    # FEATURE: souls (features.ENABLE_SOULS). The soul shuffle's catalogue and
-    # bitmaps, read from the ROM (souls.py, payload.souls_block). With the
-    # switch off the key is not even written, so checks.json is byte for byte
-    # what it was; with it on and no ROM it is null, like the entrances.
+    # The soul shuffle's catalogue and bitmaps, read from the ROM (souls.py,
+    # payload.souls_block). Null when built without a ROM, like the entrances.
     almas = None
-    if features.ENABLE_SOULS and rom_bytes is not None:
+    if rom_bytes is not None:
         try:
             import souls as souls_mod
             almas = souls_mod.build(rom_bytes, checks, located)
@@ -1340,8 +1337,8 @@ def main(argv=None):
         # spoiler and no MQ it is an empty list, meaning "every MQ row is
         # surplus"; without a spoiler it is null, meaning "unknown".
         "mq_scenes": sorted(mq_scenes) if mq_scenes is not None else None,
-        # FEATURE: souls -- only present with the switch on (see above)
-        **({"souls": almas} if features.ENABLE_SOULS else {}),
+        # the soul shuffle catalogue and bitmaps; null when built without a ROM
+        "souls": almas,
         "checks": checks,
     }
     (OUT / "checks.json").write_text(json.dumps(out, indent=1), encoding="utf-8")

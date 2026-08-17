@@ -540,7 +540,7 @@ def layout_complete(lay):
 
 
 # --------------------------------------------------------------------------
-# The soul bitmaps (souls.py; behind features.ENABLE_SOULS)
+# The soul bitmaps (souls.py)
 # --------------------------------------------------------------------------
 #
 #   u16 coins[4]; u16 ocarinaButtonMaskOot; u16 ocarinaButtonMaskMm;
