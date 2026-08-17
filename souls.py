@@ -377,7 +377,7 @@ class Decoder:
                         "badge": "", "value": "yes" if on else "no",
                     })
                 groups.append({"name": f"{GROUP_LABEL[t]} {lit}/{len(souls)}",
-                               "cols": self.COLS, "items": cells,
+                               "kind": t, "cols": self.COLS, "items": cells,
                                "have": lit, "total": len(souls)})
                 g_have += lit
                 g_total += len(souls)
