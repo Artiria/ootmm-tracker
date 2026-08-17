@@ -33,6 +33,7 @@ confidence().
 """
 
 import collections
+import hashlib
 import json
 import os
 import re
@@ -124,6 +125,17 @@ MM_SCENE_ALIASES = {
 # set), so a drop is either that transient or a different file being loaded,
 # and the second keeps looking that way. Three polls is a second and a half.
 DONE_DROP_POLLS = 3
+# The mirror image of the drop: a JUMP of many checks in one poll. Mid-crossing
+# the old bases can also read garbage instead of zeros -- 18 -> 126 -> 18 in
+# three polls, measured 17 Aug 2026 -- and believing the middle one fed 108
+# checks that did not exist and then re-announced the 18 real ones as new. A run
+# does not do twenty checks in half a second; a coop save or a savestate loading
+# does, and holds, so it goes through after the same DONE_DROP_POLLS.
+DONE_JUMP_MAX = 20
+# A feed entry whose check is not done any more this soon after appearing was a
+# transient, not progress: it is taken back. Nothing a run has done ever comes
+# undone, so nothing real is ever lost to this.
+FEED_RETRACT_SECONDS = 5.0
 
 # How many scene checks have to be done before "and not one xflag" counts as
 # evidence that the custom save base is wrong. Low, because the two kinds of
@@ -520,7 +532,21 @@ class Tracker:
             self._ent_by_dst[(e["dst_game"], e["dst"])].append(e)
             self._ent_keys.add((e["game"], e["src"]))
         self._entrance = {}          # game -> last save entrance value seen
+        self._entrance_pending = {}  # game -> (value seen once, scene before it)
+        self._game_mode = None       # gSaveContext.gameMode last read (GAME_MODE_OFF)
+        # Entrances the run has been seen to go through, and where they persist.
+        # This lives only in RAM otherwise, so restarting the tracker mid-run
+        # forgets every door already taken -- which is exactly what happened
+        # when the overlay was restarted on 17 Aug 2026 and the panel dropped to
+        # 0. The file is keyed by a fingerprint of THIS seed's shuffle, so a
+        # different seed never reads another's doors, and only src ids still in
+        # the table are loaded back.
         self._entrances_found = {}   # (game, src) -> {"t", "sure"}
+        self._ent_seen_fp = hashlib.sha1(
+            "|".join(sorted(f"{e['game']}:{e['src']}>{e['dst_game']}:{e['dst']}"
+                            for e in self.entrances)).encode()).hexdigest()[:12]
+        self._ent_seen_path = paths.user("entrances-seen.json")
+        self._load_entrances_seen()
         # Hints the streamer gave themselves (see hint() / reveal()): by item,
         # with the level reached, and checks whose item was revealed outright.
         self.hints = collections.OrderedDict()   # item -> {level, game, region, check, t}
@@ -1121,6 +1147,57 @@ class Tracker:
                 seen.add(it)
         return sorted(seen)
 
+    def _load_entrances_seen(self):
+        """Bring back the doors this seed has been seen to go through. Only
+        entries whose src is still in the table survive, so a stale file cannot
+        invent an entrance."""
+        try:
+            store = json.loads(open(self._ent_seen_path, encoding="utf-8").read())
+        except (OSError, ValueError):
+            return
+        for k, v in (store.get(self._ent_seen_fp) or {}).items():
+            game, _, src = k.partition(":")
+            try:
+                key = (game, int(src))
+            except ValueError:
+                continue
+            if key in self._ent_keys:
+                self._entrances_found[key] = {"t": v.get("t", 0.0), "sure": bool(v.get("sure"))}
+
+    def _save_entrances_seen(self):
+        """Write the found doors under this seed's fingerprint, leaving other
+        seeds' entries in the file untouched."""
+        try:
+            store = json.loads(open(self._ent_seen_path, encoding="utf-8").read())
+            if not isinstance(store, dict):
+                store = {}
+        except (OSError, ValueError):
+            store = {}
+        store[self._ent_seen_fp] = {
+            f"{g}:{s}": {"t": v["t"], "sure": v["sure"]}
+            for (g, s), v in self._entrances_found.items()
+        }
+        try:
+            tmp = self._ent_seen_path + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump(store, f)
+            os.replace(tmp, self._ent_seen_path)
+        except OSError as ex:
+            print(f"[overlay] could not save seen entrances: {ex}")
+
+    def game_mode(self, active, bases):
+        """gSaveContext.gameMode of the running game (see GAME_MODE_OFF), or
+        None when it cannot be read: no bases yet, or the link failed. None
+        never gates -- a link that answers nothing behaves as before instead
+        of freezing the page on a guess."""
+        if active is None or active not in bases:
+            return None
+        try:
+            raw = self.link.read_block(bases[active] + GAME_MODE_OFF[active], 4)
+            return struct.unpack(">i", raw)[0]
+        except (ConnectionError, OSError, struct.error):
+            return None
+
     def watch_entrance(self, game, value, prev_scene):
         """The save's entrance changed: was it one of the shuffled ones?
 
@@ -1148,6 +1225,7 @@ class Tracker:
             elif not sure and (not fm or fm == "NONE"):
                 sure = prev_scene is None      # a spawn: nothing before it
             self._entrances_found[key] = {"t": time.time(), "sure": bool(sure)}
+            self._save_entrances_seen()   # so a restart does not forget it
             print(f"[overlay] entrance: {e['from_area']} -> {e['to_area']}"
                   + ("" if sure else " (probable)"))
 
@@ -1196,6 +1274,14 @@ class Tracker:
         bases = self.locate_cached()
         # the active game is the one whose save sits low in RDRAM
         active = min(bases, key=lambda g: bases[g]) if bases else None
+
+        # Not in a run (title screen, file select, credits): stop here, before
+        # anything is read. What the RAM holds then is not this file, and every
+        # reader below -- checks, feed, entrances, souls -- would take it as
+        # progress. See GAME_MODE_OFF. None (could not read) never gates.
+        self._game_mode = self.game_mode(active, bases)
+        if self._game_mode not in (None, 0):
+            return None
 
         mejor = self.custom_base(bases, active)
         anchors = rebase(self.table, bases, active, mejor)
@@ -1281,9 +1367,22 @@ class Tracker:
                     ent = struct.unpack(">i", self.link.read_block(bases["mm"] - 8, 4))[0]
             except (ConnectionError, OSError, struct.error):
                 ent = None
+            # A new value counts once it has been read on two polls in a row.
+            # Mid-crossing the block can read zeros for a poll, and 0 is a real
+            # id (ENTR_DEKU_TREE_0), a shuffled destination in an ER seed: the
+            # very ghost the title screen produced (see GAME_MODE_OFF). The
+            # scene the player was in goes with the first sighting, because by
+            # the second the PlayState already shows the new one.
             if ent is not None and ent != self._entrance.get(active):
-                self._entrance[active] = ent
-                self.watch_entrance(active, ent & 0xFFFFFFFF, prev_scene)
+                pend = self._entrance_pending.get(active)
+                if pend is not None and pend[0] == ent:
+                    self._entrance[active] = ent
+                    self._entrance_pending.pop(active, None)
+                    self.watch_entrance(active, ent & 0xFFFFFFFF, pend[1])
+                else:
+                    self._entrance_pending[active] = (ent, prev_scene)
+            elif ent is not None:
+                self._entrance_pending.pop(active, None)
         if "mm" in bases:
             # MM's clocks live in the shared custom save (mm.halfDays); the
             # block was read above for the checks, and the offset is the one
@@ -1331,12 +1430,31 @@ class Tracker:
             self.user_icons = scan_user_icons()
             self._user_icons_stamp = stamp
 
-        active, done, conf, items, scene, room, live, setup_raw = self.poll_once()
+        polled = self.poll_once()
+        if polled is None:
+            # Title screen / file select / credits: the last picture stands
+            # (nothing is fed, no baseline is taken) and the page says why.
+            with self.lock:
+                s = self.state
+                s["ready"] = True
+                s["error"] = None
+                s["in_game"] = False
+                s["game_mode"] = GAME_MODES.get(self._game_mode, f"mode {self._game_mode}")
+                s["bases"] = {g: f"0x{b:08X}" for g, b in (self._bases or {}).items()}
+                s["uptime"] = int(time.time() - self._started)
+            return
+        active, done, conf, items, scene, room, live, setup_raw = polled
 
-        # A drop to less than half of what was done is not believed at once:
-        # see DONE_DROP_POLLS. Until it holds, last poll's picture stands and
-        # nothing is fed.
-        if self._seeded and self._done and len(done) < len(self._done) // 2:
+        # Nothing a run has done ever comes undone, so a poll where any check
+        # that WAS done is not any more is either a transient or another file
+        # being loaded -- and so is a jump of many at once. Neither is believed
+        # until it holds: see DONE_DROP_POLLS and DONE_JUMP_MAX. Until then last
+        # poll's picture stands and nothing is fed. (Counting was not enough: the
+        # simulated crossing went 18 -> 38, a different set entirely, and a
+        # threshold on the size let it through and then re-announced the 18.)
+        undone = (self._done - done) if self._seeded else set()
+        big_jump = self._seeded and len(done) - len(self._done) > DONE_JUMP_MAX
+        if undone or big_jump:
             self._drop_polls += 1
             if self._drop_polls < DONE_DROP_POLLS:
                 done = self._done
@@ -1479,6 +1597,8 @@ class Tracker:
             s = self.state
             s["ready"] = True
             s["error"] = None
+            s["in_game"] = True
+            s["game_mode"] = GAME_MODES.get(self._game_mode, "playing")
             s["active"] = active
             s["confidence"] = round(conf, 3)
             s["trusted"] = conf >= CONFIDENCE_MIN
@@ -1518,10 +1638,26 @@ class Tracker:
             }
             s["regions"] = regions
             s["regions_n"] = regions_n
-            s["items"] = {g: item_grid(g, v, self.icons, self.user_icons)
+            # FEATURE: fairy readiness. The Fairies group needs to know which
+            # Great Fairy rewards are already collected, which lives in `done`,
+            # not in the item snapshot. Computed once and passed to item_grid.
+            fairy_info = {
+                "rewards_done": {name: any(rc in done for rc in checks)
+                                 for name, checks in GF_REWARD.items()},
+                "clock_in_seed": CLOCK_STRAY_CHECK in self.check_game,
+                "clock_have": CLOCK_STRAY_CHECK in done,
+                "clock_reward_done": any(rc in done for rc in CLOCK_REWARD_CHECKS),
+            }
+            s["items"] = {g: item_grid(g, v, self.icons, self.user_icons,
+                                       fairy_info if g == "mm" else None)
                           for g, v in items.items()}
             s["scalars"] = {g: item_scalars(g, v) for g, v in items.items()}
-            s["feed"] = (feed + s["feed"])[:FEED_MAX]
+            # see FEED_RETRACT_SECONDS: what appeared moments ago and is not
+            # done any more was a transient poll, not progress
+            now = time.time()
+            kept = [f for f in s["feed"]
+                    if f["check"] in done or now - f["t"] > FEED_RETRACT_SECONDS]
+            s["feed"] = (feed + kept)[:FEED_MAX]
             s["pending_here"] = here
             s["uptime"] = int(time.time() - self._started)
 
@@ -1606,7 +1742,6 @@ GROUPS = [
     ("boss", "Bosses"),
     ("fairy", "Fairies"),
     ("owl", "Owls"),
-    ("clock", "Clocks"),
 ]
 
 # Which dungeon each `dungeonKeys` index is, and which ones have keys. They
@@ -1629,9 +1764,31 @@ BOSS_DUNGEONS = {
     "mm": [(0, "Woodfall"), (1, "Snowhead"), (2, "Great Bay"), (3, "Stone Tower")],
 }
 
-# MM's stray fairies, fifteen per dungeon.
-FAIRY_DUNGEONS = [(0, "Woodfall"), (1, "Snowhead"), (2, "Great Bay"), (3, "Stone Tower")]
+# MM's stray fairies, fifteen per dungeon, coloured like each dungeon.
+# strayFairies[] (DungeonSceneIndex) only has the four temples: Clock Town's
+# Great Fairy takes a single stray fairy, which is not held in this array but
+# tracked as its own check ("Clock Town Stray Fairy").
+FAIRY_DUNGEONS = [(0, "Woodfall", "#ff9ee0"), (1, "Snowhead", "#8ee6a2"),
+                  (2, "Great Bay", "#b48cff"), (3, "Stone Tower", "#e0c25a")]
 FAIRIES_PER_DUNGEON = 15
+
+# Each fountain's set is "ready to redeem" once complete AND its Great Fairy
+# reward has not been collected yet -- then the count goes orange. The reward is
+# a check, so once it is done the badge stops being orange (the game keeps the
+# count at 15 forever otherwise, see En_Elforg). Stone Tower's fairies restore
+# the Great Fairy in Ikana, so that is where its reward lives.
+GF_REWARD = {
+    "Woodfall": ("Woodfall Great Fairy",),
+    "Snowhead": ("Snowhead Great Fairy",),
+    "Great Bay": ("Great Bay Great Fairy",),
+    "Stone Tower": ("Ikana Great Fairy",),
+}
+# Clock Town's Great Fairy takes a single stray fairy, not a count of 15
+# (En_Elforg's Clock Town path sets a switch flag instead of bumping
+# strayFairies[]). So its tile is driven by the check, threshold 1.
+CLOCK_STRAY_CHECK = "Clock Town Stray Fairy"
+CLOCK_REWARD_CHECKS = ("Clock Town Great Fairy", "Clock Town Great Fairy Alt")
+CLOCK_FAIRY_COLOR = "#ff9d3c"
 
 # Width of each grid, in cells. Not an aesthetic choice: it is the shape of
 # the game's own screen, and it falls out of the data itself.
@@ -1646,7 +1803,7 @@ FAIRIES_PER_DUNGEON = 15
 #              medallions, warp songs, ocarina songs, and the stones with the
 #              rest.
 COLS = {"Items": 6, "Masks": 6, "Equipment": 3, "Progress": 6, "Upgrades": 4,
-        "Keys": 5, "Bosses": 6, "Fairies": 4, "Owls": 5, "Clocks": 6}
+        "Keys": 5, "Bosses": 6, "Fairies": 5, "Owls": 5}
 MM_MASK_FIRST = 24   # from here on, MM's item[] entries are masks
 
 # Icons: mkicons.py pulls them from the ROM and the sheet index is the item
@@ -1753,11 +1910,11 @@ GLYPH_BY_KEY = {
     "quest:Song of Soaring": ("soar", "#a9dcef"),
     # MM, area songs: the game's own colours (sQuestSongsPrim*)
     "quest:New Wave Bossa Nova": ("wave", "#6496ff"),
-    "quest:Elegy of Emptiness": ("note", "#ffa000"),
-    "quest:Oath to Order": ("note", "#ff64ff"),
-    "quest:Goron Lullaby": ("note", "#ff5028"),
-    "quest:Goron Lullaby (half)": ("note", "#ff5028"),
-    "quest:Song of Awakening": ("note", "#96ff64"),
+    "quest:Elegy of Emptiness": ("elegy", "#ffa000"),
+    "quest:Oath to Order": ("oath", "#ff64ff"),
+    "quest:Goron Lullaby": ("lullaby", "#ff5028"),
+    "quest:Goron Lullaby (half)": ("lullaby", "#ff5028"),
+    "quest:Song of Awakening": ("sprout", "#96ff64"),
     "quest:Bombers' Notebook": ("book", None),
     # owl statues and clocks: one glyph each, the label tells them apart
     **{f"owl:{n}": ("owl", "#d9b56a") for n in
@@ -2105,7 +2262,7 @@ def user_icon_for(user_icons, game, label, value):
     return None
 
 
-def item_grid(game, snap, icons=None, user_icons=None):
+def item_grid(game, snap, icons=None, user_icons=None, fairy=None):
     import inventory
 
     groups = collections.OrderedDict((label, []) for _, label in GROUPS)
@@ -2204,15 +2361,30 @@ def item_grid(game, snap, icons=None, user_icons=None):
         })
 
     if game == "mm":
+        fi = fairy or {}
+        rewards_done = fi.get("rewards_done", {})
         groups["Fairies"] = []
-        for idx, nombre in FAIRY_DUNGEONS:
+        for idx, nombre, col in FAIRY_DUNGEONS:
             n = snap.get(f"fairy:{idx}")
             n = n if isinstance(n, int) and 0 <= n <= FAIRIES_PER_DUNGEON else 0
+            rdone = rewards_done.get(nombre, False)
+            ready = n >= FAIRIES_PER_DUNGEON and not rdone
             groups["Fairies"].append({
-                "label": f"{nombre} fairies", "on": n > 0, "icon": None,
-                "glyph": "fairy", "color": "#ff9ee0",
-                "mask": None,
+                "label": f"{nombre} fairies", "on": n > 0 or rdone, "icon": None,
+                "glyph": "fairy", "color": col,
+                "mask": None, "ready": ready,
                 "badge": str(n) if n else "", "value": f"{n}/{FAIRIES_PER_DUNGEON}",
+            })
+        # Clock Town: a single stray fairy, driven by its check (there is no
+        # count in strayFairies[]). Only shown when the seed has that check.
+        if fi.get("clock_in_seed"):
+            have = fi.get("clock_have", False)
+            rdone = fi.get("clock_reward_done", False)
+            groups["Fairies"].append({
+                "label": "Clock Town fairy", "on": have or rdone, "icon": None,
+                "glyph": "fairy", "color": CLOCK_FAIRY_COLOR,
+                "mask": None, "ready": have and not rdone,
+                "badge": "1" if have else "", "value": f"{1 if have else 0}/1",
             })
 
     orden_prog = MM_PROGRESO_ORDER if game == "mm" else OOT_PROGRESO_ORDER
@@ -2220,7 +2392,7 @@ def item_grid(game, snap, icons=None, user_icons=None):
         pos = {n: i for i, n in enumerate(orden_prog)}
         groups["Progress"].sort(key=lambda it: pos.get(it["label"], len(pos)))
 
-    order = ["Items", "Masks", "Equipment", "Upgrades", "Keys", "Bosses", "Fairies", "Owls", "Clocks", "Progress"]
+    order = ["Items", "Masks", "Equipment", "Upgrades", "Keys", "Bosses", "Fairies", "Owls", "Progress"]
     return [
         {"name": k, "cols": COLS.get(k, 6), "items": groups[k]}
         for k in order
@@ -2259,6 +2431,21 @@ SCENE_OFF = {"oot": 0x66, "mm": 0x42}
 # Confirmed on both dumps: with the right offset MM reads 0, with the base
 # taken as MmSave it reads garbage.
 SETUP_OFF = {"oot": 0x1360, "mm": 0x3CAC - 0x08}
+
+# gSaveContext.gameMode: whether a game is being PLAYED at all. It sits right
+# before sceneSetupId in both games (zeldaret decomps, include/z64save.h):
+#   OoT  /* 0x135C */ s32 gameMode;   0 NORMAL, 1 TITLE_SCREEN, 2 FILE_SELECT, 3 END_CREDITS
+#   MM   /* 0x3CA8 */ s32 gameMode;   the same four, plus 4 OWL_SAVE
+# Only the running game's own context has it; the other game's buffer is a bare
+# save. Anything but 0 means the RAM is not a run: on the title screen and in
+# the file select it still holds whatever was there before, and every reader
+# took that as progress -- 213 checks done and an entrance "gone through" on a
+# file that had not even been created, measured 17 Aug 2026 (the tracker was
+# started from the main menu; entrance 0 there is a real id, ENTR_DEKU_TREE_0,
+# and it matched a shuffled destination). So while it is not 0 nothing is read,
+# the last picture stands, and the page says why.
+GAME_MODE_OFF = {"oot": 0x135C, "mm": 0x3CA8 - 0x08}
+GAME_MODES = {0: "playing", 1: "title screen", 2: "file select", 3: "credits", 4: "owl save"}
 
 
 # --------------------------------------------------------------------------

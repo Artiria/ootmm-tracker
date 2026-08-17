@@ -5,6 +5,7 @@ icons.png
 icons.json
 checks.json
 discover-cache.json
+entrances-seen.json
 
 # Iconos que cada uno ponga a mano (ver icons/README.md), menos el propio README
 icons/*

@@ -33,7 +33,7 @@ import time
 import urllib.request
 
 HERE = pathlib.Path(__file__).resolve().parent
-WATCH = ["ready", "waiting", "error", "active", "bases", "custom_base", "custom_source",
+WATCH = ["ready", "waiting", "error", "in_game", "game_mode", "active", "bases", "custom_base", "custom_source",
          "custom_ok", "custom_bits", "confidence", "trusted", "done_total", "done_by_game",
          "placement_ratio", "same_version_as_data", "rom_of_table", "custom_n", "items_n"]
 

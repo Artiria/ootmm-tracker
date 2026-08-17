@@ -260,6 +260,10 @@ body.chroma-none .card, body.chroma-green .card { backdrop-filter: blur(2px); }
   text-shadow: 0 0 3px #000, 0 0 3px #000;
   font-variant-numeric: tabular-nums;
 }
+/* A fountain's set is complete but its Great Fairy is not yet redeemed: the
+   count turns orange, so at a glance you see which reward is waiting to be
+   claimed. */
+.chip.ready .val { color: #ff9422; text-shadow: 0 0 5px rgba(255,148,34,.9), 0 0 3px #000; }
 
 /* -- feed y pendientes -------------------------------------------------- */
 ul.feed, ul.pend { list-style: none; margin: 0; padding: 0; }
@@ -1026,6 +1030,24 @@ const GLYPH = {
   /* a clock face: ring and two hands */
   clock: '<circle cx="12" cy="12" r="9.2"/><circle cx="12" cy="12" r="7" fill="rgba(0,0,0,.6)"/>'
        + '<path d="M12 6.4V12l3.8 2.4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>',
+  /* MM songs that used to fall back to the plain quaver, so the row reads as
+     evenly iconed as Bossa Nova. Song of Awakening: a sprout, for the Deku
+     flowers it blooms. */
+  sprout: '<path d="M12 21.5v-9" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>'
+        + '<path d="M12 13C9 13 5.5 11.3 4.6 7c4-.4 7 1.7 7.4 6z"/>'
+        + '<path d="M12 13c3 0 6.5-1.7 7.4-6-4-.4-7 1.7-7.4 6z"/>',
+  /* Goron Lullaby: three descending Z's, for sleep. */
+  lullaby: '<g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">'
+         + '<path d="M4.5 15h5l-5 5.5h5.5"/><path d="M12 9.5h4l-4 4.5h4"/><path d="M17.5 4.5h3l-3 3.5h3"/></g>',
+  /* Elegy of Emptiness: the statue's hollow face, triangular eyes and a set mouth. */
+  elegy: '<path d="M12 2.4c4.2 0 6.6 3.1 6.6 7.6 0 5.6-3 11.6-6.6 11.6S5.4 15.6 5.4 10c0-4.5 2.4-7.6 6.6-7.6z"/>'
+       + '<path d="M9 9.4l1.9 2.4H7.1z" fill="rgba(0,0,0,.62)"/><path d="M15 9.4l1.9 2.4h-3.8z" fill="rgba(0,0,0,.62)"/>'
+       + '<path d="M9.4 16.2h5.2" fill="none" stroke="rgba(0,0,0,.62)" stroke-width="1.5" stroke-linecap="round"/>',
+  /* Oath to Order: the four giants, four figures of rising height. */
+  oath: '<g fill="currentColor"><rect x="2.6" y="9" width="3.2" height="12.4" rx="1.6"/>'
+      + '<rect x="8.4" y="5.5" width="3.2" height="15.9" rx="1.6"/>'
+      + '<rect x="14.2" y="7.5" width="3.2" height="13.9" rx="1.6"/>'
+      + '<rect x="20" y="11" width="3.2" height="10.4" rx="1.6"/></g>',
 };
 
 /* Fallback silhouettes for MM's own masks, used when the archive cannot be
@@ -1094,8 +1116,10 @@ function cell(it, short) {
   } else if (it.label) {
     inner = `<span class="txt" style="--len:${short.length}">${esc(short)}</span>`;
   }  // no label means a free slot of the menu: left empty
-  const tip = esc(it.label) + (it.on && chipValue(it.value) ? ' · ' + esc(chipValue(it.value)) : '');
-  return `<span class="chip${on}"${it.label ? ` title="${tip}"` : ''}>${inner}${
+  const ready = it.ready ? ' ready' : '';
+  const tip = esc(it.label) + (it.on && chipValue(it.value) ? ' · ' + esc(chipValue(it.value)) : '')
+            + (it.ready ? ' · ready to redeem' : '');
+  return `<span class="chip${on}${ready}"${it.label ? ` title="${tip}"` : ''}>${inner}${
     it.badge ? `<span class="val">${esc(it.badge)}</span>` : ''}</span>`;
 }
 
@@ -1258,7 +1282,17 @@ function render(s) {
      are still meaningful" — which is exactly false when the custom anchor was
      thrown away and 5,207 checks stopped counting. The more severe one wins and
      mentions the other. */
-  if (!s.trusted && !s.waiting && !s.error) {
+  /* Not in a run yet: title screen, file select, credits. Nothing is read
+     there on purpose (the memory still holds whatever came before, and it used
+     to show up as progress), so the picture is frozen and this says so — it
+     goes before every other warning because it explains all of them. */
+  if (s.in_game === false && !s.waiting && !s.error) {
+    setHTML('alert', `<div class="warn"><b>Not in a game.</b>
+      The emulator is on the <b>${esc(s.game_mode || 'menu')}</b>: nothing is read
+      until a file is loaded, because until then the memory still holds whatever
+      was there before and it would show up here as progress. This page continues
+      on its own the moment the game starts.</div>`);
+  } else if (!s.trusted && !s.waiting && !s.error) {
     const otra = s.same_version_as_data === false
       ? ` This seed is also from a <b>different OoTMM version</b> than the bundled
           tables, which is the likely reason: a version that moves the struct puts
