@@ -31,15 +31,19 @@ data.
 """
 
 import mmap
+import os
 import struct
 import time
 
 MAGIC = b"BIZ1"
 MAX_BLOCK = 0x10000        # 64 KB per request; a normal poll fits in one or two
 
-# The name the Lua script and the tracker agree on. Fixed, so the script needs
-# no configuration; one tracker instance at a time (noted in the BACKLOG).
-DEFAULT_NAME = "OoTMMTracker"
+# The name the Lua script and the tracker agree on. Fixed in production, so the
+# script needs no configuration and one tracker talks to one emulator. The env
+# var only exists for tests: it lets a guard run its own overlay + fake against
+# a private name without colliding with a live session (the production Lua does
+# not read it, so never set it when a real BizHawk is loaded).
+DEFAULT_NAME = os.environ.get("OOTMM_MMF_NAME") or "OoTMMTracker"
 
 REQ_SIZE = 32
 SEQ_SIZE = 8
