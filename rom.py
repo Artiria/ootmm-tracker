@@ -16,6 +16,7 @@ Both blew up with a seed other than the development one, and both with the
 same symptom: `table 0x80b0f00 is compressed`.
 """
 
+import os
 import struct
 
 COMBO_META_ROM = 0x03FFF000   # combo/defs.h
@@ -82,6 +83,27 @@ def extra_dma(rom):
             f"the ROM has no extra DMA at {COMBO_META_ROM:#x} "
             f"({len(rom)} bytes); it does not look like an OoTMM seed")
     return struct.unpack_from(">II", rom, COMBO_META_ROM)
+
+
+def is_ootmm_file(path):
+    """Whether the .z64 at `path` is an OoTMM seed, read cheaply.
+
+    Only the 8-byte extra-DMA header is read, at a fixed offset well past the
+    end of any ordinary N64 ROM, so a normal game (Mario 64, OoT vanilla) or a
+    wrong file is ruled out without loading 64 MB. Used to decide, before ever
+    connecting, whether an EmuHawk that is running is even ours to touch.
+    """
+    try:
+        size = os.path.getsize(path)
+        if size < COMBO_META_ROM + 8:
+            return False
+        with open(path, "rb") as f:
+            f.seek(COMBO_META_ROM)
+            addr, count = struct.unpack(">II", f.read(8))
+    except (OSError, struct.error):
+        return False
+    # the header must name a table that actually fits inside the file
+    return 0 < addr < size and 0 < count < 0x10000 and addr + count * 16 <= size
 
 
 def read_extra_vrom(rom, vrom, length=None):

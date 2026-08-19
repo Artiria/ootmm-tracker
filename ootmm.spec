@@ -27,7 +27,8 @@ a = Analysis(
     datas=[
         ("data", "data"),                  # pool CSVs, scenes/npc/gi, ref/
         ("overlay.html", "."),             # the page the server serves
-        ("Scripts/tracker.lua", "Scripts"),  # goes into the emulator on first run
+        ("Scripts/tracker.lua", "Scripts"),  # Project64-EM, installed on first run
+        ("Scripts/tracker-bizhawk.lua", "Scripts"),  # BizHawk, loaded by hand in the Lua Console
         ("icons/README.md", "icons"),      # how to replace an icon by hand
         ("README.md", "."),
         # MIT requires the notice to travel with every copy, and `data/` above
@@ -41,6 +42,8 @@ a = Analysis(
         "mkicons",
         # imported lazily inside the Tracker, so name it here to travel
         "souls",
+        # imported lazily when waiting for BizHawk (shared-memory transport)
+        "mmflink",
     ],
     hookspath=[],
     runtime_hooks=[],

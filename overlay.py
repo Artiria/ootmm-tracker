@@ -62,6 +62,16 @@ FEED_MAX = 40
 # you sit on the title screen.
 PLAY_RESCAN_SECONDS = 10.0
 
+# And how many polls in a row the PlayState has to fail to validate before
+# that scan is even considered. A scene transition rewrites the PlayState for
+# exactly one poll, and with the cooldown alone every zone change that came
+# more than ten seconds after the last one paid for a full 8 MB read. Over
+# P64-EM that went unnoticed; over BizHawk, where every request is served
+# between frames, it froze the game for seconds at every door (seen live,
+# 19 Aug 2026: six zone changes, six scans). The game state is allocated once
+# per boot, so a real move is one that stays.
+PLAY_MISSES_BEFORE_SCAN = 6
+
 # Same idea for the custom save window: it is one read plus a few hundred local
 # scorings, so it must not run on every poll while a run has no progress yet.
 CUSTOM_RESCAN_SECONDS = 10.0
@@ -203,9 +213,10 @@ JUNK_PATTERNS = [
     r"^(Lon Lon )?Milk" + JUEGO + r"$",
     r"^(Red|Green|Blue) Potion" + JUEGO + r"$",
     # A Piece of Heart is a quarter of a heart and nothing else depends on it.
-    # `Heart Container` is NOT here: that is a whole heart. Neither is
-    # `Recovery Heart`, which is already filler two patterns up.
+    # `Heart Container` joined it on 18 Aug (his call; on 16 Aug it had stayed
+    # out for being a whole heart). `Recovery Heart` is already filler above.
     r"^Piece of Heart" + JUEGO + r"$",
+    r"^Heart Container" + JUEGO + r"$",
     # Tingle's maps: nothing depends on them, and on a seed that shuffles his
     # shop the six of them sat as pending "key" checks in Clock Town South.
     # The ROM writes "World Map (Clock Town)", the spoiler "World Map of Clock
@@ -641,6 +652,7 @@ class Tracker:
         self._bases = None
         self._play = {}          # game -> PlayState address, cached like the bases
         self._play_retry = {}    # game -> when the next full scan is allowed
+        self._play_misses = {}   # game -> polls in a row it failed to validate
         self._last_scene = {}    # game -> last (scene, room) the PlayState gave
         # inactive game -> measured distance from its buffer to the custom save.
         # Keyed by the INACTIVE game on purpose: the block hangs off whichever
@@ -919,9 +931,16 @@ class Tracker:
             got = ootmm.read_play(self.link, game, addr)
             if got is not None:
                 self._play[game] = addr
+                self._play_misses[game] = 0
                 return got
         self._play.pop(game, None)
 
+        # One miss is a scene transition, not a moved game state: the caller
+        # holds the last reading and the next poll validates again. Only a
+        # miss that persists earns the scan (PLAY_MISSES_BEFORE_SCAN).
+        self._play_misses[game] = self._play_misses.get(game, 0) + 1
+        if self._play_misses[game] < PLAY_MISSES_BEFORE_SCAN:
+            return None
         if time.time() < self._play_retry.get(game, 0):
             return None
         self._play_retry[game] = time.time() + PLAY_RESCAN_SECONDS
@@ -1653,6 +1672,10 @@ class Tracker:
             s["feed"] = (feed + kept)[:FEED_MAX]
             s["pending_here"] = here
             s["uptime"] = int(time.time() - self._started)
+            # only the BizHawk link keeps them: what a request costs the
+            # emulator, so the per-frame budget is set from numbers, not guesses
+            if hasattr(self.link, "stats"):
+                s["link"] = self.link.stats()
 
     def attach(self, link):
         """The emulator side connected: start polling through it."""

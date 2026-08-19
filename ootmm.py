@@ -60,6 +60,18 @@ OSMEMSIZE_OK = (0x00400000, 0x00800000)
 
 FMT = {1: "B", 2: "H", 4: "I"}
 
+BIZHAWK_HELP = "force BizHawk (shared memory) instead of waiting for either"
+P64EM_HELP = "force Project64-EM (socket) instead of waiting for either"
+
+
+def emu_of(args):
+    """Which protocol to expect: an explicit override, else auto-detect."""
+    if getattr(args, "bizhawk", False):
+        return "bizhawk"
+    if getattr(args, "p64em", False):
+        return "p64em"
+    return "auto"
+
 # Bases located by signature (ZELDAZ / ZELDA3) on OoTMM v32.0 and confirmed by
 # activity: the "live" ones concentrate the changes, the others are static
 # copies. Tied to the generator version; revalidate if it changes.
@@ -327,21 +339,36 @@ class Link:
         return bytes(out)
 
 
-def listen_for_lua(host, port, label):
+def listen_for_lua(host, port, label, on_listening=None):
+    """Wait for the emulator's script to connect; return its socket.
+
+    `on_listening` runs once the port is bound and before accept(): the hook
+    that starts EmuHawk (which connects in its own constructor and dies if
+    refused, so it must not be started a moment earlier) or just prints how to
+    load the script. The emulator is told apart later, by handshake().
+    """
     ls = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     ls.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     ls.bind((host, port))
     ls.listen(1)
     print(f"[{label}] listening on {host}:{port}")
-    print(f"[{label}] start tracker.lua in P64-EM (File > Lua Scripts...)\n")
+    if on_listening is not None:
+        on_listening()
+    else:
+        print(f"[{label}] load tracker.lua in Project64-EM (File > Lua Scripts...)\n")
     sock, _ = ls.accept()
     sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
     ls.close()
-    print(f"[{label}] Lua script connected")
+    print(f"[{label}] script connected")
     return sock
 
 
 def handshake(sock, label):
+    """PING to confirm this is tracker.lua, the Project64-EM socket script."""
+    return p64_handshake(sock, label)
+
+
+def p64_handshake(sock, label):
     """PING to confirm this is tracker.lua and pin down the byte order."""
     sock.sendall(struct.pack("B", OP_PING))
     raw = b""
@@ -370,6 +397,113 @@ def handshake(sock, label):
         print(f"[{label}] protocol is {name} endian, but osMemSize = 0x{size:08X} (unexpected)")
         print(f"[{label}] the ROM may not be running yet\n")
     return link
+
+
+def wait_for_emulator(host, port, label, forced="auto"):
+    """Return a memory link to whichever emulator the user drives.
+
+    Project64-EM's tracker.lua connects a socket; BizHawk's tracker-bizhawk.lua
+    answers over shared memory (no socket, no relaunch -- the same two-step
+    flow as Project64). In `auto` both are waited on at once and the first to
+    answer wins; an explicit emulator waits on only its own. Whichever the user
+    opens, the tracker adapts -- and it opens nothing itself.
+    """
+    import mmflink
+
+    found = {}
+    ev = threading.Event()
+
+    def via_socket():
+        ls = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        ls.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        try:
+            ls.bind((host, port))
+        except OSError as ex:
+            if not ev.is_set():
+                print(f"[{label}] cannot listen on {host}:{port} ({ex})")
+            return
+        ls.listen(1)
+        ls.settimeout(0.5)
+        while not ev.is_set():
+            try:
+                sock, _ = ls.accept()
+            except socket.timeout:
+                continue
+            except OSError:
+                break
+            sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+            try:
+                link = p64_handshake(sock, label)
+            except SystemExit:
+                sock.close()
+                continue
+            if not ev.is_set():
+                found["link"] = link
+                ev.set()
+            break
+        ls.close()
+
+    def via_mmf():
+        link = mmflink.MmfLink(mmflink.DEFAULT_NAME)
+        while not ev.is_set():
+            try:
+                if link.ping(timeout=0.5):
+                    size = link.read(mmflink.OSMEMSIZE_ADDR, 4)
+                    if size in mmflink.OSMEMSIZE_OK:
+                        print(f"[{label}] BizHawk (shared memory), RDRAM "
+                              f"{size // (1024 * 1024)} MB - memory reads OK\n")
+                    else:
+                        print(f"[{label}] BizHawk (shared memory), osMemSize = "
+                              f"0x{size:08X} (the ROM may still be booting)\n")
+                    if not ev.is_set():
+                        found["link"] = link
+                        ev.set()
+                    return
+            except mmflink.MmfDown:
+                pass
+            time.sleep(0.2)
+        link.close()
+
+    threads = []
+    if forced in ("auto", "p64em"):
+        threads.append(threading.Thread(target=via_socket, daemon=True))
+    if forced in ("auto", "bizhawk"):
+        threads.append(threading.Thread(target=via_mmf, daemon=True))
+    for t in threads:
+        t.start()
+
+    print(f"[{label}] waiting for an emulator, whichever you open:")
+    if forced in ("auto", "p64em"):
+        print(f"[{label}]   Project64-EM: File > Lua Scripts... > tracker.lua")
+    if forced in ("auto", "bizhawk"):
+        print(f"[{label}]   BizHawk: open EmuHawk with the seed, then Tools > Lua Console >")
+        print(f"[{label}]            Open Script > {bizhawk_script_path()}")
+    print()
+
+    ev.wait()
+    return found["link"]
+
+
+def bizhawk_script_path():
+    """A path to tracker-bizhawk.lua the user can point BizHawk's Lua Console
+    at. From source it is the project file; from the exe the bundled copy lives
+    in a temp folder that vanishes on exit, so it is copied to the user folder
+    (which the console can reach) and named there."""
+    import shutil
+
+    import paths
+
+    src = paths.res("Scripts", "tracker-bizhawk.lua")
+    if not getattr(paths, "FROZEN", False):
+        return src
+    dst = paths.user("Scripts", "tracker-bizhawk.lua")
+    try:
+        os.makedirs(os.path.dirname(dst), exist_ok=True)
+        if not os.path.isfile(dst) or open(dst, "rb").read() != open(src, "rb").read():
+            shutil.copyfile(src, dst)
+    except OSError:
+        return src
+    return dst
 
 
 # --------------------------------------------------------------------------
@@ -1005,6 +1139,7 @@ def cmd_overlay(args):
     # With no --rom or --spoiler they are worked out from what the emulator
     # already knows, and the tables get regenerated if they are another seed's.
     spoiler_path = args.spoiler
+    rom_path = args.rom
     if not args.no_auto:
         try:
             import discover
@@ -1037,13 +1172,19 @@ def cmd_overlay(args):
     # saying why.
     tracker = overlay.Tracker(None, table, spoiler=spoiler, locate=locate_saves)
 
+    # Wait for whichever emulator the user opens and attach its link. The
+    # tracker opens nothing and touches nothing: Project64 connects its Lua on
+    # a socket, BizHawk answers over shared memory, and in auto both are
+    # watched at once (see wait_for_emulator).
+    forced = emu_of(args)
+
     def wait_for_lua():
         try:
-            sock = listen_for_lua(args.host, args.port, "overlay")
-            tracker.attach(handshake(sock, "overlay"))
+            link = wait_for_emulator(args.host, args.port, "overlay", forced)
+            tracker.attach(link)
         except SystemExit as ex:
-            # handshake reports with sys.exit, which from a thread kills only
-            # the thread: without catching it the page would wait for ever.
+            # a handshake may report with sys.exit, which from a thread kills
+            # only the thread: without catching it the page would wait for ever.
             tracker.fail(str(ex.code) if ex.code else "the Lua handshake failed")
         except Exception as ex:
             tracker.fail(f"{type(ex).__name__}: {ex}")
@@ -1432,6 +1573,8 @@ def main():
     o.add_argument("--no-window", action="store_true", help="do not open a window, just serve")
     o.add_argument("--host", default="127.0.0.1")
     o.add_argument("--port", type=int, default=13251, help="port tracker.lua connects to")
+    o.add_argument("--bizhawk", action="store_true", help=BIZHAWK_HELP)
+    o.add_argument("--p64em", action="store_true", help=P64EM_HELP)
     o.set_defaults(func=cmd_overlay)
 
     n = sub.add_parser("find", help="search a dump for a signature")
