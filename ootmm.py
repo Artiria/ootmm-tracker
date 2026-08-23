@@ -484,35 +484,51 @@ def wait_for_emulator(host, port, label, forced="auto"):
     return found["link"]
 
 
-def bizhawk_script_path():
-    """A path to tracker-bizhawk.lua the user can point BizHawk's Lua Console
-    at. From source it is the project file. From the exe the bundled copy
-    lives in a temp folder that vanishes on exit, so it is kept next to the
-    exe: the folder the zip was unpacked into, where the zip already put one,
-    and the one place everybody can find in a file dialog. A missing or
-    older copy there is rewritten; only if that folder cannot be written
-    (a read-only install) does it fall back to the user folder."""
+EMU_SCRIPTS = ("tracker.lua", "tracker-bizhawk.lua")
+
+
+def scripts_dir():
+    """The folder holding both emulator scripts the user may need to load by
+    hand: `tracker.lua` (Project64-EM, over a socket) and `tracker-bizhawk.lua`
+    (BizHawk, over shared memory). They are different files and not
+    interchangeable -- each speaks an API the other emulator does not have.
+
+    From source that is the project's `Scripts/`. From the exe the bundled
+    copies live in a temp folder that vanishes on exit, so both are kept
+    current in a `Scripts/` folder beside the exe -- where the zip already
+    unpacked them, and a folder everyone can reach in a file dialog. A stale
+    copy is rewritten; a read-only install falls back to the user folder.
+
+    (Project64-EM's copy is also auto-installed into the emulator's own script
+    folder by discover.ensure_lua; this visible copy is the fallback for the
+    installs auto-detection does not find.)"""
     import shutil
 
     import paths
 
-    src = paths.res("Scripts", "tracker-bizhawk.lua")
+    src_dir = paths.res("Scripts")
     if not getattr(paths, "FROZEN", False):
-        return src
-    want = open(src, "rb").read()
-    beside = os.path.join(os.path.dirname(os.path.abspath(sys.executable)), "tracker-bizhawk.lua")
-    for dst in (beside, paths.user("Scripts", "tracker-bizhawk.lua")):
+        return src_dir
+    for base in (os.path.dirname(os.path.abspath(sys.executable)), paths.user()):
+        dst_dir = os.path.join(base, "Scripts")
         try:
-            if os.path.isfile(dst):
-                if open(dst, "rb").read() == want:
-                    return dst
-                print(f"[auto] {dst} was from another version; rewritten")
-            os.makedirs(os.path.dirname(dst), exist_ok=True)
-            shutil.copyfile(src, dst)
-            return dst
+            os.makedirs(dst_dir, exist_ok=True)
+            for name in EMU_SCRIPTS:
+                src, dst = os.path.join(src_dir, name), os.path.join(dst_dir, name)
+                if os.path.isfile(dst) and open(dst, "rb").read() == open(src, "rb").read():
+                    continue
+                if os.path.isfile(dst):
+                    print(f"[auto] {dst} was from another version; rewritten")
+                shutil.copyfile(src, dst)
+            return dst_dir
         except OSError:
             continue
-    return src
+    return src_dir
+
+
+def bizhawk_script_path():
+    """The tracker-bizhawk.lua to point BizHawk's Lua Console at."""
+    return os.path.join(scripts_dir(), "tracker-bizhawk.lua")
 
 
 # --------------------------------------------------------------------------
@@ -1165,6 +1181,14 @@ def cmd_overlay(args):
             discover.ensure_lua()
         except Exception as ex:
             print(f"[auto] auto-detection failed ({ex}); carrying on with whatever is there")
+
+    # Both emulator scripts kept current in a Scripts/ folder a file dialog can
+    # reach (tracker.lua also auto-installs into Project64-EM's own folder
+    # above; this visible copy is what BizHawk and non-standard installs load).
+    try:
+        print(f"[overlay] emulator scripts: {scripts_dir()}")
+    except Exception as ex:
+        print(f"[overlay] could not lay out the emulator scripts ({ex})")
 
     table = overlay.load_table()
     resolved = sum(1 for c in table["checks"] if c["addr"] is not None)

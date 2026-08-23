@@ -51,14 +51,16 @@ SPEC = ROOT / "ootmm.spec"
 
 # Travel next to the exe in the zip, as {source: name in the zip}. MIT wants
 # its notice with every copy, and `data/` is OoTMM's; both are inside the exe
-# too (see ootmm.spec), but the zip is what people open first. The BizHawk
-# script goes in because its Lua Console opens a *file*: the folder the zip
-# was unpacked into is the one place everyone can find, and the exe keeps the
-# copy there current (see ootmm.bizhawk_script_path).
+# too (see ootmm.spec), but the zip is what people open first. Both emulator
+# scripts go in a Scripts/ folder because each emulator's Lua console opens a
+# *file*: tracker.lua for Project64-EM, tracker-bizhawk.lua for BizHawk. They
+# are different files (socket vs shared memory), and the exe keeps this folder
+# current on startup (see ootmm.scripts_dir).
 SHIPPED = {
     "LICENSE": "LICENSE",
     "THIRD-PARTY.md": "THIRD-PARTY.md",
-    "Scripts/tracker-bizhawk.lua": "tracker-bizhawk.lua",
+    "Scripts/tracker.lua": "Scripts/tracker.lua",
+    "Scripts/tracker-bizhawk.lua": "Scripts/tracker-bizhawk.lua",
 }
 
 # Certum issues its open-source certificates to a natural person with this

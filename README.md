@@ -19,11 +19,14 @@ seed ROM itself.
 3. With the ROM loaded in your emulator, run the tracker's script. It waits
    for whichever you open:
    - **Project64-EM**: **File > Lua Scripts…**, and run `tracker.lua`. The
-     tracker has already put it in the emulator's `Scripts` folder for you.
+     tracker has already put it in the emulator's `Scripts` folder for you (and
+     there is a copy in the `Scripts` folder next to the exe if it hasn't).
    - **BizHawk**: **Tools > Lua Console > Script > Open Script…**, and pick
-     `tracker-bizhawk.lua` — it is in the folder you unzipped, next to the
-     exe. It talks over shared memory: no restart, nothing to set up.
+     `tracker-bizhawk.lua` from the `Scripts` folder next to the exe. It talks
+     over shared memory: no restart, nothing to set up.
 
+   The two scripts are **not** interchangeable — `tracker.lua` is for
+   Project64-EM, `tracker-bizhawk.lua` for BizHawk; both are in `Scripts`.
    Either order works. If you restart the tracker and the page stays on
    *waiting*, load the script again.
 
