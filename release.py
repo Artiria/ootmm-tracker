@@ -358,8 +358,10 @@ def write_sums(zpath):
     sums = zpath.with_suffix(".sha256")
     lines = [f"{sha256(p)}  {p.name}" for p in (zpath, EXE)]
     sums.write_text("\n".join(lines) + "\n", encoding="ascii")
-    for line in lines:
-        say(f"sha256 {line}")
+    # The "built ... bytes" line above is the exe before the signature was
+    # appended; these are the sizes the release notes should quote.
+    for line, p in zip(lines, (zpath, EXE)):
+        say(f"sha256 {line}  ({p.stat().st_size:,} bytes)")
     say(f"wrote {sums.name}")
 
 
