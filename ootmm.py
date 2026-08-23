@@ -486,9 +486,12 @@ def wait_for_emulator(host, port, label, forced="auto"):
 
 def bizhawk_script_path():
     """A path to tracker-bizhawk.lua the user can point BizHawk's Lua Console
-    at. From source it is the project file; from the exe the bundled copy lives
-    in a temp folder that vanishes on exit, so it is copied to the user folder
-    (which the console can reach) and named there."""
+    at. From source it is the project file. From the exe the bundled copy
+    lives in a temp folder that vanishes on exit, so it is kept next to the
+    exe: the folder the zip was unpacked into, where the zip already put one,
+    and the one place everybody can find in a file dialog. A missing or
+    older copy there is rewritten; only if that folder cannot be written
+    (a read-only install) does it fall back to the user folder."""
     import shutil
 
     import paths
@@ -496,14 +499,20 @@ def bizhawk_script_path():
     src = paths.res("Scripts", "tracker-bizhawk.lua")
     if not getattr(paths, "FROZEN", False):
         return src
-    dst = paths.user("Scripts", "tracker-bizhawk.lua")
-    try:
-        os.makedirs(os.path.dirname(dst), exist_ok=True)
-        if not os.path.isfile(dst) or open(dst, "rb").read() != open(src, "rb").read():
+    want = open(src, "rb").read()
+    beside = os.path.join(os.path.dirname(os.path.abspath(sys.executable)), "tracker-bizhawk.lua")
+    for dst in (beside, paths.user("Scripts", "tracker-bizhawk.lua")):
+        try:
+            if os.path.isfile(dst):
+                if open(dst, "rb").read() == want:
+                    return dst
+                print(f"[auto] {dst} was from another version; rewritten")
+            os.makedirs(os.path.dirname(dst), exist_ok=True)
             shutil.copyfile(src, dst)
-    except OSError:
-        return src
-    return dst
+            return dst
+        except OSError:
+            continue
+    return src
 
 
 # --------------------------------------------------------------------------
@@ -1668,6 +1677,15 @@ def _run():
     there it just exits.
     """
     import paths
+
+    # Line-buffered console even when it is a file or a pipe: whoever runs
+    # this from a script and kills it keeps the last lines, which are the
+    # ones that say why. (The exe ignores PYTHONUNBUFFERED.)
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(line_buffering=True)
+        except (AttributeError, ValueError):
+            pass
 
     def hold(code):
         if not paths.FROZEN:

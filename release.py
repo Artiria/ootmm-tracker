@@ -49,10 +49,17 @@ DIST = ROOT / "dist"
 EXE = DIST / "ootmm-tracker.exe"
 SPEC = ROOT / "ootmm.spec"
 
-# Travel next to the exe in the zip. MIT wants its notice with every copy, and
-# `data/` is OoTMM's; both are inside the exe too (see ootmm.spec), but the
-# zip is what people open first.
-SHIPPED = ["LICENSE", "THIRD-PARTY.md"]
+# Travel next to the exe in the zip, as {source: name in the zip}. MIT wants
+# its notice with every copy, and `data/` is OoTMM's; both are inside the exe
+# too (see ootmm.spec), but the zip is what people open first. The BizHawk
+# script goes in because its Lua Console opens a *file*: the folder the zip
+# was unpacked into is the one place everyone can find, and the exe keeps the
+# copy there current (see ootmm.bizhawk_script_path).
+SHIPPED = {
+    "LICENSE": "LICENSE",
+    "THIRD-PARTY.md": "THIRD-PARTY.md",
+    "Scripts/tracker-bizhawk.lua": "tracker-bizhawk.lua",
+}
 
 # Certum issues its open-source certificates to a natural person with this
 # fixed prefix in the subject: "Open Source Developer, <name>".
@@ -333,8 +340,8 @@ def package(ver, signed):
     suffix = "" if signed else "-unsigned"
     zpath = DIST / f"ootmm-tracker-{ver}-win64{suffix}.zip"
     with zipfile.ZipFile(zpath, "w", zipfile.ZIP_DEFLATED) as z:
-        for name in SHIPPED:
-            z.write(ROOT / name, name)
+        for src, name in SHIPPED.items():
+            z.write(ROOT / src, name)
         z.write(EXE, EXE.name)
     with zipfile.ZipFile(zpath) as z:
         bad = z.testzip()
@@ -342,7 +349,7 @@ def package(ver, signed):
             die(f"zip is corrupt at {bad}")
         names = z.namelist()
         inside, detail = pe_signature(z.read(EXE.name))
-    missing = [n for n in SHIPPED + [EXE.name] if n not in names]
+    missing = [n for n in list(SHIPPED.values()) + [EXE.name] if n not in names]
     if missing:
         die(f"zip is missing {missing}")
     if inside != signed:

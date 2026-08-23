@@ -160,7 +160,9 @@ builds the `.exe` with the spec above and then, in this order: signs it, has
 PE header itself to confirm a certificate table is there, runs the signed exe
 once with `--help` (a one-file build finds its archive by scanning back from
 the end of the file, which is exactly where the signature goes), zips it with
-`LICENSE` and `THIRD-PARTY.md`, reopens the zip to check that the exe inside
+`LICENSE`, `THIRD-PARTY.md` and `tracker-bizhawk.lua` (BizHawk's Lua Console
+opens a file, so the script ships next to the exe and the exe keeps that copy
+current), reopens the zip to check that the exe inside
 is the signed one, and writes the SHA-256 of both next to it. Any of those
 failing stops the release; in particular **no certificate means no zip**, not
 an unsigned zip that looks finished. `--unsigned` is the explicit way to
