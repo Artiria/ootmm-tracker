@@ -1,8 +1,9 @@
 # OoTMM Autotracker
 
 An autotracker for the [OoTMM](https://github.com/OoTMM/OoTMM) randomizer.
-It reads your run from Project64-EM and shows it as an overlay you can drop
-straight into OBS: inventory, songs, masks, equipment, upgrades and checks.
+It reads your run from Project64-EM or BizHawk and shows it as an overlay you
+can drop straight into OBS: inventory, songs, masks, equipment, upgrades and
+checks.
 
 **No spoiler log needed.** What item sits in each location is read from the
 seed ROM itself.
@@ -15,9 +16,17 @@ seed ROM itself.
 1. **[Download the latest release](../../releases/latest)** and unzip it.
 2. Double-click `ootmm-tracker.exe`. It finds your ROM, builds its tables and
    icons from it the first time, and opens the overlay.
-3. In Project64-EM, with the ROM loaded: **File > Lua Scripts…**, and run
-   `tracker.lua`. The tracker has already put it in the emulator's `Scripts`
-   folder for you. Either order works.
+3. With the ROM loaded in your emulator, run the tracker's script. It waits
+   for whichever you open:
+   - **Project64-EM**: **File > Lua Scripts…**, and run `tracker.lua`. The
+     tracker has already put it in the emulator's `Scripts` folder for you.
+   - **BizHawk**: **Tools > Lua Console > Script > Open Script…**, and pick
+     `tracker-bizhawk.lua` from `%LOCALAPPDATA%\OoTMM-Tracker\Scripts\` — the
+     tracker puts it there and prints the path. It talks over shared memory:
+     no restart, nothing to set up.
+
+   Either order works. If you restart the tracker and the page stays on
+   *waiting*, load the script again.
 
 That is all. There is nothing to configure and no paths to type in.
 
@@ -26,11 +35,14 @@ That is all. There is nothing to configure and no paths to type in.
 > the previous seed's tables — every item it names is then from the wrong game.
 > It now says so on the page when it notices, but restarting is the fix.
 
-> **Windows will warn you.** The `.exe` is not signed, so SmartScreen shows
-> *"unknown publisher"*: click **More info → Run anyway**. Some browsers also
-> refuse the download, which is why the release ships a `.zip`. Every release
-> lists the file's SHA-256 so you can check what you got, and if you would
-> rather not trust a binary at all, running
+> **Windows may still warn you.** The `.exe` is signed as *Open Source
+> Developer Juan Ramos Ruiz* (a Certum certificate), so Windows names the
+> publisher instead of showing *unknown* — but SmartScreen builds trust from
+> download counts, and a fresh release can still show *"Windows protected your
+> PC"*: click **More info → Run anyway**. Some browsers also refuse `.exe`
+> downloads, which is why the release ships a `.zip`. Every release lists the
+> file's SHA-256 so you can check what you got, and if you would rather not
+> trust a binary at all, running
 > [from source](DEVELOPING.md#running-from-source) does exactly the same thing.
 
 Anything the tracker generates goes to `%LOCALAPPDATA%\OoTMM-Tracker\`, not
@@ -70,7 +82,8 @@ anyway. `?spoiler=full` reveals what is in the checks you have not done.
 | ✅ Addresses read from the ROM's own code | `gSharedCustomSave` and the other game's save buffer are found in the payload's code, so a build that moves them needs no update; measured over 42 seeds, six builds |
 | ✅ OBS overlay, one URL per panel | transparent background, a standalone panel each |
 | ⚠️ Multiworld | tracks your own world; see below |
-| ❓ Emulators other than Project64-EM | not tried yet |
+| ✅ Project64-EM and BizHawk | P64-EM over its Lua socket, BizHawk over shared memory; both tested live |
+| ❓ Other emulators (RetroArch, Ares) | not tried yet |
 | ❌ Logic and maps | not attempted — that is what The Last Tracker does |
 
 ### Multiworld
