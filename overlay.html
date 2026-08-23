@@ -1394,14 +1394,15 @@ function render(s) {
      goes before every other warning because it explains all of them. */
   if (s.no_tables) {
     /* No checks.json at all: the ROM was not found at startup, so the tables
-       were never built. The check list is empty; say why and how to fix it,
-       because otherwise it looks like a tracker that shows nothing. */
-    setHTML('alert', `<div class="warn"><b>No OoTMM ROM found.</b>
-      The check tables are built from your seed, and it was not found when the
-      tracker started — so the check list is empty. It is located through
-      <b>Project64-EM</b>: open your seed in it at least once, then restart the
-      tracker. On <b>BizHawk</b> or a non-standard setup, start the tracker from a
-      terminal pointing at the ROM:
+       were never built. The check list is empty; say why, and that it recovers
+       on its own — the tracker keeps looking and loads them once the ROM shows
+       up, so this must not read like a dead end. */
+    setHTML('alert', `<div class="warn"><b>No OoTMM ROM found yet.</b>
+      The check tables are built from your seed, which was not found when the
+      tracker started — so the check list is empty for now. On
+      <b>Project64-EM</b>, just open your seed in it: the tracker keeps looking
+      and picks it up on its own, no restart needed. On <b>BizHawk</b> or a
+      non-standard setup, start the tracker from a terminal pointing at the ROM:
       <br><code>ootmm-tracker.exe overlay --rom "C:\\path\\to\\your\\seed.z64"</code>
       <br>Items still appear once the emulator connects; only the checks need the ROM.</div>`);
   } else if (s.in_game === false && !s.waiting && !s.error) {

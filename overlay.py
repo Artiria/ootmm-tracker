@@ -1757,6 +1757,30 @@ class Tracker:
         with self.lock:
             return json.dumps(self.state)
 
+    def has_tables(self):
+        return bool(self.table["checks"])
+
+    def reload_from_table(self, new_table, spoiler=None):
+        """Adopt tables built AFTER startup, without a restart.
+
+        When the ROM is not found at startup (the seed not opened in the
+        emulator yet, or the tracker started first) the tables are empty and
+        the page shows "no ROM found". Discovery keeps retrying, and when it
+        finally builds a checks.json this swaps it in: a fresh Tracker is built
+        on the same link and this object adopts its whole state, keeping its
+        identity —the HTTP server and the poll thread hold it— and its lock and
+        uptime. It is only ever reached from the no-tables state, where nothing
+        has been tracked yet, so nothing tracked is thrown away.
+        """
+        fresh = Tracker(self.link, new_table, spoiler=spoiler or self.spoiler, locate=self.locate)
+        with self.lock:
+            keep_lock, keep_started = self.lock, self._started
+            d = dict(fresh.__dict__)
+            d["lock"] = keep_lock          # same lock object other threads sync on
+            d["_started"] = keep_started   # keep uptime continuous across the swap
+            self.__dict__ = d
+        print(f"[overlay] tables loaded without a restart: {len(new_table['checks'])} checks")
+
 
 # The inventory comes out of inventory.py with prefixed keys, so the grid is
 # grouped by prefix instead of listing two hundred entries by hand. A tracker

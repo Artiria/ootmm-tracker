@@ -63,6 +63,10 @@ FMT = {1: "B", 2: "H", 4: "I"}
 BIZHAWK_HELP = "force BizHawk (shared memory) instead of waiting for either"
 P64EM_HELP = "force Project64-EM (socket) instead of waiting for either"
 
+# How often to look again for the ROM when it was not found at startup, so the
+# page recovers on its own once the seed is opened, without a restart.
+RETRY_TABLES_SECONDS = 5.0
+
 
 def emu_of(args):
     """Which protocol to expect: an explicit override, else auto-detect."""
@@ -1196,9 +1200,11 @@ def cmd_overlay(args):
     if not table["checks"]:
         # No tables: the ROM was not found, so mkchecks never ran. The page
         # says this too; here is the console version, since a double-clicked
-        # exe holds this window open on the way out.
-        print("[overlay] No check tables: your OoTMM ROM was not found, so they were never built.")
-        print("[overlay]   It is located through Project64-EM -- open your seed in it at least once.")
+        # exe holds this window open on the way out. Not fatal, and not final:
+        # the loop below keeps looking and loads the tables the moment the ROM
+        # shows up, no restart needed.
+        print("[overlay] No check tables yet: your OoTMM ROM was not found, so they are not built.")
+        print("[overlay]   Project64-EM: just open your seed in it -- I keep looking and will pick it up.")
         print("[overlay]   On BizHawk or a non-standard setup, start the tracker pointing at the ROM:")
         print('[overlay]     ootmm-tracker.exe overlay --rom "C:\\path\\to\\your\\seed.z64"')
         print("[overlay]   Items still work once the emulator connects; the check list needs the ROM.")
@@ -1233,6 +1239,34 @@ def cmd_overlay(args):
 
     threading.Thread(target=wait_for_lua, daemon=True).start()
     threading.Thread(target=tracker.run, args=(args.interval,), daemon=True).start()
+
+    # If the tables were not built at startup -- the ROM was not found because
+    # the seed was not open in the emulator yet, or the tracker started first --
+    # keep looking. The moment discovery finds the ROM, build the tables and
+    # load them into the running tracker, so the page recovers on its own
+    # instead of sitting on "no ROM found" until the user restarts. Only runs
+    # while there are no tables, and only under auto-detection.
+    if not table["checks"] and not args.no_auto:
+        def keep_looking_for_rom():
+            import discover
+            while not tracker.has_tables():
+                time.sleep(RETRY_TABLES_SECONDS)
+                if tracker.has_tables():
+                    return
+                try:
+                    rom, spoiler2, _ = discover.resolve(args.rom, args.spoiler, verbose=False)
+                    if not rom:
+                        continue
+                    fresh = overlay.load_table()
+                    if fresh["checks"]:
+                        sp = load_spoiler(spoiler2) if spoiler2 else None
+                        tracker.reload_from_table(fresh, spoiler=sp)
+                        print(f"[overlay] ROM found at runtime: {rom}")
+                        return
+                except Exception as ex:
+                    print(f"[overlay] still looking for the ROM ({type(ex).__name__}: {ex})")
+
+        threading.Thread(target=keep_looking_for_rom, daemon=True).start()
 
     try:
         overlay.serve(tracker, args.http_host, args.http_port, open_window=not args.no_window)
