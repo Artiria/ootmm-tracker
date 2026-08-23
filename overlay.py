@@ -276,8 +276,17 @@ def is_junk(item):
 
 
 def load_table(path=None):
-    with open(path or paths.user("checks.json"), encoding="utf-8") as fh:
-        return json.load(fh)
+    """The check tables. A missing file is not fatal: the ROM was not found at
+    startup, so mkchecks never ran. Come up with an empty table and let the
+    page say so, instead of dying with a traceback in a console window that
+    then vanishes. Everything downstream reads table["checks"] as a list and
+    table.get(...) for the rest, so an empty table is a valid degraded state.
+    A corrupt file is a different problem and still surfaces."""
+    try:
+        with open(path or paths.user("checks.json"), encoding="utf-8") as fh:
+            return json.load(fh)
+    except FileNotFoundError:
+        return {"checks": []}
 
 
 def build_plan(table, active_pred, junk_pred=None):
@@ -571,6 +580,10 @@ class Tracker:
             "version": __version__,
             "ready": False,
             "error": None,
+            # No check tables at all: the ROM was not found at startup, so they
+            # were never built. Items still work once the emulator connects;
+            # the page explains this instead of showing an empty run as normal.
+            "no_tables": not table["checks"],
             "waiting": link is None,
             "active": None,
             "trusted": True,

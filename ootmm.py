@@ -1169,6 +1169,15 @@ def cmd_overlay(args):
     table = overlay.load_table()
     resolved = sum(1 for c in table["checks"] if c["addr"] is not None)
     print(f"[overlay] checks.json: {resolved} of {len(table['checks'])} with an address")
+    if not table["checks"]:
+        # No tables: the ROM was not found, so mkchecks never ran. The page
+        # says this too; here is the console version, since a double-clicked
+        # exe holds this window open on the way out.
+        print("[overlay] No check tables: your OoTMM ROM was not found, so they were never built.")
+        print("[overlay]   It is located through Project64-EM -- open your seed in it at least once.")
+        print("[overlay]   On BizHawk or a non-standard setup, start the tracker pointing at the ROM:")
+        print('[overlay]     ootmm-tracker.exe overlay --rom "C:\\path\\to\\your\\seed.z64"')
+        print("[overlay]   Items still work once the emulator connects; the check list needs the ROM.")
 
     spoiler = load_spoiler(spoiler_path) if spoiler_path else {}
     if spoiler_path:

@@ -1392,7 +1392,19 @@ function render(s) {
      there on purpose (the memory still holds whatever came before, and it used
      to show up as progress), so the picture is frozen and this says so — it
      goes before every other warning because it explains all of them. */
-  if (s.in_game === false && !s.waiting && !s.error) {
+  if (s.no_tables) {
+    /* No checks.json at all: the ROM was not found at startup, so the tables
+       were never built. The check list is empty; say why and how to fix it,
+       because otherwise it looks like a tracker that shows nothing. */
+    setHTML('alert', `<div class="warn"><b>No OoTMM ROM found.</b>
+      The check tables are built from your seed, and it was not found when the
+      tracker started — so the check list is empty. It is located through
+      <b>Project64-EM</b>: open your seed in it at least once, then restart the
+      tracker. On <b>BizHawk</b> or a non-standard setup, start the tracker from a
+      terminal pointing at the ROM:
+      <br><code>ootmm-tracker.exe overlay --rom "C:\\path\\to\\your\\seed.z64"</code>
+      <br>Items still appear once the emulator connects; only the checks need the ROM.</div>`);
+  } else if (s.in_game === false && !s.waiting && !s.error) {
     setHTML('alert', `<div class="warn"><b>Not in a game.</b>
       The emulator is on the <b>${esc(s.game_mode || 'menu')}</b>: nothing is read
       until a file is loaded, because until then the memory still holds whatever
