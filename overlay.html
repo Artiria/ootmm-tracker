@@ -447,7 +447,7 @@ body.chroma-green .card { background: var(--surface); }
     <div class="head">
       <div>
         <div class="hero" id="hero">—<small id="hero-total"></small></div>
-        <div class="head-sub" id="hero-label">waiting for tracker.lua</div>
+        <div class="head-sub" id="hero-label">waiting for the emulator</div>
       </div>
       <div class="head-meta">
         <div class="meter full row-oot"><i id="hero-meter" style="width:0%"></i></div>
@@ -1439,8 +1439,10 @@ function render(s) {
       which seed you are on once, at startup: close it and open it again.</div>`);
   } else if (s.waiting) {
     setHTML('alert', `<div class="warn"><b>Waiting for the emulator.</b>
-      In Project64-EM open <b>File &gt; Lua Scripts…</b> and run <b>tracker.lua</b>,
-      which is already in the emulator's <b>Scripts</b> folder.
+      In <b>Project64-EM</b>: <b>File &gt; Lua Scripts…</b> and run <b>tracker.lua</b>,
+      already in the emulator's <b>Scripts</b> folder.
+      In <b>BizHawk</b>: <b>Tools &gt; Lua Console &gt; Open Script…</b> and pick
+      <b>tracker-bizhawk.lua</b>, next to the tracker's exe.
       This page updates on its own as soon as it connects.</div>`);
   } else if (s.error) {
     setHTML('alert', `<div class="warn"><b>No connection to the game.</b> ${esc(s.error)}</div>`);
@@ -1461,7 +1463,7 @@ function render(s) {
   }
   pintaSpoiler(s);
 
-  if (!s.ready) { setText('status', 'esperando datos…'); return; }
+  if (!s.ready) { setText('status', 'waiting for data…'); return; }
 
   // with ?game= the percentage must be that game's, not the two together
   const hechos = SOLO_CLAVE ? (s.done_key_by_game || {}) : (s.done_by_game || {});
