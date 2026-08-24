@@ -88,6 +88,25 @@ ROM_CHECK_SECONDS = 10.0
 # Any real seed places hundreds (chests alone are 500-odd); below this the
 # table is treated as unread and every row is shown, as it always was.
 PLACEMENT_KNOWN_MIN = 100
+# A spoiler is refused when, over at least this many spots both it and the
+# ROM name, it agrees on fewer than this fraction (see Tracker._vet_spoiler).
+SPOILER_MIN_COMPARABLE = 100
+SPOILER_MIN_AGREEMENT = 0.5
+
+
+def bare_item(name):
+    """An item name reduced to what the ROM and the spoiler can agree on.
+
+    Two names for the same item differ in ways that are not disagreements:
+    a multiworld spoiler writes `Player N ` in front, and a single-player
+    spoiler tags which game an item belongs to with a ` (OoT)` / ` (MM)`
+    suffix the ROM's own `kItemNames` does not carry. Left in, that suffix
+    alone dropped a seed's agreement with its OWN spoiler from 86% to 21% and
+    got it wrongly refused (24 ago 2026). Only the game tag is stripped, never
+    a real parenthesis like `Rupee (5)`."""
+    s = re.sub(r"^Player \d+ ", "", name or "")
+    s = re.sub(r"\s*\((?:OoT|OOT|MM)\)\s*$", "", s)
+    return s.strip().lower()
 
 # The live scene flags, inside the PlayState. Chests and collectibles are the
 # two kinds of check that only reach the save context when the scene is left:
@@ -508,6 +527,10 @@ class Tracker:
         self.table = table
         self.spoiler = spoiler or {}
         self.locate = locate
+        # see _vet_spoiler(): a spoiler is checked against the ROM once
+        self._vetted_spoiler = None
+        self.spoiler_agreement = None   # [agree, comparable] or None
+        self.spoiler_rejected = None    # why the spoiler was dropped, or None
         # vanilla and MQ share a flag; in one seed only one version of each
         # dungeon exists, and which one is recorded by mkchecks
         self.mq_scenes = set(table.get("mq_scenes") or [])
@@ -604,6 +627,9 @@ class Tracker:
                 "setup": None, "other_setup": 0, "other_room": 0, "list": [],
             },
             "spoiler_n": len(self.spoiler),
+            # how the spoiler squares with the ROM (see _vet_spoiler)
+            "spoiler_agreement": self.spoiler_agreement,
+            "spoiler_rejected": self.spoiler_rejected,
             # where the items come from: normally the ROM, with a
             # hand-loaded spoiler covering only what the ROM did not give
             "items_n": len(self.items),
@@ -722,16 +748,60 @@ class Tracker:
             self.state["totals"][game] += n
         self.state["totals"] = dict(self.state["totals"])
 
+    def _vet_spoiler(self):
+        """Refuse a spoiler that contradicts the ROM. Said once per spoiler.
+
+        Comparable spots are the ones both name. A multiworld spoiler writes
+        `Player N ` in front of every item and the ROM keeps the owner apart
+        (see `worlds`), so that prefix is not a disagreement. The right spoiler
+        agrees on every comparable spot; another seed's agrees on the handful
+        that happen to hold the same filler.
+        """
+        if not self.spoiler or id(self.spoiler) == self._vetted_spoiler:
+            return
+        self._vetted_spoiler = id(self.spoiler)
+        agree = comparable = 0
+        for key, item in self.spoiler.items():
+            mine = self.rom_items.get(key)
+            if mine is None:
+                continue
+            comparable += 1
+            if bare_item(item) == bare_item(mine):
+                agree += 1
+        self.spoiler_agreement = [agree, comparable]
+        self.spoiler_rejected = None
+        if comparable >= SPOILER_MIN_COMPARABLE and agree < SPOILER_MIN_AGREEMENT * comparable:
+            self.spoiler_rejected = (f"it agrees with the ROM on only {agree} of {comparable} "
+                                     "spots: another seed's")
+            print(f"[overlay] WARNING: the spoiler is not this seed's -- it agrees with the ROM "
+                  f"on {agree} of {comparable} spots. Ignored; items come from the ROM.")
+            self.spoiler = {}
+        elif comparable:
+            print(f"[overlay] spoiler agrees with the ROM on {agree} of {comparable} spots")
+
     def _rebuild_items(self):
         """Recompute everything that depends on knowing each spot's item.
 
-        The ROM rules and a hand-loaded spoiler goes on top: if someone bothers
-        to load one, that is the one they want. They agree anyway —checked
-        over 5,018 checks, same filler classification in 100% of them— so the
-        order only matters when one of the two is missing.
+        The ROM rules whenever its placement was read. It names every check
+        the seed actually shuffles, and it is the authority on which checks
+        those are, so with placement known the spoiler adds nothing to the
+        item map -- and it used to go on top all the same, on the theory that
+        whoever loads one wants it. That was two bugs waiting: on 24 ago 2026
+        the spoiler on top was ANOTHER seed's, picked out of the same Downloads
+        folder, and every check announced that seed's items with a straight
+        face; and a spoiler naming a spot the ROM left unshuffled used to
+        revive it as a check (eight vanilla MM cows, 18 ago). Ignoring it when
+        the ROM is authoritative kills both. Refuse outright a spoiler that
+        contradicts the ROM, so the not-authoritative path below cannot be fed
+        the wrong seed either.
+
+        Only when the placement table could NOT be read (an old or foreign
+        ROM) is the spoiler the source of truth, and then it is used in full.
         """
+        self._vet_spoiler()
         items = dict(self.rom_items)
-        items.update(self.spoiler)
+        if not self.placement_known:
+            items.update(self.spoiler)
         self.items = items
         self.junk = {
             c["name"]: is_junk(items.get((c["game"], c["name"])))
@@ -780,6 +850,8 @@ class Tracker:
             self.state["total_key"] = sum(k for _, _, _n, k in self.regions)
             self.state["can_filter"] = self.hay_spoiler
             self.state["spoiler_n"] = len(self.spoiler)
+            self.state["spoiler_agreement"] = self.spoiler_agreement
+            self.state["spoiler_rejected"] = self.spoiler_rejected
             self.state["items_n"] = len(self.items)
             # The filtered totals, right now: otherwise, between this and the
             # next poll the page shows the new total against the old progress
@@ -793,6 +865,7 @@ class Tracker:
             }
             return {
                 "n": len(self.spoiler),
+                "rejected": self.spoiler_rejected,
                 "total": self.state["total"],
                 "total_key": self.state["total_key"],
             }
@@ -2554,6 +2627,12 @@ def cargar_spoiler(tracker, raw):
     cubiertos = sum(1 for c in activos if (c["game"], c["name"]) in spoiler)
 
     res = tracker.set_spoiler(spoiler)
+    # The name guard above passes a same-version spoiler from ANOTHER seed --
+    # same locations, different items. set_spoiler vets the items against the
+    # ROM and drops it when they disagree; say so instead of reporting a
+    # coverage for a spoiler that was thrown away.
+    if res.get("rejected"):
+        return {"ok": False, "error": f"it is not this seed's — it {res['rejected']}"}
     res.update(ok=True, casan=casan, version=ver,
                cubiertos=cubiertos, activos=len(activos))
     print(f"[overlay] spoiler loaded from the page: {res['n']} locations, "

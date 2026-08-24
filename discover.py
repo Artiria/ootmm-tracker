@@ -43,19 +43,125 @@ CACHE = paths.user("discover-cache.json")
 # --------------------------------------------------------------------------
 
 
-def find_emulator(hint=None):
-    """The emulator folder, the one holding Config/Project64.cfg."""
-    cands = []
+# Exe names (lower-case prefixes) of the emulators whose folder is worth
+# knowing: Project64-EM ships as `Project64-EM.exe`, plain builds as
+# `Project64.exe`.
+EMULATOR_EXES = ("project64",)
+
+
+def running_emulators():
+    """Folders of the Project64 builds running right now, newest first.
+
+    Where the emulator is installed is not the tracker's to guess: the second
+    person to try it had it outside every folder `find_emulator` looks in, and
+    sat on "no ROM found" with the seed open. A running `Project64-EM.exe`
+    says where it lives, and next to it are the `Config/Project64.cfg` naming
+    the open ROM and the `Scripts` folder the Lua goes in.
+
+    Windows only, no dependencies: a Toolhelp snapshot lists every process's
+    exe name without opening it, and the full path comes from
+    QueryFullProcessImageNameW with the *limited* query right, which is
+    granted across elevation for the same user. Anything unreadable is
+    skipped -- this is a hint, never a reason to fail. Newest process first:
+    with two builds open, the one started last is the one being played.
+    """
+    if os.name != "nt":
+        return []
+    try:
+        import ctypes
+        from ctypes import wintypes
+    except ImportError:
+        return []
+
+    class PROCESSENTRY32W(ctypes.Structure):
+        _fields_ = [
+            ("dwSize", wintypes.DWORD),
+            ("cntUsage", wintypes.DWORD),
+            ("th32ProcessID", wintypes.DWORD),
+            ("th32DefaultHeapID", ctypes.c_size_t),
+            ("th32ModuleID", wintypes.DWORD),
+            ("cntThreads", wintypes.DWORD),
+            ("th32ParentProcessID", wintypes.DWORD),
+            ("pcPriClassBase", wintypes.LONG),
+            ("dwFlags", wintypes.DWORD),
+            ("szExeFile", wintypes.WCHAR * 260),
+        ]
+
+    try:
+        k32 = ctypes.WinDLL("kernel32")
+        k32.CreateToolhelp32Snapshot.restype = wintypes.HANDLE
+        k32.CreateToolhelp32Snapshot.argtypes = [wintypes.DWORD, wintypes.DWORD]
+        k32.Process32FirstW.argtypes = [wintypes.HANDLE, ctypes.POINTER(PROCESSENTRY32W)]
+        k32.Process32NextW.argtypes = [wintypes.HANDLE, ctypes.POINTER(PROCESSENTRY32W)]
+        k32.OpenProcess.restype = wintypes.HANDLE
+        k32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+        k32.QueryFullProcessImageNameW.argtypes = [
+            wintypes.HANDLE, wintypes.DWORD, wintypes.LPWSTR, ctypes.POINTER(wintypes.DWORD),
+        ]
+        k32.GetProcessTimes.argtypes = [wintypes.HANDLE] + [ctypes.POINTER(wintypes.FILETIME)] * 4
+        k32.CloseHandle.argtypes = [wintypes.HANDLE]
+    except (AttributeError, OSError):
+        return []
+
+    TH32CS_SNAPPROCESS = 0x2
+    PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+    INVALID_HANDLE_VALUE = wintypes.HANDLE(-1).value
+
+    snap = k32.CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0)
+    if not snap or snap == INVALID_HANDLE_VALUE:
+        return []
+    pids = []
+    try:
+        entry = PROCESSENTRY32W()
+        entry.dwSize = ctypes.sizeof(entry)
+        more = k32.Process32FirstW(snap, ctypes.byref(entry))
+        while more:
+            name = entry.szExeFile.lower()
+            if name.endswith(".exe") and name.startswith(EMULATOR_EXES):
+                pids.append(entry.th32ProcessID)
+            more = k32.Process32NextW(snap, ctypes.byref(entry))
+    finally:
+        k32.CloseHandle(snap)
+
+    found = []
+    for pid in pids:
+        handle = k32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+        if not handle:
+            continue
+        try:
+            buf = ctypes.create_unicode_buffer(32768)
+            size = wintypes.DWORD(len(buf))
+            if not k32.QueryFullProcessImageNameW(handle, 0, buf, ctypes.byref(size)):
+                continue
+            times = [wintypes.FILETIME() for _ in range(4)]
+            started = 0
+            if k32.GetProcessTimes(handle, *[ctypes.byref(t) for t in times]):
+                started = (times[0].dwHighDateTime << 32) | times[0].dwLowDateTime
+        finally:
+            k32.CloseHandle(handle)
+        folder = os.path.dirname(buf.value)
+        if os.path.isfile(os.path.join(folder, "Config", "Project64.cfg")):
+            found.append((started, folder))
+    found.sort(reverse=True)
+    out = []
+    for _, folder in found:
+        if folder not in out:
+            out.append(folder)
+    return out
+
+
+def emulator_candidates(hint=None):
+    """`(how, folder)` pairs, the most trustworthy first: what the user said,
+    what is running, what worked last time, then the usual places."""
     if hint:
-        cands.append(hint)
+        yield "--emu", hint
+    if os.environ.get("PJ64_DIR"):
+        yield "PJ64_DIR", os.environ["PJ64_DIR"]
+    for d in running_emulators():
+        yield "running", d
     cache = load_cache()
     if cache.get("emu"):
-        cands.append(cache["emu"])
-    if os.environ.get("PJ64_DIR"):
-        cands.append(os.environ["PJ64_DIR"])
-    for d in cands:
-        if d and os.path.isfile(os.path.join(d, "Config", "Project64.cfg")):
-            return d
+        yield "cache", cache["emu"]
     # last resort: look nearby, without sweeping the whole disk
     home = os.path.expanduser("~")
     for pat in (
@@ -65,8 +171,30 @@ def find_emulator(hint=None):
     ):
         hits = glob.glob(pat)
         if hits:
-            return os.path.dirname(os.path.dirname(sorted(hits)[0]))
-    return None
+            yield "nearby", os.path.dirname(os.path.dirname(sorted(hits)[0]))
+
+
+HOW_FOUND = {
+    "--emu": "from --emu",
+    "PJ64_DIR": "from PJ64_DIR",
+    "running": "running now",
+    "cache": "remembered from last time",
+    "nearby": "found nearby",
+}
+
+
+def find_emulator_how(hint=None):
+    """`(folder, how)` for the emulator folder -- the one holding
+    Config/Project64.cfg -- or `(None, None)`. `how` is a HOW_FOUND key."""
+    for how, d in emulator_candidates(hint):
+        if d and os.path.isfile(os.path.join(d, "Config", "Project64.cfg")):
+            return d, how
+    return None, None
+
+
+def find_emulator(hint=None):
+    """The emulator folder, the one holding Config/Project64.cfg."""
+    return find_emulator_how(hint)[0]
 
 
 def recent_roms(emu):
@@ -188,25 +316,49 @@ def find_rom(emu, verbose=True):
 
 
 def find_spoiler(rom, verbose=True):
-    """The spoiler that goes with that ROM, if it sits next to it."""
+    """The spoiler that goes with that ROM, if it sits near it.
+
+    A seed's files are `OoTMM-<id>.z64` and `OoTMM-Spoiler-<id>.txt`, and that
+    id is the only thing tying them together: a spoiler with another id is
+    another seed's, however close it lies. The ROM often ends up loose in
+    Downloads with its zip unpacked into an `OoTMM-<id>` folder beside it, so
+    that folder is looked in too.
+
+    Any `*Spoiler*.txt` in the folder used to do as a fallback, and on 24 ago
+    2026 that picked another multiworld's spoiler out of Downloads and put its
+    items on every check of the seed being played. The fallback now applies
+    only to a ROM whose name carries no seed id, and only when there is exactly
+    one spoiler to pick from.
+    """
     if not rom:
         return None
     d = os.path.dirname(rom)
     stem = os.path.splitext(os.path.basename(rom))[0]
     m = re.match(r"OoTMM-([A-Za-z0-9]+)", stem)
     if m:
-        exact = os.path.join(d, f"OoTMM-Spoiler-{m.group(1)}.txt")
-        if os.path.isfile(exact):
-            if verbose:
-                print(f"[auto] spoiler: {exact}")
-            return exact
-    hits = sorted(glob.glob(os.path.join(d, "*Spoiler*.txt")))
-    if hits:
+        sid = m.group(1)
+        name = f"OoTMM-Spoiler-{sid}.txt"
+        cands = [os.path.join(d, name), os.path.join(d, f"OoTMM-{sid}", name)]
+        cands += sorted(glob.glob(os.path.join(glob.escape(d), "*", name)))
+        for cand in cands:
+            if os.path.isfile(cand):
+                if verbose:
+                    print(f"[auto] spoiler: {cand}")
+                return cand
         if verbose:
-            print(f"[auto] spoiler: {hits[0]}")
+            print(f"[auto] no spoiler for seed {sid} near the ROM (not needed: items come from it)")
+        return None
+    hits = sorted(glob.glob(os.path.join(glob.escape(d), "*Spoiler*.txt")))
+    if len(hits) == 1:
+        if verbose:
+            print(f"[auto] spoiler: {hits[0]} (the only one next to a ROM with no seed id in its name)")
         return hits[0]
     if verbose:
-        print("[auto] no spoiler found next to the ROM (not needed: items come from it)")
+        if hits:
+            print(f"[auto] {len(hits)} spoilers next to the ROM and no seed id in its name to "
+                  "tell which is its own; none used (items come from the ROM)")
+        else:
+            print("[auto] no spoiler found next to the ROM (not needed: items come from it)")
     return None
 
 
@@ -401,13 +553,13 @@ def save_cache(cache):
 def resolve(rom=None, spoiler=None, emu=None, verbose=True):
     """Everything together: (rom, spoiler, rebuilt)."""
     if not rom:
-        found = find_emulator(emu)
+        found, how = find_emulator_how(emu)
         if not found:
             if verbose:
                 print("[auto] cannot find Project64.cfg; pass --rom or --emu")
             return None, spoiler, []
         if verbose:
-            print(f"[auto] emulator: {found}")
+            print(f"[auto] emulator: {found} ({HOW_FOUND.get(how, how)})")
         cache = load_cache()
         cache["emu"] = found
         save_cache(cache)

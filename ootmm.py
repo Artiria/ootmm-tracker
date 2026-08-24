@@ -1204,8 +1204,9 @@ def cmd_overlay(args):
         # the loop below keeps looking and loads the tables the moment the ROM
         # shows up, no restart needed.
         print("[overlay] No check tables yet: your OoTMM ROM was not found, so they are not built.")
-        print("[overlay]   Project64-EM: just open your seed in it -- I keep looking and will pick it up.")
-        print("[overlay]   On BizHawk or a non-standard setup, start the tracker pointing at the ROM:")
+        print("[overlay]   Project64-EM: just open your seed in it, wherever the emulator is installed --")
+        print("[overlay]   I keep looking and will pick it up.")
+        print("[overlay]   On BizHawk, start the tracker pointing at the ROM:")
         print('[overlay]     ootmm-tracker.exe overlay --rom "C:\\path\\to\\your\\seed.z64"')
         print("[overlay]   Items still work once the emulator connects; the check list needs the ROM.")
 
@@ -1262,6 +1263,13 @@ def cmd_overlay(args):
                         sp = load_spoiler(spoiler2) if spoiler2 else None
                         tracker.reload_from_table(fresh, spoiler=sp)
                         print(f"[overlay] ROM found at runtime: {rom}")
+                        # The emulator turned up after startup, so its Scripts
+                        # folder got no tracker.lua then: put it there now,
+                        # while File > Lua Scripts... is the next thing to open.
+                        try:
+                            discover.ensure_lua()
+                        except Exception as ex:
+                            print(f"[overlay] could not install tracker.lua ({ex})")
                         return
                 except Exception as ex:
                     print(f"[overlay] still looking for the ROM ({type(ex).__name__}: {ex})")

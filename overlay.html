@@ -1400,9 +1400,10 @@ function render(s) {
     setHTML('alert', `<div class="warn"><b>No OoTMM ROM found yet.</b>
       The check tables are built from your seed, which was not found when the
       tracker started — so the check list is empty for now. On
-      <b>Project64-EM</b>, just open your seed in it: the tracker keeps looking
-      and picks it up on its own, no restart needed. On <b>BizHawk</b> or a
-      non-standard setup, start the tracker from a terminal pointing at the ROM:
+      <b>Project64-EM</b>, just open your seed in it, wherever the emulator is
+      installed: the tracker keeps looking and picks it up on its own, no
+      restart needed. On <b>BizHawk</b>, start the tracker from a terminal
+      pointing at the ROM:
       <br><code>ootmm-tracker.exe overlay --rom "C:\\path\\to\\your\\seed.z64"</code>
       <br>Items still appear once the emulator connects; only the checks need the ROM.</div>`);
   } else if (s.in_game === false && !s.waiting && !s.error) {
@@ -1459,6 +1460,13 @@ function render(s) {
       This page updates on its own as soon as it connects.</div>`);
   } else if (s.error) {
     setHTML('alert', `<div class="warn"><b>No connection to the game.</b> ${esc(s.error)}</div>`);
+  } else if (s.spoiler_rejected) {
+    /* A spoiler was loaded that is not this seed's — it disagreed with the
+       ROM on all but a handful of spots. Harmless (items come from the ROM),
+       but worth saying so nobody wonders why loading it changed nothing. */
+    setHTML('alert', `<div class="warn"><b>That spoiler is not this seed's.</b>
+      It ${esc(s.spoiler_rejected)}, so it was ignored — the items you see come
+      straight from the ROM, which is what the tracker trusts anyway.</div>`);
   } else {
     setHTML('alert', '');
   }
