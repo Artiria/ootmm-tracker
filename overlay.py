@@ -88,6 +88,10 @@ ROM_CHECK_SECONDS = 10.0
 # Any real seed places hundreds (chests alone are 500-odd); below this the
 # table is treated as unread and every row is shown, as it always was.
 PLACEMENT_KNOWN_MIN = 100
+# How many of a scene's other-room pending checks travel in pending_here for the
+# "whole scene" toggle. Every normal scene is well under this; GROTTOS, the one
+# scene that holds hundreds, is capped and the page says how many it left out.
+OTHER_ROOM_CAP = 80
 # A spoiler is refused when, over at least this many spots both it and the
 # ROM name, it agrees on fewer than this fraction (see Tracker._vet_spoiler).
 SPOILER_MIN_COMPARABLE = 100
@@ -625,7 +629,8 @@ class Tracker:
             "feed": [],
             "pending_here": {
                 "scene": None, "game": None, "room": None, "live": False,
-                "setup": None, "other_setup": 0, "other_room": 0, "list": [],
+                "setup": None, "other_setup": 0, "other_room": 0,
+                "other_room_listed": 0, "list": [],
             },
             "spoiler_n": len(self.spoiler),
             # how the spoiler squares with the ROM (see _vet_spoiler)
@@ -1666,7 +1671,7 @@ class Tracker:
             # scene owns, none of the `0x20 |` ones can be yours.
             sala_propia = room is not None and room in self.scene_rooms.get((active, scene), ())
 
-            lista, otros, fuera = [], 0, 0
+            lista, otras, otros, fuera = [], [], 0, 0
             for c in pend:
                 xf = c.get("xflag") or {}
                 if setup is not None and xf.get("setup", setup) != setup:
@@ -1678,16 +1683,7 @@ class Tracker:
                         fuera += 1
                         continue
                     croom = None   # in the generic room they are all candidates
-                # The room FILTERS, it does not just sort. This is what the
-                # panel was for: GROTTOS is a single scene holding every grotto
-                # in the game, so standing in one you got 440 pending checks
-                # from all of them. Checks with no room of their own —chests,
-                # NPCs, shops— are never dropped, only the ones that say they
-                # belong somewhere else.
-                if room is not None and room >= 0 and croom is not None and croom != room:
-                    fuera += 1
-                    continue
-                lista.append({
+                entry = {
                     "name": c["name"],
                     "item": self.item_de(c["game"], c["name"]),
                     "world": self.world_de(c["game"], c["name"]),
@@ -1700,14 +1696,32 @@ class Tracker:
                     "revealed": (f"{c['game']}:{c['name']}" in self.revealed
                                  or any(h["level"] >= 3 and h["check"] == c["name"] and h["game"] == c["game"]
                                         for h in self.hints.values())),
-                })
+                }
+                # The room FILTERS the default panel: GROTTOS is one scene with
+                # every grotto in it, so standing in one you would get 440
+                # pending from all of them. Checks with no room of their own
+                # --chests, NPCs, shops-- are never filtered. But the ones that
+                # belong to another room are now carried in `otras` too, so the
+                # "whole scene" toggle shows them with no second request -- and a
+                # room whose number does not line up with where you stand
+                # (Gerudo Fortress's archery crates read room 1) is one click
+                # away instead of counted-but-invisible. Capped, since GROTTOS'
+                # other rooms run to the hundreds.
+                if room is not None and room >= 0 and croom is not None and croom != room:
+                    fuera += 1
+                    if len(otras) < OTHER_ROOM_CAP:
+                        otras.append(entry)
+                    continue
+                lista.append(entry)
             # What is in this very room first, then the ones with no room of
-            # their own. Otherwise the chests and NPCs of the whole scene sit
-            # above what is at your feet.
+            # their own; the other rooms last, only shown when unified.
             lista.sort(key=lambda e: not e["here"])
-            here["list"] = lista
+            here["list"] = lista + otras
             here["other_setup"] = otros
             here["other_room"] = fuera
+            # How many of the other-room checks actually travelled (the rest are
+            # over the cap): the page needs it to say what it is still hiding.
+            here["other_room_listed"] = len(otras)
 
         with self.lock:
             s = self.state

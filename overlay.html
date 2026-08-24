@@ -67,6 +67,16 @@ body.chroma-none .card, body.chroma-green .card { backdrop-filter: blur(2px); }
   text-transform: uppercase;
   color: var(--muted);
 }
+/* The filter box on a long list (entrances). Off-stream tool, so it only
+   appears in the director view. */
+input.search {
+  width: 100%; box-sizing: border-box; margin: 0 0 10px;
+  background: var(--surface-2); border: 1px solid var(--hairline);
+  color: var(--ink); border-radius: 6px; padding: 5px 9px;
+  font: inherit; font-size: 13px;
+}
+input.search::placeholder { color: var(--muted); }
+input.search:focus { outline: none; border-color: var(--muted); }
 
 /* -- cabecera: la unica cifra heroe de la vista ------------------------- */
 .head { display: flex; align-items: center; gap: 22px; flex-wrap: wrap; }
@@ -488,7 +498,7 @@ body.chroma-green .card { background: var(--surface); }
         </div>
         <div id="regions" class="scroll pane-third"><div class="empty">no data yet</div></div>
       </div>
-      <div class="card" data-panel="remaining">
+      <div class="card" data-panel="remaining" id="pend-card">
         <h2 id="pend-title">Remaining here</h2>
         <div class="scroll pane-third">
           <ul class="pend" id="pend"></ul>
@@ -504,6 +514,7 @@ body.chroma-green .card { background: var(--surface); }
       </div>
       <div class="card" data-panel="entrances">
         <h2 id="entr-title">Entrances</h2>
+        <input type="search" id="entr-search" class="search" placeholder="filter by area…" hidden>
         <div class="scroll pane-third">
           <ul class="feed entr" id="entr"></ul>
           <div class="empty" id="entr-empty">—</div>
@@ -559,6 +570,18 @@ body.chroma-green .card { background: var(--surface); }
           <select id="opt-untouched">
             <option value="">hidden</option>
             <option value="show">show</option>
+          </select>
+        </label>
+        <label title="Remaining panel: only the room you are in, or the whole scene with each check tagged by room">Rooms
+          <select id="opt-rooms">
+            <option value="">this room</option>
+            <option value="all">whole scene</option>
+          </select>
+        </label>
+        <label title="Hide the Remaining panel, so a glance to read your progress does not show what is still out there">Remaining
+          <select id="opt-remaining">
+            <option value="">show</option>
+            <option value="hide">hide</option>
           </select>
         </label>
         <label id="opt-souls-wrap" hidden>Souls
@@ -692,6 +715,21 @@ let OCULTA_HECHAS = q.get('done') === 'hide';
    so the panel doubles as a "what is left" map. Off by default: on a stream
    the touched-only list is the one that reads as progress. */
 let MOSTRAR_SIN_EMPEZAR = q.get('untouched') === 'show';
+/* ?rooms=all drops the room filter on the "remaining" panel, so the whole
+   scene's checks show at once, each tagged with its room. Off by default:
+   standing in a small room you want only what is at your feet, and the room
+   filter is what keeps GROTTOS from dumping every grotto in the game on you.
+   Turn it on when a check's room does not line up with where you stand
+   (Gerudo Fortress's archery crates read room 1). */
+let ROOMS_ALL = q.get('rooms') === 'all';
+/* A free-text filter for the entrances panel: with a full shuffle it holds
+   ~200 doors, and finding one by hand is a chore. Director view only, and it
+   never leaves the URL -- it is a live search, not a saved preference. */
+let ENT_SEARCH = '';
+/* ?remaining=hide takes the "Remaining here" panel out of the director view.
+   A glance to read your progress should not have to show what is still out
+   there; shown by default, since that panel is the point on most streams. */
+let HIDE_REMAINING = q.get('remaining') === 'hide';
 /* Without knowing the items there is no way to tell what is filler, and
    filtering would zero everything out. The server says whether it can. */
 let puedeFiltrar = false;
@@ -732,6 +770,8 @@ function panelUrl(name, game) {
   if (dn) p.set('done', dn);
   const un = $('opt-untouched') ? $('opt-untouched').value : (MOSTRAR_SIN_EMPEZAR ? 'show' : '');
   if (un) p.set('untouched', un);
+  const rm = $('opt-rooms') ? $('opt-rooms').value : (ROOMS_ALL ? 'all' : '');
+  if (rm) p.set('rooms', rm);
   const sf = $('opt-souls') ? $('opt-souls').value : SOULS_FILTER;
   if (sf && sf !== 'summary') p.set('souls', sf);
   if (sp !== 'item') p.set('spoiler', sp);
@@ -779,6 +819,8 @@ function syncUrl() {
   set('junk', PIDE_FILTRO ? 'hide' : '');
   set('done', OCULTA_HECHAS ? 'hide' : '');
   set('untouched', MOSTRAR_SIN_EMPEZAR ? 'show' : '');
+  set('rooms', ROOMS_ALL ? 'all' : '');
+  set('remaining', HIDE_REMAINING ? 'hide' : '');
   set('souls', SOULS_FILTER === 'summary' ? '' : SOULS_FILTER);
   set('chroma', chroma || '');
   set('hide', HIDE_ALL ? '1' : '');
@@ -806,6 +848,8 @@ function applyOpts() {
   PIDE_FILTRO = $('opt-junk').value === 'hide';
   OCULTA_HECHAS = $('opt-done') && $('opt-done').value === 'hide';
   MOSTRAR_SIN_EMPEZAR = $('opt-untouched') && $('opt-untouched').value === 'show';
+  ROOMS_ALL = $('opt-rooms') && $('opt-rooms').value === 'all';
+  HIDE_REMAINING = $('opt-remaining') && $('opt-remaining').value === 'hide';
   SOULS_FILTER = $('opt-souls') ? $('opt-souls').value : 'summary';
   chroma = $('opt-chroma').value || null;
   document.body.classList.toggle('chroma-none', chroma === 'none');
@@ -826,6 +870,8 @@ if ($('urls')) {
   $('opt-junk').value = PIDE_FILTRO ? 'hide' : '';
   $('opt-done').value = OCULTA_HECHAS ? 'hide' : '';
   $('opt-untouched').value = MOSTRAR_SIN_EMPEZAR ? 'show' : '';
+  if ($('opt-rooms')) $('opt-rooms').value = ROOMS_ALL ? 'all' : '';
+  if ($('opt-remaining')) $('opt-remaining').value = HIDE_REMAINING ? 'hide' : '';
   if ($('opt-souls')) $('opt-souls').value = SOULS_FILTER;
   $('opt-hide').checked = HIDE_ALL;
   $('opt-spoiler').disabled = HIDE_ALL;
@@ -833,6 +879,12 @@ if ($('urls')) {
   $('opt-junk').onchange = applyOpts;
   $('opt-done').onchange = applyOpts;
   $('opt-untouched').onchange = applyOpts;
+  if ($('opt-rooms')) $('opt-rooms').onchange = applyOpts;
+  if ($('opt-remaining')) $('opt-remaining').onchange = applyOpts;
+  if ($('entr-search')) $('entr-search').oninput = () => {
+    ENT_SEARCH = $('entr-search').value.trim();
+    if (lastState) render(lastState);   // filter now, without waiting for a poll
+  };
   if ($('opt-souls')) $('opt-souls').onchange = applyOpts;
   $('opt-spoiler').onchange = applyOpts;
   $('opt-chroma').onchange = applyOpts;
@@ -1268,15 +1320,22 @@ function renderSouls(grid) {
    each as "where you took it -> where you came out". Only with ?spoiler=full
    does the rest of the seed's shuffled entrances show, dimmed: the whole table
    is a spoiler, and on a stream the audience sees this panel. */
+function entMatch(e) {
+  if (!ENT_SEARCH) return true;
+  const s = ENT_SEARCH.toLowerCase();
+  return (e.from_area || '').toLowerCase().includes(s)
+      || (e.to_area || '').toLowerCase().includes(s);
+}
+
 function renderEntrances(en) {
-  const found = (en.found || []).filter(e => keepGame(e.game));
+  const found = (en.found || []).filter(e => keepGame(e.game) && entMatch(e));
   const row = (e, cls) => `<li${cls ? ` class="${cls}"` : ''}>
       <span class="item">${esc(e.from_area)}</span>
       <span class="from">→ ${esc(e.to_area)}${e.sure === false ? ' <i>(probable)</i>' : ''}</span></li>`;
   let html = found.map(e => row(e, e.sure === false ? 'maybe' : '')).join('');
   if (showPending) {
     const seen = new Set(found.map(e => e.game + ':' + e.src));
-    html += (en.all || []).filter(e => keepGame(e.game) && !seen.has(e.game + ':' + e.src))
+    html += (en.all || []).filter(e => keepGame(e.game) && entMatch(e) && !seen.has(e.game + ':' + e.src))
       .map(e => row(e, 'todo')).join('');
   }
   return html;
@@ -1295,7 +1354,12 @@ function renderHints(h) {
 }
 
 function pendVisible(here) {
-  return (here.list || []).filter(p => !(SOLO_CLAVE && p.junk));
+  let list = (here.list || []).filter(p => !(SOLO_CLAVE && p.junk));
+  /* Default: only what is in this room, plus the checks that belong to no room
+     of their own (chests, NPCs, shops). "whole scene" keeps the other rooms
+     too -- the server sends them either way, so this is a pure view switch. */
+  if (!ROOMS_ALL) list = list.filter(p => p.here || p.room == null);
+  return list;
 }
 
 function renderPend(here) {
@@ -1304,7 +1368,8 @@ function renderPend(here) {
   let html = shown.map(p => `<li${p.here ? ' class="here"' : ''}>
     <span class="name">${esc(p.name)}</span>
     ${(showPending || p.revealed) && p.item ? `<span class="from">→ ${esc(p.item)}</span>${world(p.world)}` : ''}
-    ${p.here ? '<span class="room">this room</span>' : ''}
+    ${p.here ? '<span class="room">this room</span>'
+       : (p.room != null ? `<span class="room">room ${esc(String(p.room))}</span>` : '')}
     ${(!panel && !showPending && !p.revealed && p.item)
         ? `<button class="peek" data-game="${esc(here.game)}" data-name="${esc(p.name)}" title="reveal what this check holds (counts as a hint)">?</button>` : ''}
   </li>`).join('');
@@ -1313,7 +1378,15 @@ function renderPend(here) {
   /* Saying so matters: these are real checks with real items, just somewhere
      you are not. Hiding them without a word is how the panel would look wrong
      again, from the other side. */
-  if (here.other_room) notes.push(`${here.other_room} in other rooms`);
+  /* With the room filter on, say how many are hidden elsewhere; with "whole
+     scene" they are shown, so only note the ones over the cap that could not
+     travel (GROTTOS). */
+  if (!ROOMS_ALL) {
+    if (here.other_room) notes.push(`${here.other_room} in other rooms`);
+  } else {
+    const left = here.other_room - (here.other_room_listed || 0);
+    if (left > 0) notes.push(`${left} more in other rooms`);
+  }
   if (here.other_setup) notes.push(`${here.other_setup} in another setup of this scene`);
   if (notes.length) html += `<div class="more">and ${notes.join(' · ')}</div>`;
   return html;
@@ -1581,10 +1654,18 @@ function render(s) {
   if (enTitle) enTitle.textContent = en.total
     ? `Entrances · ${(en.found || []).filter(e => keepGame(e.game)).length} of ${en.total}`
     : 'Entrances';
+  // the filter box only earns its place once the seed shuffles entrances, and
+  // it is a director tool -- never on a standalone OBS panel
+  setShow('entr-search', !panel && en.total > 0);
   const enEmpty = $('entr-empty');
-  if (enEmpty) enEmpty.textContent = en.total ? 'none gone through yet' : 'this seed does not shuffle entrances';
+  if (enEmpty) enEmpty.textContent = !en.total ? 'this seed does not shuffle entrances'
+    : ENT_SEARCH ? 'no entrance matches that' : 'none gone through yet';
   setShow('entr-empty', !enHTML);
 
+  // Hiding the whole panel is a director choice, so it never touches the
+  // standalone /p/remaining source (which would just blank it). `panel` is the
+  // panel name on those, undefined here.
+  setShow('pend-card', !HIDE_REMAINING || panel);
   // what is left is what is left in the area you are in, so an overlay
   // filtered to the other game has nothing to show
   const here = (s.pending_here && keepGame(s.pending_here.game))
@@ -1592,8 +1673,9 @@ function render(s) {
     : { scene: null, game: null, room: null, live: false, setup: null,
         other_setup: 0, other_room: 0, list: [] };
   // the room only earns its place in the title when the scene has more than
-  // one: room 0 is every single-room area, and saying so is just noise
-  const roomTag = here.room > 0 ? ` · room ${here.room}` : '';
+  // one: room 0 is every single-room area, and saying so is just noise. With
+  // "whole scene" on, the title says so instead of naming one room.
+  const roomTag = ROOMS_ALL ? ' · whole scene' : (here.room > 0 ? ` · room ${here.room}` : '');
   setText('pend-title', here.scene ? `Remaining in ${here.scene}${roomTag}` : 'Remaining here');
   setHTML('pend', renderPend(here));
   // Count what is actually VISIBLE, junk filter included: with the filter on
