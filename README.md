@@ -8,7 +8,7 @@ checks.
 **No spoiler log needed.** What item sits in each location is read from the
 seed ROM itself.
 
-> **0.1.3-beta.** Single player is tested and measured; multiworld has had one
+> **0.1.3.1-beta.** Single player is tested and measured; multiworld has had one
 > session. Expect rough edges, and please report what you find.
 
 ## Install
