@@ -573,6 +573,7 @@ class Tracker:
         self._entrance = {}          # game -> last save entrance value seen
         self._entrance_pending = {}  # game -> (value seen once, scene before it)
         self._game_mode = None       # gSaveContext.gameMode last read (GAME_MODE_OFF)
+        self._game_mode_odd = 0       # consecutive polls with an unrecognised gameMode
         # Entrances the run has been seen to go through, and where they persist.
         # This lives only in RAM otherwise, so restarting the tracker mid-run
         # forgets every door already taken -- which is exactly what happened
@@ -1377,10 +1378,26 @@ class Tracker:
         # Not in a run (title screen, file select, credits): stop here, before
         # anything is read. What the RAM holds then is not this file, and every
         # reader below -- checks, feed, entrances, souls -- would take it as
-        # progress. See GAME_MODE_OFF. None (could not read) never gates.
+        # progress. See GAME_MODE_OFF. Only the KNOWN not-in-a-run modes gate:
+        # None (could not read) never has, and neither does a value that fits no
+        # mode at all. That last one is almost always one poll caught mid-cross
+        # OoT<->MM, and freezing a live game on it -- flashing "Not in a game,
+        # mode 1549556828" over a run that was reading fine -- was the 24 ago
+        # 2026 bug. Read on; the crossing is handled by the drop/undone guards
+        # below. Only when it PERSISTS is the offset actually wrong for this
+        # build, and then it is said once.
         self._game_mode = self.game_mode(active, bases)
-        if self._game_mode not in (None, 0):
+        if self._game_mode in GAME_MODE_NOT_PLAYING:
+            self._game_mode_odd = 0
             return None
+        if self._game_mode in (None, 0):
+            self._game_mode_odd = 0
+        else:
+            self._game_mode_odd += 1
+            if self._game_mode_odd == GAME_MODE_ODD_PERSIST:
+                print(f"[overlay] gameMode has read unknown values ({self._game_mode}) for "
+                      f"{GAME_MODE_ODD_PERSIST} polls -- its offset looks wrong for this OoTMM "
+                      "build, so the title-screen guard is off. Progress still reads from RAM.")
 
         mejor = self.custom_base(bases, active)
         anchors = rebase(self.table, bases, active, mejor)
@@ -2572,6 +2589,16 @@ SETUP_OFF = {"oot": 0x1360, "mm": 0x3CAC - 0x08}
 # the last picture stands, and the page says why.
 GAME_MODE_OFF = {"oot": 0x135C, "mm": 0x3CA8 - 0x08}
 GAME_MODES = {0: "playing", 1: "title screen", 2: "file select", 3: "credits", 4: "owl save"}
+# The modes that mean "not in a run" and DO stop the read. 0 is playing; None
+# is "could not read"; anything else fits no mode at all -- almost always a
+# single poll caught mid-cross between OoT and MM, when the bases are flipping
+# and this fixed offset reads rubbish, and not a reason to freeze a live game.
+GAME_MODE_NOT_PLAYING = {1, 2, 3, 4}
+# How many polls in a row an unknown gameMode has to last before it is the
+# offset being wrong for this build (a real problem) rather than a crossing
+# transient (which lasts a poll or two). At POLL_SECONDS this is several
+# seconds, well past any OoT<->MM switch.
+GAME_MODE_ODD_PERSIST = 12
 
 
 # --------------------------------------------------------------------------
