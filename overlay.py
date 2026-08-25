@@ -92,6 +92,11 @@ PLACEMENT_KNOWN_MIN = 100
 # "whole scene" toggle. Every normal scene is well under this; GROTTOS, the one
 # scene that holds hundreds, is capped and the page says how many it left out.
 OTHER_ROOM_CAP = 80
+# Scenes whose "remaining" panel ignores the room by default. Gerudo Fortress's
+# archery crates are filed under room 1 and shot from horseback across the
+# scene, so a room filter hides the very checks being hit. The Rooms control
+# and ?rooms= still apply everywhere; this only flips the default here.
+WHOLE_SCENE = {("oot", "GERUDO_FORTRESS")}
 # A spoiler is refused when, over at least this many spots both it and the
 # ROM name, it agrees on fewer than this fraction (see Tracker._vet_spoiler).
 SPOILER_MIN_COMPARABLE = 100
@@ -256,6 +261,18 @@ JUNK_PATTERNS = [
     r"^(Dungeon )?Map( \(.*\))?" + JUEGO + r"$",
     r"^Compass( \(.*\))?" + JUEGO + r"$",
 ]
+
+# Skulltula tokens are filler only when the seed leaves them where they always
+# were (his call, 25 ago 2026). Unshuffled, the 144 Gold Skulltulas -- and the
+# 60 of MM's spider houses -- sit in every "remaining" panel as pending noise
+# on a run that is not collecting them. Shuffled, a token is a find like any
+# other and the spider houses hold real items, so nothing changes. The pool's
+# vanilla symbol against the ROM's item name; see Tracker.unshuffled_tokens.
+TOKEN_KINDS = {
+    "GS_TOKEN": "Gold Skulltula Token",
+    "GS_TOKEN_SWAMP": "Swamp Skulltula Token",
+    "GS_TOKEN_OCEAN": "Ocean Skulltula Token",
+}
 
 # --- pond fish --------------------------------------------------------------
 #
@@ -737,6 +754,14 @@ class Tracker:
         # setups its own xflags mention. Needed to resolve the loaded setup the
         # same way the game does -- see setup_loaded().
         self.scene_setups = collections.defaultdict(set)
+        # The SCENE's own alternate headers, read off the ROM by setups.py
+        # (checks.json "scene_layers"): the list the game walks. Empty on a
+        # checks.json built before it existed, and then scene_setups stands in.
+        self.scene_layers = {
+            (g, int(sid)): set(layers)
+            for g, per in (table.get("scene_layers") or {}).items()
+            for sid, layers in per.items()
+        }
         # Which real rooms each scene has checks in. Used to tell whether the
         # room you are standing in is one of its own -- see the grotto note in
         # refresh().
@@ -744,7 +769,9 @@ class Tracker:
         for c in table["checks"]:
             xf = c.get("xflag")
             if xf is not None and c["scene_id"] is not None:
-                self.scene_setups[c["game"], c["scene_id"]].add(xf["setup"])
+                # a row that is the same actor in several setups counts for each
+                for s in xf.get("setups") or (xf["setup"],):
+                    self.scene_setups[c["game"], c["scene_id"]].add(s)
                 if xf["room"] < 0x20:
                     self.scene_rooms[c["game"], c["scene_id"]].add(xf["room"])
         # per-game totals, so an overlay filtered with ?game= shows its own
@@ -813,6 +840,8 @@ class Tracker:
             c["name"]: is_junk(items.get((c["game"], c["name"])))
             for c in self.table["checks"]
         }
+        for _g, name in self.unshuffled_tokens(items):
+            self.junk[name] = True
         self.hay_spoiler = bool(items)
         self.plan, self.regions = build_plan(
             self.table, self.is_active,
@@ -834,6 +863,25 @@ class Tracker:
         self._custom_live = sum(
             1 for c in (self.plan.get("custom") or {}).get("checks", []) if c.get("item")
         ) >= 100
+
+    def unshuffled_tokens(self, items):
+        """The checks whose skulltula token the seed left in place: filler.
+
+        A token kind is unshuffled when the spots holding it -- one's own, not
+        another world's -- are exactly the spots that always held it. One
+        token moved, or one of those spots holding something else, and the
+        kind counts as shuffled: then every token is a real find and none of
+        this applies. Empty without an item map (no ROM placement, no spoiler).
+        """
+        out = set()
+        for vanilla, token in TOKEN_KINDS.items():
+            holding = {k for k, it in items.items()
+                       if it == token and self.worlds.get(k) is None}
+            born = {(c["game"], c["name"]) for c in self.table["checks"]
+                    if c.get("vanilla") == vanilla and (c["game"], c["name"]) in items}
+            if holding and holding == born:
+                out |= holding
+        return out
 
     def item_de(self, game, name):
         return self.items.get((game, name))
@@ -994,10 +1042,14 @@ class Tracker:
         have = self.scene_setups.get((game, scene_id))
         if wanted is None or not have:
             return None
+        # What the game walks is the SCENE's alternate header list (oot/room.c
+        # updateSceneSetup); checks.json carries it when setups.py could read
+        # the ROM, and the setups the checks mention stand in otherwise.
+        headers = self.scene_layers.get((game, scene_id), have)
         got = 0
         if 0 <= wanted <= 3:
             for s in range(wanted, 0, -1):
-                if s in have:
+                if s in headers:
                     got = s
                     break
         # A scene whose only xflags live in an alternate header would resolve
@@ -1670,11 +1722,16 @@ class Tracker:
             # comboXflagInit rewrites. So if you are standing in a room the
             # scene owns, none of the `0x20 |` ones can be yours.
             sala_propia = room is not None and room in self.scene_rooms.get((active, scene), ())
+            # some scenes are one place however many rooms they have
+            whole = (active, self.scene_names.get((active, scene))) in WHOLE_SCENE
 
             lista, otras, otros, fuera = [], [], 0, 0
             for c in pend:
                 xf = c.get("xflag") or {}
-                if setup is not None and xf.get("setup", setup) != setup:
+                # A twin -- the same actor in several headers -- is one row
+                # filed under one setup and collectable in all of `setups`
+                # (setups.py); a row without it lives in its own setup only.
+                if setup is not None and setup not in (xf.get("setups") or (xf.get("setup", setup),)):
                     otros += 1
                     continue
                 croom = xf.get("room")
@@ -1683,6 +1740,8 @@ class Tracker:
                         fuera += 1
                         continue
                     croom = None   # in the generic room they are all candidates
+                if whole:
+                    croom = None   # no room of its own: listed, untagged, unfiltered
                 entry = {
                     "name": c["name"],
                     "item": self.item_de(c["game"], c["name"]),
@@ -1722,6 +1781,7 @@ class Tracker:
             # How many of the other-room checks actually travelled (the rest are
             # over the cap): the page needs it to say what it is still hiding.
             here["other_room_listed"] = len(otras)
+            here["whole"] = whole
 
         with self.lock:
             s = self.state

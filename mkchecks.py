@@ -1300,6 +1300,19 @@ def main(argv=None):
         except Exception as ex:
             print(f"souls: could not be read ({type(ex).__name__}: {ex})")
 
+    # Which alternate headers each scene has, and which xflag rows are the same
+    # actor in more than one of them (setups.py). The pool lists such an actor
+    # once, under one setup, and the game marks that row whichever setup is
+    # loaded; the overlay must not set it aside as "another setup". Adds
+    # `setups` to those rows. Null without a ROM.
+    capas = None
+    if rom_bytes is not None:
+        try:
+            import setups as setups_mod
+            capas = setups_mod.annotate(checks, rom_bytes)
+        except Exception as ex:
+            print(f"setups: could not be read ({type(ex).__name__}: {ex})")
+
     resolved = [c for c in checks if c["addr"] is not None]
     import collections
     bytarget = collections.Counter(c["target"] for c in checks)
@@ -1310,6 +1323,10 @@ def main(argv=None):
         # where each row's item came from; null when generated without a ROM
         "placement": colocacion,
         "entrances": entradas,
+        # The SCENE alternate headers each OoT scene has, by scene id: the list
+        # the game walks to resolve the loaded setup (setups.py). Null without
+        # a ROM; then the overlay falls back to the setups the checks mention.
+        "scene_layers": capas,
         # False when the ROM's item names disagree with data/gi.yml, i.e. the
         # seed is from another OoTMM version. Null when built without a ROM.
         "same_version_as_data": misma_version,

@@ -1358,7 +1358,7 @@ function pendVisible(here) {
   /* Default: only what is in this room, plus the checks that belong to no room
      of their own (chests, NPCs, shops). "whole scene" keeps the other rooms
      too -- the server sends them either way, so this is a pure view switch. */
-  if (!ROOMS_ALL) list = list.filter(p => p.here || p.room == null);
+  if (!ROOMS_ALL && !here.whole) list = list.filter(p => p.here || p.room == null);
   return list;
 }
 
@@ -1683,7 +1683,8 @@ function render(s) {
   // the room only earns its place in the title when the scene has more than
   // one: room 0 is every single-room area, and saying so is just noise. With
   // "whole scene" on, the title says so instead of naming one room.
-  const roomTag = ROOMS_ALL ? ' · whole scene' : (here.room > 0 ? ` · room ${here.room}` : '');
+  // a WHOLE_SCENE area (Gerudo Fortress) says so too: the server sent it unfiltered
+  const roomTag = (ROOMS_ALL || here.whole) ? ' · whole scene' : (here.room > 0 ? ` · room ${here.room}` : '');
   setText('pend-title', here.scene ? `Remaining in ${here.scene}${roomTag}` : 'Remaining here');
   setHTML('pend', renderPend(here));
   // Count what is actually VISIBLE, junk filter included: with the filter on
