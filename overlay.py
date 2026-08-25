@@ -2244,10 +2244,14 @@ def scan_user_icons():
             rel = f if rel_dir == "." else f"{rel_dir}/{f}"
             found[(game, normalize_icon_name(stem))] = rel
     return found
-# scalars that go to the figures row, not to the grid
+# scalars that go to the figures row, not to the grid. Each game keeps its own
+# rupees and hearts (the other game's save only moves when you cross), so both
+# lists carry them; the page shows the running game's when it is not filtered
+# to one. `hearts` folds `max hearts` in: one figure in hearts, `14/20`, not
+# two raw counts of sixteenths.
 SCALARS = {
-    "oot": ["rupees", "hearts", "max hearts", "skulltulas", "deaths", "triforce"],
-    "mm": ["heart pieces", "swamp skulltulas", "ocean skulltulas"],
+    "oot": ["rupees", "hearts", "skulltulas", "deaths", "triforce"],
+    "mm": ["rupees", "hearts", "heart pieces", "swamp skulltulas", "ocean skulltulas"],
 }
 # Only shown when non-zero: a seed without a Triforce hunt would otherwise
 # carry a permanent "triforce 0".
@@ -2562,10 +2566,15 @@ def item_scalars(game, snap):
 
     out = []
     for key in SCALARS.get(game, []):
-        if key in snap:
-            if key in SCALARS_OPTIONAL and not snap[key]:
-                continue
-            out.append({"label": key, "value": inventory.fmt(key, snap[key], game)})
+        if key not in snap:
+            continue
+        if key in SCALARS_OPTIONAL and not snap[key]:
+            continue
+        if key == "hearts":
+            value = inventory.hearts_text(snap["hearts"], snap.get("max hearts"))
+        else:
+            value = inventory.fmt(key, snap[key], game)
+        out.append({"label": key, "value": value})
     return out
 
 

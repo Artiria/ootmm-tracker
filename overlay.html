@@ -1586,10 +1586,18 @@ function render(s) {
   setHTML('badges', badge
     ? `<span class="badge ${badge}"><span class="dot"></span>${GAME[badge] || badge}</span>` : '');
 
+  /* Each game keeps its own rupees and hearts (the other game's save only
+     moves when you cross), so both lists carry them. Filtered to a game, the
+     panel shows that game's; unfiltered, a label both games send shows the
+     running game's -- the figure on the player's screen -- in the same slot. */
   const sc = [];
+  const at = {};
   for (const g of Object.keys(s.scalars || {})) {
     if (!keepGame(g)) continue;
-    for (const x of s.scalars[g]) sc.push(x);
+    for (const x of s.scalars[g]) {
+      if (!(x.label in at)) { at[x.label] = sc.length; sc.push(x); }
+      else if (g === s.active) sc[at[x.label]] = x;
+    }
   }
   setHTML('stats', sc.map(x =>
     `<div class="stat"><div class="k">${esc(x.label)}</div><div class="v">${esc(x.value)}</div></div>`).join(''));

@@ -197,6 +197,14 @@ def snapshot(save):
 # i.e. the low byte of the u16 at +0xEB8. In combo/mm/save.h skullCountOcean
 # justo detras de skullCountSwamp.
 MM_SCALARS = [
+    # MmSavePlayerData right after the `ZELDA3` signature at +0x1C: the same
+    # three fields ootmm.save_looks_sane validates before a base is trusted
+    # (capacity a whole number of hearts, health within it, rupees <= 9999).
+    # MM keeps its own: in eight dumps the two saves never agreed on health
+    # or rupees, and the other game's copy only moves when you cross.
+    ("rupees", 0x32, 2, True),
+    ("hearts", 0x2E, 2, True),
+    ("max hearts", 0x2C, 2, True),
     ("swamp skulltulas", 0xEB8, 2, False),
     ("ocean skulltulas", 0xEBA, 2, False),
 ]
@@ -501,3 +509,24 @@ def fmt(key, value, game="oot"):
     if key.startswith("quest:"):
         return "YES" if value else "no"
     return str(value)
+
+
+# The save counts health in sixteenths of a heart, and the figures row used to
+# print that raw: `hearts 224` next to `max hearts 320`, which reads as nothing
+# at all (a friend's complaint, 25 Aug 2026). A quarter is the smallest step
+# the game deals in -- damage and recovery come in multiples of 4 -- so the
+# current health is written down to the quarter it holds, and the capacity is
+# always whole: save_looks_sane rejects a base whose capacity is not.
+QUARTERS = ("", "¼", "½", "¾")
+
+
+def hearts_text(health, capacity=None):
+    """`224` of `320` as the player sees them, `14/20`; `44` of `48` is `2¾/3`."""
+    if not isinstance(health, int):
+        return str(health)
+    whole, rest = divmod(max(health, 0), 16)
+    cur = f"{whole}{QUARTERS[rest // 4]}"
+    if not isinstance(capacity, int) or capacity <= 0:
+        return cur
+    cap = str(capacity // 16) if capacity % 16 == 0 else f"{capacity / 16:g}"
+    return f"{cur}/{cap}"
