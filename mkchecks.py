@@ -499,19 +499,34 @@ def load_pool(path):
 
 
 def load_mq(spoiler):
-    """The seed's Master Quest dungeons, from the spoiler log.
+    """The seed's Master Quest dungeons, as the spoiler names them.
 
-    Vanilla and MQ share a sceneId and therefore share an xflag bit: the ROM
-    tables do not tell them apart because in a given seed only one of the two
-    exists. Without the spoiler there is no way to know which, so MQ rows are
-    marked with "mq": true and whoever consumes checks.json decides.
+    Only to check against: which scenes are Master Quest comes out of the ROM
+    now (placement.master_quest_scenes), and the tracker no longer needs a
+    spoiler to know.
+
+    OoTMM writes them as a list under the header, one `- Name` per line, and
+    only "none" goes on the header line itself. Reading just the header, which
+    is what this did, made **every** MQ seed come back as "none" -- so the
+    warning about not being able to map them never even fired, and the seed
+    quietly kept every vanilla twin.
     """
     if spoiler is None:
         return None
-    for line in pathlib.Path(spoiler).read_text(encoding="utf-8").splitlines():
-        if line.strip().startswith("Master Quest Dungeons:"):
-            val = line.split(":", 1)[1].strip()
-            return set() if val in ("none", "") else {d.strip() for d in val.split(",")}
+    lineas = pathlib.Path(spoiler).read_text(encoding="utf-8").splitlines()
+    for i, line in enumerate(lineas):
+        if not line.strip().startswith("Master Quest Dungeons:"):
+            continue
+        val = line.split(":", 1)[1].strip()
+        if val and val != "none":
+            return {d.strip() for d in val.split(",")}     # older one-line form
+        fuera = set()
+        for seguida in lineas[i + 1:]:
+            m = re.match(r"^\s+-\s+(\S.*?)\s*$", seguida)
+            if not m:
+                break
+            fuera.add(m.group(1))
+        return fuera
     return None
 
 
@@ -1121,18 +1136,12 @@ def main(argv=None):
             tables[g] = XflagTables(rom_bytes, g, vroms.get(g))
             t = tables[g]
             print(f"xflags {g}: ROM tables read ({t.limit} bits of room)")
+    # The spoiler's list, when there is one, is kept only to check the answer
+    # against: which scenes are Master Quest is worked out from the ROM once
+    # the placement is read (placement.master_quest_scenes), below.
     mq = load_mq(args.spoiler)
-    mq_scenes = None
     if mq is not None:
         print(f"spoiler: Master Quest = {sorted(mq) or 'none'}")
-        # with no MQ, the MQ scene set is empty and that is enough for the
-        # consumer to discard every MQ row. With MQ we would have to map the
-        # spoiler's names to scene names, which is not implemented.
-        mq_scenes = set()
-        if mq:
-            print("  warning: this seed has MQ dungeons and mapping those names")
-            print("           to scenes is not implemented; mq_scenes stays null")
-            mq_scenes = None
 
     checks = []
     unresolved_scenes = set()
@@ -1251,6 +1260,10 @@ def main(argv=None):
     colocacion = None
     misma_version = None
     mundo = None
+    # null means "not worked out": without the placement there is nothing to
+    # tell the twins apart with, and the reader keeps the vanilla rows
+    mq_scenes = None
+    dudosas = set()
     if args.rom:
         import placement
 
@@ -1279,6 +1292,14 @@ def main(argv=None):
             print(f"placement (COMBO_VROM_CHECKS): {ok} locations with an item")
             print(f"  no key could be formed: {sin_clave}   not in the table: {no_estan}")
             colocacion = {"resolved": ok, "no_key": sin_clave, "not_found": no_estan}
+            # Which dungeons this seed lays out as Master Quest. It needs the
+            # keys resolve() just wrote, so it happens here and not with the
+            # rest of the settings.
+            son_mq, dudosas = placement.master_quest_scenes(rom_bytes, checks, True)
+            mq_scenes = sorted(son_mq)
+            if mq is not None and len(mq) != len(son_mq):
+                print(f"  NOTE: the spoiler names {len(mq)} Master Quest dungeons"
+                      f" and the ROM's placement says {len(son_mq)}; going with the ROM")
             if ok < activos * 0.9:
                 print("  warning: under 90% of the checks with an address have an item;")
                 print("           the overlay will need a spoiler to filter")
@@ -1376,7 +1397,9 @@ def main(argv=None):
         # scenes whose Master Quest version is the one this seed has. With a
         # spoiler and no MQ it is an empty list, meaning "every MQ row is
         # surplus"; without a spoiler it is null, meaning "unknown".
-        "mq_scenes": sorted(mq_scenes) if mq_scenes is not None else None,
+        # Which scenes are Master Quest, and which could not be told apart
+        # (nothing shuffled in them); the reader keeps the vanilla twin there.
+        "mq": {"scenes": mq_scenes, "unknown": sorted(dudosas)} if mq_scenes is not None else None,
         # the soul shuffle catalogue and bitmaps; null when built without a ROM
         "souls": almas,
         "checks": checks,

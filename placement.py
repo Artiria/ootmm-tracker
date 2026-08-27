@@ -672,6 +672,57 @@ def same_item(spoiler_name, rom_name):
     return False
 
 
+def master_quest_scenes(rom_bytes, checks, verbose=False):
+    """({scene} laid out as Master Quest, {scene} that cannot be told), from
+    the ROM alone.
+
+    A dungeon's vanilla rows and its MQ twin share their xflag bit on purpose,
+    which is why what is SET cannot tell them apart. Their override keys are
+    another matter: a key carries the room and the actor, and the two layouts
+    do not put the same things in the same rooms. So the keys one twin has and
+    the other does not settle it — the ROM's placement table holds the layout
+    this seed actually has, and none of the other one's.
+
+    Measured on f3898OSQ, five MQ dungeons among twelve twinned scenes: on
+    every one of the twelve, one side had ZERO of its exclusive keys in the
+    table and the other had between 10 and 68. The five it picks are the five
+    the ROM's own config bitmask names.
+
+    No spoiler is involved, and that is the point: the spoiler was the only
+    source before, mapping its dungeon names to scenes was never implemented,
+    and so an MQ seed labelled its checks with the vanilla twin's names without
+    a word. A scene with nothing shuffled in it has no exclusive keys either
+    way and comes back as unknown; the caller keeps the vanilla row there,
+    which is what the tracker did for every seed until now.
+    """
+    tabla = read_tables(rom_bytes)
+    vanilla, mq = collections.defaultdict(set), collections.defaultdict(set)
+    for c in checks:
+        clave = c.get("ovkey")
+        if clave is None:
+            continue
+        (mq if c.get("mq") else vanilla)[(c["game"], c["scene"])].add(clave)
+
+    son_mq, dudosas = set(), set()
+    for e in sorted(set(vanilla) & set(mq)):
+        juego = e[0]
+        en_v = sum(1 for k in vanilla[e] - mq[e] if (juego, k) in tabla)
+        en_m = sum(1 for k in mq[e] - vanilla[e] if (juego, k) in tabla)
+        if en_m and not en_v:
+            son_mq.add(e[1])
+        elif not en_v and not en_m:
+            dudosas.add(e[1])
+        elif en_v and en_m:
+            dudosas.add(e[1])       # both layouts at once is not a seed
+    if verbose:
+        print(f"master quest: {len(son_mq)} of {len(set(vanilla) & set(mq))} twinned"
+              f" scenes are MQ in this seed, read from the ROM's placement"
+              + (f"; {sorted(dudosas)} could not be told and stay vanilla" if dudosas else ""))
+        if son_mq:
+            print(f"   {', '.join(sorted(son_mq))}")
+    return son_mq, dudosas
+
+
 def _score_worlds(checks, spoiler_worlds):
     """{world: (agree, comparable)} of each spoiler world against the ROM.
 

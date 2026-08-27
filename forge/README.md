@@ -43,6 +43,14 @@ CI used (`ghcr.io/ootmm/toolchain:1.4` from v31 on, `ootmm-ci:1.0.0` before;
 | `--players N` | a multiworld of N players with default settings: one `.ootmm` and one ROM per world |
 | `--from-spoiler FILE` | the exact settings of a real seed, from its spoiler's `SettingsString` — the way to get *your* usual settings at another version |
 
+**Keep a Master Quest seed in the matrix.** No preset turns MQ on, and MQ is
+where the twins share an xflag bit, so nothing else exercises the code that
+tells them apart. `--from-spoiler` on any seed that had MQ dungeons gives one;
+the settings pick the dungeons afresh, so the built seed's own spoiler is what
+says which. That is how the spoiler's MQ list turned out to have been read
+wrong for months — it is written as `- Name` lines under the header, and only
+the header was being read, so every MQ seed looked like it had none.
+
 A ref is a tag (`v32.3`), `master`, or a commit sha; the label of a dev
 build is `dev-<sha7>`, the same the website would print. Seeds are named
 after version and job (`forge-v32.3-default`), so a rerun gives the same ROM.

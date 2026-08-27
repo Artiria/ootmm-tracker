@@ -605,7 +605,12 @@ class Tracker:
         self.spoiler_rejected = None    # why the spoiler was dropped, or None
         # vanilla and MQ share a flag; in one seed only one version of each
         # dungeon exists, and which one is recorded by mkchecks
-        self.mq_scenes = set(table.get("mq_scenes") or [])
+        # Which scenes this seed lays out as Master Quest, worked out from the
+        # ROM's own placement when the tables were built
+        # (placement.master_quest_scenes). Empty when it could not be worked
+        # out, and then every vanilla twin stands, which is what the tracker
+        # did before it could tell.
+        self.mq_scenes = set((table.get("mq") or {}).get("scenes") or [])
         # what item sits in each spot. Normally it comes from the ROM, inside
         # checks.json; a hand-loaded spoiler is only needed when that ROM's
         # placement table could not be read.

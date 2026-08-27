@@ -448,7 +448,8 @@ def ensure_tables(rom, spoiler, verbose=True):
             or not _has_key(checks, "payload")
             or not _has_key(checks, "souls")
             or not _has_key(checks, "scene_layers")
-            or not _has_key(checks, "payload", "oot", "triforce")):
+            or not _has_key(checks, "payload", "oot", "triforce")
+            or not _has_key(checks, "mq")):
         argv = ["--rom", rom]
         if spoiler:
             argv += ["--spoiler", spoiler]

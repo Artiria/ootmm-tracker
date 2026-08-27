@@ -222,6 +222,7 @@ def parse_spoiler(path):
     worlds, entrances, mq = {}, {}, set()
     section = None
     world = 1
+    en_lista = False
     # a multiworld spoiler opens each world with "  World N (984)" / "  World N"
     # inside the section; the lines under it carry no world of their own
     hdr = re.compile(r"^\s{1,3}World (\d+)\b")
@@ -246,8 +247,16 @@ def parse_spoiler(path):
             if m:
                 entrances.setdefault(world, []).append((m.group(1), m.group(2)))
         elif section == "World Flags" and line.strip().startswith("Master Quest Dungeons:"):
+            # the header carries "none"; anything else is a list of "- Name"
+            # lines below it, and reading only the header read every MQ seed
+            # as having none
             val = line.split(":", 1)[1].strip()
-            mq = set() if val in ("none", "") else {d.strip() for d in val.split(",")}
+            mq = {d.strip() for d in val.split(",")} if val and val != "none" else set()
+            en_lista = not mq
+        elif en_lista and re.match(r"^\s+-\s+\S", line):
+            mq.add(line.strip()[1:].strip())
+        elif line.strip():
+            en_lista = False
     return worlds, entrances, mq
 
 
@@ -286,10 +295,11 @@ def check_placement(rep, data, spoiler, world, logp):
     if truth is None:
         rep.add("placement", "FAIL", f"the spoiler has worlds {sorted(worlds)}, this ROM is world {world}")
         return
-    # Vanilla and MQ rows of a dungeon share their keys, so both resolve to an
-    # item; only the layout the seed has is real. mkchecks maps the spoiler's
-    # MQ list to scenes only when it is empty (else mq_scenes stays null).
-    mq_scenes = data.get("mq_scenes")
+    # Vanilla and MQ rows of a dungeon share their xflag bit, so both can
+    # resolve to an item; only the layout the seed has is real. Since 27 ago
+    # 2026 mkchecks works that out from the ROM's own placement and no longer
+    # needs the spoiler's list -- which is what this checks it against.
+    mq_scenes = (data.get("mq") or {}).get("scenes")
     notes = []
     # the tracker's bundled data/ is one version's (v32.0); on a seed from
     # another version it reads placement and names from the ROM but the pool
@@ -298,7 +308,10 @@ def check_placement(rep, data, spoiler, world, logp):
     # consequence, not a regression, so they warn rather than fail.
     disclaimed = data.get("same_version_as_data") is False
     if mq_scenes is None and mq_dungeons:
-        notes.append(f"MQ seed ({len(mq_dungeons)} dungeons): mkchecks cannot map them, MQ rows ignored")
+        notes.append(f"MQ seed ({len(mq_dungeons)} dungeons): the tracker could not work out which, MQ rows ignored")
+    elif mq_scenes is not None and len(mq_scenes) != len(mq_dungeons):
+        notes.append(f"the spoiler names {len(mq_dungeons)} MQ dungeons and the tracker found "
+                     f"{len(mq_scenes)}: {sorted(mq_scenes)}")
     mq_scenes = set(mq_scenes or [])
     # every location the tracker knows, and the item it resolved for the ones
     # in this seed's layout. A check with no item is one the seed did not
