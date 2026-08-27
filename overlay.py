@@ -240,6 +240,16 @@ JUNK_PATTERNS = [
     # "Milk" in the spoiler, "some Lon Lon Milk" in the ROM
     r"^(Lon Lon )?Milk" + JUEGO + r"$",
     r"^(Red|Green|Blue) Potion" + JUEGO + r"$",
+    # The rest of that same family: what tops a bottle up. The potions, the
+    # fairy and the milk above are OoTMM's `add: BOTTLE_REFILL` too, and these
+    # were simply never listed -- a `Bug` sat in the feed as something that
+    # mattered (his report, 25 ago 2026). The ROM writes the singular, the
+    # spoiler sometimes the plural ("Bug" / "Bugs (OoT)"), so both are here.
+    # NOT the bottle itself: "Empty Bottle", "bottled Poe", "Bottle of Milk"
+    # and friends give you a bottle and stay checks -- the ^ anchor keeps them
+    # out. Blue Fire and Gold Dust are deliberately NOT here either: red ice
+    # and the Gilded Sword are the two things a refill is actually spent on.
+    r"^(Fish|Bugs?|(Big )?Poes?|Seahorse|Magic Mushroom|Chateau Romani)" + JUEGO + r"$",
     # A Piece of Heart is a quarter of a heart and nothing else depends on it.
     # `Heart Container` joined it on 18 Aug (his call; on 16 Aug it had stayed
     # out for being a whole heart). `Recovery Heart` is already filler above.
@@ -262,12 +272,22 @@ JUNK_PATTERNS = [
     r"^Compass( \(.*\))?" + JUEGO + r"$",
 ]
 
-# Skulltula tokens are filler only when the seed leaves them where they always
-# were (his call, 25 ago 2026). Unshuffled, the 144 Gold Skulltulas -- and the
-# 60 of MM's spider houses -- sit in every "remaining" panel as pending noise
-# on a run that is not collecting them. Shuffled, a token is a find like any
-# other and the spider houses hold real items, so nothing changes. The pool's
-# vanilla symbol against the ROM's item name; see Tracker.unshuffled_tokens.
+# Skulltula tokens sit in every "remaining" panel as pending noise on a run
+# that is not collecting them: 144 Gold Skulltulas and the 60 of MM's spider
+# houses (his complaint, 25 ago 2026). Whether they are noise or the point of
+# the run is the player's call, and the player makes it: the `tokens_junk`
+# switch, remembered between runs. See Tracker.set_tokens_junk.
+#
+# It was worked out from the seed at first, and that lasted a few hours: junk
+# when every token still sat in its vanilla spot, a real check when the seed
+# had moved one. The rule had to ask whether a token was YOURS, and that is
+# precisely what the tracker cannot tell on a multiworld ROM -- placement.py
+# reads the player number stamped on each item and calls anything that is not 1
+# somebody else's, so on world 2's ROM your own tokens read as your partner's.
+# The rule then saw no tokens of yours at all, decided the seed had shuffled
+# them, and filtered nothing; the same reading also made a seed look like it
+# had tokensanity on when it did not. A switch the player presses does not care
+# whose world anything is in, which is why it replaced the rule outright.
 TOKEN_KINDS = {
     "GS_TOKEN": "Gold Skulltula Token",
     "GS_TOKEN_SWAMP": "Swamp Skulltula Token",
@@ -353,7 +373,8 @@ def build_plan(table, active_pred, junk_pred=None):
     for c in table["checks"]:
         if c["addr"] is not None and "anchor" in c and active_pred(c):
             totals[(c["game"], c["scene"])] += 1
-            if junk_pred and not junk_pred(c["name"]):
+            # (game, name), never the bare name: see read_flags
+            if junk_pred and not junk_pred(c["game"], c["name"]):
                 clave[(c["game"], c["scene"])] += 1
     regions = sorted(totals.items(), key=lambda kv: (kv[0][0], -kv[1], kv[0][1]))
     return plan, [(g, s, n, clave[(g, s)]) for (g, s), n in regions]
@@ -494,7 +515,16 @@ def rebase(table, bases, active=None, custom=None):
 
 
 def read_flags(blob, checks, off0=0):
-    """Which checks are done inside a block already read."""
+    """Which checks are done inside a block already read, as (game, name).
+
+    The game has to be part of the key. Six check names exist in BOTH games --
+    the Goron and Zora shop slots, which each game has three of -- and keying
+    by the bare name let one game's purchase mark the other's slot as done,
+    hide it from the panel, and (through the `junk` map, keyed the same way)
+    lend it the other game's classification: OoT's Goron Shop Item 1 held a
+    green rupee and read as something that mattered because MM's slot of that
+    name held a Mask of Truth (his report, 25 ago 2026).
+    """
     done = set()
     for c in checks:
         o = c["off"] - off0
@@ -505,7 +535,7 @@ def read_flags(blob, checks, off0=0):
         else:
             word = struct.unpack_from(">I", blob, o)[0]
         if word & (1 << c["bit"]):
-            done.add(c["name"])
+            done.add((c["game"], c["name"]))
     return done
 
 
@@ -535,6 +565,35 @@ def confidence(blob, checks, ranges):
                     if (o, b) in known:
                         hits += 1
     return (hits / total if total else 1.0), total
+
+
+# --- the player's own switches ---------------------------------------------
+#
+# One file for the whole tracker and not one per seed: what lives here is a
+# preference ("I never care about skulltulas"), and having to tick the box
+# again after every restart is the friction the switch exists to remove. A file
+# that cannot be read is no options at all: a corrupt one must not stop the
+# overlay from starting.
+OPTIONS_FILE = "options.json"
+
+
+def load_options():
+    try:
+        opts = json.loads(open(paths.user(OPTIONS_FILE), encoding="utf-8").read())
+    except (OSError, ValueError):
+        return {}
+    return opts if isinstance(opts, dict) else {}
+
+
+def save_options(opts):
+    ruta = paths.user(OPTIONS_FILE)
+    try:
+        tmp = ruta + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(opts, f)
+        os.replace(tmp, ruta)
+    except OSError as ex:
+        print(f"[overlay] could not save the options: {ex}")
 
 
 class Tracker:
@@ -618,6 +677,19 @@ class Tracker:
         # panel stays hidden.
         import souls as souls_mod
         self.souls = souls_mod.Decoder.from_table(table)
+        # Where this build keeps the Triforce count inside OoT's save, measured
+        # by payload.py when the tables were built (it is not the same record in
+        # every OoTMM version). None on a checks.json built without a ROM or by
+        # a tracker older than this, and then the figure stays out.
+        self.triforce_off = ((table.get("payload") or {}).get("oot") or {}).get("triforce_off")
+        if self.triforce_off is None and table["checks"]:
+            print("[overlay] Triforce count: this build's record was not recognised,"
+                  " so the figure will not be shown")
+        # The player's own "skulltulas are junk" switch, remembered between
+        # runs. Read before the first _rebuild_items, or a tracker started with
+        # it on would show them until the page came up and said so.
+        self.tokens_junk = bool(load_options().get("tokens_junk"))
+        self.tokens_n = 0
         self._rebuild_items()
         self.lock = threading.Lock()
         self.state = {
@@ -636,6 +708,12 @@ class Tracker:
             "done_total": 0,
             "total": sum(n for _, _, n, _k in self.regions),
             "total_key": sum(k for _, _, _n, k in self.regions),
+            # The skulltula switch and how many checks it covers: the page only
+            # offers the control on a seed that has tokens to hide, and it has
+            # to be here from the first request or the box would flicker in
+            # half a second after the first poll.
+            "tokens_junk": self.tokens_junk,
+            "tokens_n": self.tokens_n,
             # Rows with an address that this seed does not shuffle, so they are
             # left out of every count. Said out loud, like every other thing a
             # panel leaves out: on a seed with grass and rocks vanilla it is
@@ -749,7 +827,10 @@ class Tracker:
         self.icons = load_icons()
         self.user_icons = scan_user_icons()
         self._user_icons_stamp = _icons_dir_stamp()
-        self.check_game = {c["name"]: c["game"] for c in table["checks"]}
+        # Every (game, name) in the seed. `check_game` cannot be a name -> game
+        # map: the six shop slots below share a name between the two games and
+        # one would overwrite the other (see read_flags).
+        self.check_keys = {(c["game"], c["name"]) for c in table["checks"]}
         # Which alternate scene headers each scene actually has, taken from the
         # setups its own xflags mention. Needed to resolve the loaded setup the
         # same way the game does -- see setup_loaded().
@@ -837,15 +918,25 @@ class Tracker:
             items.update(self.spoiler)
         self.items = items
         self.junk = {
-            c["name"]: is_junk(items.get((c["game"], c["name"])))
+            (c["game"], c["name"]): is_junk(items.get((c["game"], c["name"])))
             for c in self.table["checks"]
         }
-        for _g, name in self.unshuffled_tokens(items):
-            self.junk[name] = True
+        fichas = self.token_checks(items)
+        if self.tokens_junk:
+            for k in fichas:
+                self.junk[k] = True
+        # How many of them this seed actually counts, which is the number the
+        # totals move by: a token row in a Master Quest dungeon is in the table
+        # twice, vanilla and MQ, and only one of the two is in the seed. 204
+        # token spots, 160 counted, on a seed with MQ dungeons.
+        self.tokens_n = sum(
+            1 for c in self.table["checks"]
+            if (c["game"], c["name"]) in fichas and c["addr"] is not None
+            and "anchor" in c and self.is_active(c))
         self.hay_spoiler = bool(items)
         self.plan, self.regions = build_plan(
             self.table, self.is_active,
-            (lambda n: self.junk.get(n, False)) if items else None)
+            (lambda g, n: self.junk.get((g, n), False)) if items else None)
         # The soul bitmaps sit past the last check of the custom save on some
         # seeds (no pond fish placed, say): read that far.
         if self.souls is not None and self.souls.ok and "custom" in self.plan:
@@ -864,24 +955,21 @@ class Tracker:
             1 for c in (self.plan.get("custom") or {}).get("checks", []) if c.get("item")
         ) >= 100
 
-    def unshuffled_tokens(self, items):
-        """The checks whose skulltula token the seed left in place: filler.
+    def token_checks(self, items):
+        """Every spot holding a skulltula token, whoever the token is for.
 
-        A token kind is unshuffled when the spots holding it -- one's own, not
-        another world's -- are exactly the spots that always held it. One
-        token moved, or one of those spots holding something else, and the
-        kind counts as shuffled: then every token is a real find and none of
-        this applies. Empty without an item map (no ROM placement, no spoiler).
+        What the switch hides. It asks nothing about the seed or about worlds,
+        which is what the rule it replaced got wrong: the player has decided a
+        skulltula is not a check worth showing, and on a multiworld ROM the
+        tracker's idea of "yours" is not to be trusted anyway. With no item map
+        at all -- no placement read, no spoiler -- what a spot holds is unknown
+        and the vanilla token locations are the closest thing to an answer.
         """
-        out = set()
-        for vanilla, token in TOKEN_KINDS.items():
-            holding = {k for k, it in items.items()
-                       if it == token and self.worlds.get(k) is None}
-            born = {(c["game"], c["name"]) for c in self.table["checks"]
-                    if c.get("vanilla") == vanilla and (c["game"], c["name"]) in items}
-            if holding and holding == born:
-                out |= holding
-        return out
+        fichas = set(TOKEN_KINDS.values())
+        if items:
+            return {k for k, it in items.items() if it in fichas}
+        return {(c["game"], c["name"]) for c in self.table["checks"]
+                if c.get("vanilla") in TOKEN_KINDS}
 
     def item_de(self, game, name):
         return self.items.get((game, name))
@@ -911,11 +999,10 @@ class Tracker:
             # next poll the page shows the new total against the old progress
             # —"18 / 612"— and that number has never existed. The per-region
             # ones catch up on the poll, half a second later.
-            hechos = [n for n in self._done if not self.junk.get(n, False)]
+            hechos = [k for k in self._done if not self.junk.get(k, False)]
             self.state["done_key_total"] = len(hechos)
             self.state["done_key_by_game"] = {
-                g: sum(1 for n in hechos if self.check_game.get(n) == g)
-                for g in ("oot", "mm")
+                g: sum(1 for gg, _n in hechos if gg == g) for g in ("oot", "mm")
             }
             return {
                 "n": len(self.spoiler),
@@ -923,6 +1010,37 @@ class Tracker:
                 "total": self.state["total"],
                 "total_key": self.state["total_key"],
             }
+
+    def set_tokens_junk(self, on):
+        """Count every skulltula token as filler from now on, or stop.
+
+        Server side and not a view switch like the room or the spoiler level,
+        because what it changes is the classification itself: the "only what
+        matters" totals, the per-region key counts and what the hint picker
+        will offer all read `junk`. A page-side filter would empty the list and
+        leave those numbers claiming the skulltulas still matter.
+
+        Remembered in the options file, so a restart mid-run does not put 160
+        spiders back on the panel.
+        """
+        with self.lock:
+            self.tokens_junk = bool(on)
+            opts = load_options()
+            opts["tokens_junk"] = self.tokens_junk
+            save_options(opts)
+            self._rebuild_items()
+            # Same as set_spoiler: the totals that depend on the classification,
+            # now, so the page never shows a new total against an old progress.
+            self.state["total_key"] = sum(k for _, _, _n, k in self.regions)
+            self.state["tokens_junk"] = self.tokens_junk
+            self.state["tokens_n"] = self.tokens_n
+            hechos = [k for k in self._done if not self.junk.get(k, False)]
+            self.state["done_key_total"] = len(hechos)
+            self.state["done_key_by_game"] = {
+                g: sum(1 for gg, _n in hechos if gg == g) for g in ("oot", "mm")
+            }
+            return {"ok": True, "tokens_junk": self.tokens_junk, "n": self.tokens_n,
+                    "total_key": self.state["total_key"]}
 
     def _active_version(self, c):
         """The vanilla row or its Master Quest twin: only one exists in a seed."""
@@ -1258,7 +1376,8 @@ class Tracker:
                        and self.item_de(c["game"], c["name"]) == item]
             if not holders:
                 return None
-            c = next((h for h in holders if h["name"] not in self._done), holders[0])
+            c = next((h for h in holders
+                      if (h["game"], h["name"]) not in self._done), holders[0])
             # the region is the scene, made readable: the pool's `hint` column
             # is a hint-group id and NONE on 98% of the rows, so it will not do
             region = (c["scene"] or "").replace("_", " ").title()
@@ -1284,7 +1403,7 @@ class Tracker:
         out = []
         for h in self.hints.values():
             e = {"item": h["item"], "level": h["level"], "t": h["t"], "game": h["game"],
-                 "done": h["check"] in done}
+                 "done": (h["game"], h["check"]) in done}
             if h["level"] >= 2:
                 e["region"] = h["region"]
             if h["level"] >= 3:
@@ -1297,10 +1416,11 @@ class Tracker:
         """What can be asked about: items of the checks not done, filler out."""
         seen = set()
         for c in self.table["checks"]:
-            if c["addr"] is None or c["name"] in done or not self.is_active(c):
+            if (c["addr"] is None or (c["game"], c["name"]) in done
+                    or not self.is_active(c)):
                 continue
             it = self.item_de(c["game"], c["name"])
-            if it and not self.junk.get(c["name"], False):
+            if it and not self.junk.get((c["game"], c["name"]), False):
                 seen.add(it)
         return sorted(seen)
 
@@ -1528,7 +1648,7 @@ class Tracker:
         items = {}
         oot_blk = self.link.read_block(bases["oot"], 0x1500) if "oot" in bases else None
         if oot_blk is not None:
-            items["oot"] = inventory.snapshot(oot_blk)
+            items["oot"] = inventory.snapshot(oot_blk, self.triforce_off)
 
         # The running game's save entrance: OoT keeps it at +0x00, MM at
         # MmSave+0x00, eight bytes before the base this project uses.
@@ -1638,13 +1758,15 @@ class Tracker:
         # by spitting out everything you had already done
         feed = []
         if self._seeded:
-            for name in sorted(done - self._done):
+            # the game comes with the key now, so the item is looked up in
+            # the right one instead of asking OoT first and MM if that missed
+            for game, name in sorted(done - self._done):
                 feed.append(
                     {
                         "check": name,
-                        "game": self.check_game.get(name),
-                        "item": self.item_de("oot", name) or self.item_de("mm", name),
-                        "world": self.world_de("oot", name) or self.world_de("mm", name),
+                        "game": game,
+                        "item": self.item_de(game, name),
+                        "world": self.world_de(game, name),
                         "t": time.time(),
                     }
                 )
@@ -1654,9 +1776,9 @@ class Tracker:
         by_scene = collections.Counter()
         by_scene_key = collections.Counter()
         for c in self.table["checks"]:
-            if c["name"] in done and self.is_active(c):
+            if (c["game"], c["name"]) in done and self.is_active(c):
                 by_scene[(c["game"], c["scene"])] += 1
-                if not self.junk.get(c["name"], False):
+                if not self.junk.get((c["game"], c["name"]), False):
                     by_scene_key[(c["game"], c["scene"])] += 1
 
         # Every region goes to the page, the untouched ones included: whether
@@ -1700,7 +1822,7 @@ class Tracker:
                 and c["scene_id"] == scene
                 and c["addr"] is not None
                 and self.is_active(c)
-                and c["name"] not in done
+                and (c["game"], c["name"]) not in done
             ]
             # A scene in another setup is a different set of actors, so its
             # checks cannot be reached while this one is loaded. Leaving them in
@@ -1747,7 +1869,7 @@ class Tracker:
                     "item": self.item_de(c["game"], c["name"]),
                     "world": self.world_de(c["game"], c["name"]),
                     "type": c["type"],
-                    "junk": self.junk.get(c["name"], False),
+                    "junk": self.junk.get((c["game"], c["name"]), False),
                     "room": croom,
                     "here": croom is not None and croom == room,
                     # the item shows regardless of the spoiler level once the
@@ -1814,8 +1936,10 @@ class Tracker:
                 "all": self.entrances,
             }
             s["done_total"] = len(done)
-            s["done_key_total"] = sum(1 for n in done if not self.junk.get(n, False))
+            s["done_key_total"] = sum(1 for k in done if not self.junk.get(k, False))
             s["can_filter"] = self.hay_spoiler
+            s["tokens_junk"] = self.tokens_junk
+            s["tokens_n"] = self.tokens_n
             s["done_by_game"] = {
                 g: sum(v for (gg, _), v in by_scene.items() if gg == g) for g in ("oot", "mm")
             }
@@ -1831,11 +1955,11 @@ class Tracker:
             # Great Fairy rewards are already collected, which lives in `done`,
             # not in the item snapshot. Computed once and passed to item_grid.
             fairy_info = {
-                "rewards_done": {name: any(rc in done for rc in checks)
+                "rewards_done": {name: any(("mm", rc) in done for rc in checks)
                                  for name, checks in GF_REWARD.items()},
-                "clock_in_seed": CLOCK_STRAY_CHECK in self.check_game,
-                "clock_have": CLOCK_STRAY_CHECK in done,
-                "clock_reward_done": any(rc in done for rc in CLOCK_REWARD_CHECKS),
+                "clock_in_seed": ("mm", CLOCK_STRAY_CHECK) in self.check_keys,
+                "clock_have": ("mm", CLOCK_STRAY_CHECK) in done,
+                "clock_reward_done": any(("mm", rc) in done for rc in CLOCK_REWARD_CHECKS),
             }
             s["items"] = {g: item_grid(g, v, self.icons, self.user_icons,
                                        fairy_info if g == "mm" else None)
@@ -1845,7 +1969,8 @@ class Tracker:
             # done any more was a transient poll, not progress
             now = time.time()
             kept = [f for f in s["feed"]
-                    if f["check"] in done or now - f["t"] > FEED_RETRACT_SECONDS]
+                    if (f["game"], f["check"]) in done
+                    or now - f["t"] > FEED_RETRACT_SECONDS]
             s["feed"] = (feed + kept)[:FEED_MAX]
             s["pending_here"] = here
             s["uptime"] = int(time.time() - self._started)
@@ -2776,7 +2901,7 @@ def serve(tracker, host, port, open_window=True):
             # file read, and the server can end up listening off 127.0.0.1
             # with --http-host.
             route = self.path.split("?", 1)[0]
-            if route not in ("/spoiler", "/hint", "/reveal"):
+            if route not in ("/spoiler", "/hint", "/reveal", "/junk"):
                 self.send_error(404)
                 return
             # Only from our own page. Any website you happen to have open can
@@ -2807,6 +2932,9 @@ def serve(tracker, host, port, open_window=True):
                     req = json.loads(raw.decode("utf-8"))
                     ok = tracker.reveal(str(req.get("game", "")), str(req.get("name", "")))
                     self._json({"ok": ok, "error": None if ok else "unknown check"})
+                elif route == "/junk":
+                    req = json.loads(raw.decode("utf-8"))
+                    self._json(tracker.set_tokens_junk(bool(req.get("tokens"))))
                 else:
                     self._json(cargar_spoiler(tracker, raw))
             except Exception as ex:

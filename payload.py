@@ -650,6 +650,116 @@ def souls_block(rom_bytes, located, arrays):
 # One call for the tracker
 # --------------------------------------------------------------------------
 
+# OoTMM's extra records: u32 of its own squatting in the `unk` field of OoT's
+# per-scene flag table, at gOotSave + 0xd4 + 0x1c * index + 0x10 (SAVE_EXTRA_RECORD
+# in combo/save.h). One of them counts Triforce pieces, and WHICH one has moved
+# three times: 19 from v29 to v32.0, 18 on the dev build, and 14 in v32.3, where
+# the five gOotSilverRupeeCounts records were dropped and everything after them
+# slid down. A constant is therefore wrong for somebody -- and 18, taken off the
+# dev seed, was wrong for every release seed, which is why the figure never
+# showed: the record it read is always zero and a zero count is hidden.
+#
+# What does hold: records 0..13 have not moved since v29, and above 13 the OoT
+# payload only ever touches the Triforce counter and (where they exist) the two
+# ammo records, in that order. So the lowest record above 13 that the code
+# references IS the counter. Measured over the 59 ROMs at hand: 19 on 49 of
+# them, 14 on the nine v32.3 seeds, 18 on the dev build, and never anything
+# else.
+EXTRA_RECORD_0 = 0xD4 + 0x10
+EXTRA_RECORD_STRIDE = 0x1C
+EXTRA_RECORD_MAX = 30           # the array is nowhere near this long
+# Records 0..13 are named the same in every save.h from v29 to v32.3, and none
+# of them is the counter. What sits above has been reshuffled twice.
+LAST_STABLE_RECORD = 13
+
+
+def extra_records_used(scan, own):
+    """Which extra records this payload's code touches at all."""
+    out = set()
+    for r in scan.refs:
+        d = r.addr - own - EXTRA_RECORD_0
+        if 0 <= d < EXTRA_RECORD_STRIDE * EXTRA_RECORD_MAX and d % EXTRA_RECORD_STRIDE == 0:
+            out.add(d // EXTRA_RECORD_STRIDE)
+    return out
+
+
+def _record_of(addr, own):
+    d = addr - own - EXTRA_RECORD_0
+    if 0 <= d < EXTRA_RECORD_STRIDE * EXTRA_RECORD_MAX and d % EXTRA_RECORD_STRIDE == 0:
+        return d // EXTRA_RECORD_STRIDE
+    return None
+
+
+def incremented_records(scan, own, window=10):
+    """Extra records the code adds one to: `lw` / `addiu +1` / `sw`, same word.
+
+    That shape is what tells a COUNTER from the rest of the array, whatever its
+    index: the flag records (owls, cows, the several ExtraFlags) are OR'd with
+    masks, the ammo ones are written byte by byte, and a whole-word store with
+    no load before it is not a count either. `window` is how far the store may
+    drift from the load -- the compiler schedules other work in between.
+    """
+    words, ram = scan.words, scan.ram
+    stores = {}
+    for r in scan.refs:
+        if r.kind == "sw" and _record_of(r.addr, own) is not None:
+            stores.setdefault(r.pc, r)
+    out = set()
+    for r in scan.refs:
+        rec = _record_of(r.addr, own)
+        if rec is None or r.kind != "lw":
+            continue
+        i = (r.pc - ram) // 4
+        for j in range(i + 1, min(i + window, len(words))):
+            ins = words[j]
+            if ins >> 26 != 0x09:                             # addiu
+                continue
+            rs, rt, imm = (ins >> 21) & 31, (ins >> 16) & 31, ins & 0xFFFF
+            if rs != r.reg or imm != 1:
+                continue
+            for k in range(j + 1, min(j + window, len(words))):
+                s = words[k]
+                if s >> 26 != 0x2B or ((s >> 16) & 31) != rt:  # sw of that reg
+                    continue
+                back = stores.get(ram + k * 4)
+                if back is not None and _record_of(back.addr, own) == rec:
+                    out.add(rec)
+                break
+            break
+    return out
+
+
+def triforce_offset(scan, own):
+    """Offset of gTriforceCount inside the OoT save, or None if unrecognised.
+
+    Found by what the code does, not by where the record sits, because where it
+    sits keeps changing: 19 from v29 to v32.0, 18 on the dev build, 14 in v32.3
+    (the five gOotSilverRupeeCounts records went away and the rest slid down).
+    Two signals have to agree:
+
+      - the record is INCREMENTED BY ONE somewhere -- it is a count, and the
+        flag and struct records are not written that way;
+      - and it sits above the stable prefix, records 0..13, which have kept
+        both their index and their meaning since v29.
+
+    Both together, because each alone is ambiguous: gSaveLedgerBase (12) is
+    incremented as well, and several records above 13 are merely touched.
+    Measured over the 59 readable ROMs here, exactly one record satisfies both
+    in every single one -- 19 on 49 of them, 14 on the nine v32.3 seeds, 18 on
+    the dev build.
+
+    Anything else -- no candidate, or more than one -- returns None, and the
+    tracker then shows no Triforce figure at all and says so. A version that
+    adds another counter up there is the case this cannot resolve, and going
+    quiet is the right way to lose: the alternative is a number read off
+    whatever field happens to be there, which is exactly the bug this replaces.
+    """
+    cand = {i for i in incremented_records(scan, own) if i > LAST_STABLE_RECORD}
+    if len(cand) != 1:
+        return None
+    return EXTRA_RECORD_0 + EXTRA_RECORD_STRIDE * cand.pop()
+
+
 def locate(rom_bytes, verbose=False):
     """Everything the tracker wants, or as much of it as the ROM gives.
 
@@ -680,6 +790,11 @@ def locate(rom_bytes, verbose=False):
             f = b["foreign"][0]
             b["foreign_base"] = f + (MM_BASE_DELTA if game == "oot" else 0)
             b["custom_gap"] = f - b["custom"][0]
+        # Where this build keeps the Triforce count, read off its own code.
+        # Only OoT's payload: the records live in OoT's save and it is OoT's
+        # side that counts the pieces.
+        if game == "oot" and "own" in b:
+            b["triforce_off"] = triforce_offset(scans[game], b["own"][0])
         out[game] = b
     if "oot" in scans and "mm" in scans and \
             "custom" in out.get("oot", {}) and "custom" in out.get("mm", {}):

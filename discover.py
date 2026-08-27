@@ -379,19 +379,28 @@ def _same(a, b):
     return bool(a) and bool(b) and os.path.normcase(os.path.abspath(a)) == os.path.normcase(os.path.abspath(b))
 
 
-def _has_key(path, key):
-    """Whether the JSON at `path` carries `key` at all (null counts as yes).
+def _has_key(path, *keys):
+    """Whether the JSON at `path` carries that key at all (null counts as yes).
 
     Tells a table built by an older generator -- which lacks the key -- from
     one where the generator looked and found nothing, which stores null. Only
     the first should trigger a rebuild, or a ROM that cannot be read would be
     regenerated on every start.
+
+    Several keys walk into nested objects: _has_key(p, "payload", "oot",
+    "triforce_off") asks for the last one down that path.
     """
     try:
         with open(path, encoding="utf-8") as fh:
-            return key in json.load(fh)
+            node = json.load(fh)
     except (OSError, ValueError):
         return False
+    for k in keys[:-1]:
+        node = node.get(k) if isinstance(node, dict) else None
+        if node is None:
+            # a null on the way is an older table, not a considered "nothing"
+            return False
+    return isinstance(node, dict) and keys[-1] in node
 
 
 def _generate(module, argv, verbose):
@@ -432,9 +441,14 @@ def ensure_tables(rom, spoiler, verbose=True):
     # a checks.json without the key was built before that existed, and the
     # overlay would fall back to sweeping for gSharedCustomSave without a word.
     # A table built before the `souls` key existed is stale the same way.
+    # `scene_layers` (the scenes' alternate headers) and the Triforce record
+    # inside `payload` are the same story, one generator later: without them the
+    # panel guesses the loaded setup and the Triforce figure never shows.
     if (not os.path.exists(checks) or not _same(_built_from(checks), rom)
             or not _has_key(checks, "payload")
-            or not _has_key(checks, "souls")):
+            or not _has_key(checks, "souls")
+            or not _has_key(checks, "scene_layers")
+            or not _has_key(checks, "payload", "oot", "triforce_off")):
         argv = ["--rom", rom]
         if spoiler:
             argv += ["--spoiler", spoiler]

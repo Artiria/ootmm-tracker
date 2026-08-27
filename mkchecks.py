@@ -1080,6 +1080,12 @@ def _payload_json(pl):
             "foreign_base": b["foreign_base"], "foreign_size": b["foreign"][1],
             "own": b.get("own", (None,))[0], "custom_gap": b["custom_gap"],
         }
+        # Which extra record counts Triforce pieces in THIS build (payload.py):
+        # it has moved between versions, so it is measured, not assumed. Null
+        # when the records look like no build seen before, and then the figure
+        # simply does not show.
+        if "triforce_off" in b:
+            out[game]["triforce_off"] = b["triforce_off"]
     lay = pl.get("layout")
     if lay:
         out["layout"] = {g: {k: v for k, v in lay[g].items() if not k.startswith("_")}

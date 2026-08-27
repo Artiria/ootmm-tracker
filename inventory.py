@@ -149,8 +149,12 @@ def read(buf, base, off, size, signed=False):
     return v
 
 
-def snapshot(save):
-    """save = the save context bytes. Returns {label: value}."""
+def snapshot(save, triforce_off=None):
+    """save = the save context bytes. Returns {label: value}.
+
+    `triforce_off` is where THIS build keeps gTriforceCount inside the save,
+    measured by payload.triforce_offset and carried in checks.json; without it
+    the Triforce figure is left out entirely."""
     st = {}
     for name, off, size, signed in OOT_SCALARS:
         st[name] = read(save, None, off, size, signed)
@@ -183,8 +187,14 @@ def snapshot(save):
         st[f"key:{i}"] = read(save, None, OOT_KEYS_ADDR + i, 1, signed=True)
 
     # Triforce hunt: how many pieces so far. Zero on any other seed, and the
-    # page hides it then.
-    st["triforce"] = read(save, None, OOT_TRIFORCE_ADDR, 4)
+    # page hides it then. WHICH extra record holds it moved between OoTMM
+    # versions, so the offset is measured from the payload's own code
+    # (payload.triforce_offset, carried in checks.json) and handed in here; with
+    # no offset there is no figure, which is the honest answer for a build whose
+    # records are not recognised. A hardcoded record is what kept this at zero
+    # on every release seed until 25 ago 2026.
+    if triforce_off is not None:
+        st["triforce"] = read(save, None, triforce_off, 4)
     return st
 
 
@@ -386,10 +396,12 @@ MM_NOISE = set(range(0x04, 0x06)) | set(range(0x36, 0x38))
 # field of OoT's per-scene flag table (SAVE_EXTRA_RECORD in combo/save.h:
 # gOotSave + 0xD4 + 0x1C * index + 0x10). Both games' records live in OoT's
 # save whichever one is running. The two below feed the grid:
-#   gTriforceCount  index 18   ++ on every Triforce piece (item_add.c)
 #   gMmOwlFlags     index 11   |= 1 << owl on every owl statue (item_add.c)
+# Index 11 is the same from v29 to v32.3 (checked against OoTMM's save.h at
+# each tag), so the owls can keep a constant. The Triforce counter cannot: it
+# sits at 19, 18 or 14 depending on the build, so it is measured instead --
+# see payload.triforce_offset and snapshot()'s `triforce_off`.
 EXTRA_RECORD = lambda i: 0xD4 + 0x10 + 0x1C * i
-OOT_TRIFORCE_ADDR = EXTRA_RECORD(18)
 MM_OWL_FLAGS_ADDR = EXTRA_RECORD(11)
 
 # Owl statues, in the bit order the item table gives them (gi.yml, `add:

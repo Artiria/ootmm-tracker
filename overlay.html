@@ -560,6 +560,14 @@ body.chroma-green .card { background: var(--surface); }
             <option value="hide">only what matters</option>
           </select>
         </label>
+        <!-- Not a view switch like its neighbours: this one changes the
+             classification on the server, so the totals and the region bars
+             agree with the list instead of still counting the spiders. It is
+             remembered between runs, and it only shows up on a seed that has
+             tokens to hide. -->
+        <label id="opt-tokens-wrap" title="Counts every skulltula token as filler, wherever it is and whoever it is for — for when the seed leaves the spiders in place and you are not collecting them">
+          <input type="checkbox" id="opt-tokens"> Skulltulas are junk
+        </label>
         <label>Regions
           <select id="opt-done">
             <option value="">all</option>
@@ -876,6 +884,19 @@ if ($('urls')) {
   $('opt-hide').checked = HIDE_ALL;
   $('opt-spoiler').disabled = HIDE_ALL;
   document.querySelector('.killswitch').classList.toggle('on', HIDE_ALL);
+  // The skulltula switch goes to the server (it changes what counts as
+  // filler, not just what this page draws), so it does not ride applyOpts:
+  // it posts, waits, and repaints from the state that comes back.
+  if ($('opt-tokens')) $('opt-tokens').onchange = async () => {
+    const box = $('opt-tokens');
+    box.disabled = true;
+    try {
+      await fetch('/junk', { method: 'POST', body: JSON.stringify({ tokens: box.checked }) });
+      await tick();
+    } finally {
+      box.disabled = false;
+    }
+  };
   $('opt-junk').onchange = applyOpts;
   $('opt-done').onchange = applyOpts;
   $('opt-untouched').onchange = applyOpts;
@@ -1451,6 +1472,13 @@ function render(s) {
     setHTML('build', `OoTMM Tracker <b>${esc(s.version)}</b> — early beta:
       single player is tested, multiworld is not.`);
   }
+  /* The skulltula switch belongs to the server, so the box shows what the
+     tracker is actually doing: a second window agrees with the first, and a
+     restart brings back the choice. Not touched while its own POST is in
+     flight, and hidden on a seed with no tokens to hide. */
+  const tokBox = $('opt-tokens'), tokWrap = $('opt-tokens-wrap');
+  if (tokBox && !tokBox.disabled) tokBox.checked = !!s.tokens_junk;
+  if (tokWrap) tokWrap.style.display = s.tokens_n ? '' : 'none';
   /* Tables from another seed. Discovery only runs when the tracker starts, so
      changing the ROM without restarting leaves the old seed's checks.json in
      place — and every item shown is then someone else's. The ratio is the tell:
