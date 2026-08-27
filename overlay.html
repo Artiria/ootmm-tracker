@@ -568,6 +568,12 @@ body.chroma-green .card { background: var(--surface); }
         <label id="opt-tokens-wrap" title="Counts every skulltula token as filler, wherever it is and whoever it is for — for when the seed leaves the spiders in place and you are not collecting them">
           <input type="checkbox" id="opt-tokens"> Skulltulas are junk
         </label>
+        <!-- The same switch for MM's 61 stray fairies. The Fairies tiles are
+             not touched by it: they count out of RAM, so "12/15" and the orange
+             "ready to deliver" stay while the rows leave the panel. -->
+        <label id="opt-fairies-wrap" title="Counts every stray fairy as filler, wherever it is and whoever it is for — the Fairies tiles keep counting them, this only takes the 61 rows out of the lists and the totals">
+          <input type="checkbox" id="opt-fairies"> Stray fairies are junk
+        </label>
         <label>Regions
           <select id="opt-done">
             <option value="">all</option>
@@ -884,19 +890,25 @@ if ($('urls')) {
   $('opt-hide').checked = HIDE_ALL;
   $('opt-spoiler').disabled = HIDE_ALL;
   document.querySelector('.killswitch').classList.toggle('on', HIDE_ALL);
-  // The skulltula switch goes to the server (it changes what counts as
-  // filler, not just what this page draws), so it does not ride applyOpts:
-  // it posts, waits, and repaints from the state that comes back.
-  if ($('opt-tokens')) $('opt-tokens').onchange = async () => {
-    const box = $('opt-tokens');
-    box.disabled = true;
-    try {
-      await fetch('/junk', { method: 'POST', body: JSON.stringify({ tokens: box.checked }) });
-      await tick();
-    } finally {
-      box.disabled = false;
-    }
+  // The filler switches go to the server (they change what counts as filler,
+  // not just what this page draws), so they do not ride applyOpts: each posts,
+  // waits, and repaints from the state that comes back. Disabled while its own
+  // POST is in flight so a double click cannot race the reply.
+  const junkSwitch = (id, clave) => {
+    const box = $(id);
+    if (!box) return;
+    box.onchange = async () => {
+      box.disabled = true;
+      try {
+        await fetch('/junk', { method: 'POST', body: JSON.stringify({ [clave]: box.checked }) });
+        await tick();
+      } finally {
+        box.disabled = false;
+      }
+    };
   };
+  junkSwitch('opt-tokens', 'tokens');
+  junkSwitch('opt-fairies', 'fairies');
   $('opt-junk').onchange = applyOpts;
   $('opt-done').onchange = applyOpts;
   $('opt-untouched').onchange = applyOpts;
@@ -1476,13 +1488,17 @@ function render(s) {
     setHTML('build', `OoTMM Tracker <b>${esc(s.version)}</b> — early beta:
       single player is tested, multiworld is not.${quien}`);
   }
-  /* The skulltula switch belongs to the server, so the box shows what the
+  /* The filler switches belong to the server, so each box shows what the
      tracker is actually doing: a second window agrees with the first, and a
      restart brings back the choice. Not touched while its own POST is in
-     flight, and hidden on a seed with no tokens to hide. */
-  const tokBox = $('opt-tokens'), tokWrap = $('opt-tokens-wrap');
-  if (tokBox && !tokBox.disabled) tokBox.checked = !!s.tokens_junk;
-  if (tokWrap) tokWrap.style.display = s.tokens_n ? '' : 'none';
+     flight, and hidden on a seed with nothing of that kind to hide. */
+  const showSwitch = (id, on, n) => {
+    const box = $(id), wrap = $(id + '-wrap');
+    if (box && !box.disabled) box.checked = !!on;
+    if (wrap) wrap.style.display = n ? '' : 'none';
+  };
+  showSwitch('opt-tokens', s.tokens_junk, s.tokens_n);
+  showSwitch('opt-fairies', s.fairies_junk, s.fairies_n);
   /* Tables from another seed. Discovery only runs when the tracker starts, so
      changing the ROM without restarting leaves the old seed's checks.json in
      place — and every item shown is then someone else's. The ratio is the tell:

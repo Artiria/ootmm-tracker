@@ -286,6 +286,30 @@ TOKEN_KINDS = {
     "GS_TOKEN_OCEAN": "Ocean Skulltula Token",
 }
 
+# MM's stray fairies are the same kind of noise, and the same answer: 61 spots
+# (15 in each of the four temples plus Clock Town's) that fill the "remaining"
+# panel of a temple you are walking through (his complaint, 27 ago 2026 --
+# "Woodfall Temple Center Chest -> Stray Fairy"). Whether they are noise or the
+# point of the run is his call again: the `fairies_junk` switch.
+#
+# What the switch does NOT touch, and it matters: the Fairies tiles keep
+# counting. They read strayFairies[] out of RAM and the Great Fairy rewards out
+# of `done` (see fairy_info), neither of which asks anything about `junk` -- so
+# the panel stops listing 61 rows and the "15/15, ready to deliver" still lights
+# up. Hiding the count as well would be hiding the one thing a fairy is for.
+#
+# Matched by name, like the tokens, and by prefix on purpose: OoTMM has a
+# generic "Stray Fairy" and one per dungeon ("Stray Fairy (Woodfall)" and
+# friends, MM_STRAY_FAIRY_WF.. in data/gi.yml). This seed places the generic
+# one in all 61 spots, but a seed that hands out the per-dungeon ones would
+# leave every single fairy on the panel with an exact match -- and it would do
+# it quietly, which is the failure this project keeps finding.
+FAIRY_ITEM = re.compile(r"^Stray Fairy\b")
+FAIRY_KINDS = {
+    "STRAY_FAIRY_WF", "STRAY_FAIRY_SH", "STRAY_FAIRY_GB",
+    "STRAY_FAIRY_ST", "STRAY_FAIRY_TOWN",
+}
+
 # --- pond fish --------------------------------------------------------------
 #
 # A fish is filler *or not depending on how much it weighs*: the fishing pond
@@ -688,11 +712,15 @@ class Tracker:
         if self.triforce is None and table["checks"]:
             print("[overlay] Triforce count: this build does not hand the piece to a"
                   " handler that could be followed, so the figure will not be shown")
-        # The player's own "skulltulas are junk" switch, remembered between
-        # runs. Read before the first _rebuild_items, or a tracker started with
-        # it on would show them until the page came up and said so.
-        self.tokens_junk = bool(load_options().get("tokens_junk"))
+        # The player's own "skulltulas are junk" and "stray fairies are junk"
+        # switches, remembered between runs. Read before the first
+        # _rebuild_items, or a tracker started with one on would show them until
+        # the page came up and said so. One read of the file, not two.
+        opts = load_options()
+        self.tokens_junk = bool(opts.get("tokens_junk"))
         self.tokens_n = 0
+        self.fairies_junk = bool(opts.get("fairies_junk"))
+        self.fairies_n = 0
         self._rebuild_items()
         self.lock = threading.Lock()
         self.state = {
@@ -711,12 +739,14 @@ class Tracker:
             "done_total": 0,
             "total": sum(n for _, _, n, _k in self.regions),
             "total_key": sum(k for _, _, _n, k in self.regions),
-            # The skulltula switch and how many checks it covers: the page only
-            # offers the control on a seed that has tokens to hide, and it has
-            # to be here from the first request or the box would flicker in
-            # half a second after the first poll.
+            # The two filler switches and how many checks each one covers: the
+            # page only offers a control on a seed that has something to hide,
+            # and they have to be here from the first request or the boxes would
+            # flicker in half a second after the first poll.
             "tokens_junk": self.tokens_junk,
             "tokens_n": self.tokens_n,
+            "fairies_junk": self.fairies_junk,
+            "fairies_n": self.fairies_n,
             # Rows with an address that this seed does not shuffle, so they are
             # left out of every count. Said out loud, like every other thing a
             # panel leaves out: on a seed with grass and rocks vanilla it is
@@ -947,14 +977,16 @@ class Tracker:
         if self.tokens_junk:
             for k in fichas:
                 self.junk[k] = True
+        hadas = self.fairy_checks(items)
+        if self.fairies_junk:
+            for k in hadas:
+                self.junk[k] = True
         # How many of them this seed actually counts, which is the number the
         # totals move by: a token row in a Master Quest dungeon is in the table
         # twice, vanilla and MQ, and only one of the two is in the seed. 204
         # token spots, 160 counted, on a seed with MQ dungeons.
-        self.tokens_n = sum(
-            1 for c in self.table["checks"]
-            if (c["game"], c["name"]) in fichas and c["addr"] is not None
-            and "anchor" in c and self.is_active(c))
+        self.tokens_n = self._counted(fichas)
+        self.fairies_n = self._counted(hadas)
         self.hay_spoiler = bool(items)
         self.plan, self.regions = build_plan(
             self.table, self.is_active,
@@ -992,6 +1024,31 @@ class Tracker:
             return {k for k, it in items.items() if it in fichas}
         return {(c["game"], c["name"]) for c in self.table["checks"]
                 if c.get("vanilla") in TOKEN_KINDS}
+
+    def fairy_checks(self, items):
+        """Every spot holding a stray fairy, whoever the fairy is for.
+
+        The token rule, with a prefix match instead of a set of names, because
+        OoTMM spells the item six ways (see FAIRY_ITEM). Same fallback: with no
+        item map at all the vanilla stray fairy spots are the best answer there
+        is.
+        """
+        if items:
+            return {k for k, it in items.items() if it and FAIRY_ITEM.match(it)}
+        return {(c["game"], c["name"]) for c in self.table["checks"]
+                if c.get("vanilla") in FAIRY_KINDS}
+
+    def _counted(self, spots):
+        """How many of those spots this seed actually counts.
+
+        The number the totals move by, which is not len(spots): a row in a
+        Master Quest dungeon is in the table twice, vanilla and MQ, and only one
+        of the two is in the seed.
+        """
+        return sum(
+            1 for c in self.table["checks"]
+            if (c["game"], c["name"]) in spots and c["addr"] is not None
+            and "anchor" in c and self.is_active(c))
 
     def item_de(self, game, name):
         return self.items.get((game, name))
@@ -1034,7 +1091,20 @@ class Tracker:
             }
 
     def set_tokens_junk(self, on):
-        """Count every skulltula token as filler from now on, or stop.
+        """Count every skulltula token as filler from now on, or stop."""
+        return self._set_junk_switch("tokens", on)
+
+    def set_fairies_junk(self, on):
+        """Count every stray fairy as filler from now on, or stop.
+
+        The Fairies tiles are not affected and that is the point: they come
+        from strayFairies[] and from `done`, so "12/15" and the orange "ready to
+        deliver" carry on working while the 61 rows leave the panel.
+        """
+        return self._set_junk_switch("fairies", on)
+
+    def _set_junk_switch(self, cual, on):
+        """Flip one of the filler switches and settle everything that reads it.
 
         Server side and not a view switch like the room or the spoiler level,
         because what it changes is the classification itself: the "only what
@@ -1043,25 +1113,31 @@ class Tracker:
         leave those numbers claiming the skulltulas still matter.
 
         Remembered in the options file, so a restart mid-run does not put 160
-        spiders back on the panel.
+        spiders back on the panel. Both switches go through here so neither can
+        drift into settling a different set of totals than the other.
         """
+        campo, clave = f"{cual}_junk", f"{cual}_n"
         with self.lock:
-            self.tokens_junk = bool(on)
+            setattr(self, campo, bool(on))
             opts = load_options()
-            opts["tokens_junk"] = self.tokens_junk
+            opts[campo] = getattr(self, campo)
             save_options(opts)
             self._rebuild_items()
             # Same as set_spoiler: the totals that depend on the classification,
             # now, so the page never shows a new total against an old progress.
             self.state["total_key"] = sum(k for _, _, _n, k in self.regions)
-            self.state["tokens_junk"] = self.tokens_junk
+            self.state[campo] = getattr(self, campo)
+            # Both counts, not just this switch's: _rebuild_items has just
+            # recomputed the two and a stale one would be a number nobody
+            # noticed going wrong.
             self.state["tokens_n"] = self.tokens_n
+            self.state["fairies_n"] = self.fairies_n
             hechos = [k for k in self._done if not self.junk.get(k, False)]
             self.state["done_key_total"] = len(hechos)
             self.state["done_key_by_game"] = {
                 g: sum(1 for gg, _n in hechos if gg == g) for g in ("oot", "mm")
             }
-            return {"ok": True, "tokens_junk": self.tokens_junk, "n": self.tokens_n,
+            return {"ok": True, campo: getattr(self, campo), "n": getattr(self, clave),
                     "total_key": self.state["total_key"]}
 
     def _active_version(self, c):
@@ -1962,6 +2038,8 @@ class Tracker:
             s["can_filter"] = self.hay_spoiler
             s["tokens_junk"] = self.tokens_junk
             s["tokens_n"] = self.tokens_n
+            s["fairies_junk"] = self.fairies_junk
+            s["fairies_n"] = self.fairies_n
             s["done_by_game"] = {
                 g: sum(v for (gg, _), v in by_scene.items() if gg == g) for g in ("oot", "mm")
             }
@@ -3007,8 +3085,17 @@ def serve(tracker, host, port, open_window=True):
                     ok = tracker.reveal(str(req.get("game", "")), str(req.get("name", "")))
                     self._json({"ok": ok, "error": None if ok else "unknown check"})
                 elif route == "/junk":
+                    # One switch per request, named by the key that is there:
+                    # an older page that only knows "tokens" keeps working, and
+                    # a body naming neither is a no-op rather than a silent flip
+                    # of the wrong one.
                     req = json.loads(raw.decode("utf-8"))
-                    self._json(tracker.set_tokens_junk(bool(req.get("tokens"))))
+                    if "fairies" in req:
+                        self._json(tracker.set_fairies_junk(bool(req.get("fairies"))))
+                    elif "tokens" in req:
+                        self._json(tracker.set_tokens_junk(bool(req.get("tokens"))))
+                    else:
+                        self._json({"ok": False, "error": "no switch named"})
                 else:
                     self._json(cargar_spoiler(tracker, raw))
             except Exception as ex:
