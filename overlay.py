@@ -304,6 +304,11 @@ TOKEN_KINDS = {
 # one in all 61 spots, but a seed that hands out the per-dungeon ones would
 # leave every single fairy on the panel with an exact match -- and it would do
 # it quietly, which is the failure this project keeps finding.
+# "no world was asked for", which is not the same as world None -- None is
+# yours. A name typed by hand into the item box carries no world and should go
+# on matching any copy, the way it always did.
+ANY_WORLD = object()
+
 FAIRY_ITEM = re.compile(r"^Stray Fairy\b")
 FAIRY_KINDS = {
     "STRAY_FAIRY_WF", "STRAY_FAIRY_SH", "STRAY_FAIRY_GB",
@@ -1460,28 +1465,47 @@ class Tracker:
         cands = custom_candidates(bases, active)
         return cands[0] if cands else None
 
-    def hint(self, item, level):
+    def hint(self, item, level, world=ANY_WORLD):
         """A hint about where `item` is, up to `level` (1 game, 2 region, 3 the
         check itself). Picks one holder: the first not-done check carrying that
         item in table order, so asking again lands on the same one; a
         progressive item with several copies gives away one location, not all.
-        Levels only ever go up. Returns the hint entry or None."""
+        Levels only ever go up. Returns the hint entry or None.
+
+        `world` narrows it to the copy belonging to that world -- None being
+        yours -- which is what the item list now offers separately. Left out, it
+        matches any, so a name typed by hand still works as it always did. Either
+        way the entry records the world of the holder it settled on, and that is
+        also what it is filed under: two namesakes from different worlds are two
+        hints, each with its own level, instead of one that answers for both.
+        """
         level = max(1, min(3, int(level)))
-        cur = self.hints.get(item)
+        # Looked up before anything is searched, or "asking again lands on the
+        # same one" would stop holding: once the copy you were told about is
+        # collected, a fresh search would settle on the next one along and quietly
+        # answer about a different item. Unnarrowed, any world's entry for this
+        # name will do -- that is the question that was asked.
+        if world is ANY_WORLD:
+            cur = next((h for k, h in self.hints.items() if k[0] == item), None)
+        else:
+            cur = self.hints.get((item, world))
         if cur is None:
             holders = [c for c in self.table["checks"]
                        if c["addr"] is not None and self.is_active(c)
-                       and self.item_de(c["game"], c["name"]) == item]
+                       and self.item_de(c["game"], c["name"]) == item
+                       and (world is ANY_WORLD
+                            or self.world_de(c["game"], c["name"]) == world)]
             if not holders:
                 return None
             c = next((h for h in holders
                       if (h["game"], h["name"]) not in self._done), holders[0])
+            de_quien = self.world_de(c["game"], c["name"])
             # the region is the scene, made readable: the pool's `hint` column
             # is a hint-group id and NONE on 98% of the rows, so it will not do
             region = (c["scene"] or "").replace("_", " ").title()
-            cur = {"item": item, "level": 0, "game": c["game"], "region": region,
-                   "check": c["name"], "t": time.time()}
-            self.hints[item] = cur
+            cur = {"item": item, "world": de_quien, "level": 0, "game": c["game"],
+                   "region": region, "check": c["name"], "t": time.time()}
+            self.hints[(item, de_quien)] = cur
         if level > cur["level"]:
             cur["level"] = level
             cur["t"] = time.time()
@@ -1500,7 +1524,8 @@ class Tracker:
         used = sum(h["level"] for h in self.hints.values()) + len(self.revealed)
         out = []
         for h in self.hints.values():
-            e = {"item": h["item"], "level": h["level"], "t": h["t"], "game": h["game"],
+            e = {"item": h["item"], "world": h.get("world"), "level": h["level"],
+                 "t": h["t"], "game": h["game"],
                  "done": (h["game"], h["check"]) in done}
             if h["level"] >= 2:
                 e["region"] = h["region"]
@@ -1511,16 +1536,30 @@ class Tracker:
         return {"used": used, "items": out, "checks": sorted(self.revealed)}
 
     def hint_items(self, done):
-        """What can be asked about: items of the checks not done, filler out."""
-        seen = set()
+        """What can be asked about: one entry per item AND world, filler out.
+
+        It used to be a set of names, and on a multiworld that quietly merged
+        two different things (his report, 27 ago 2026): 58 of the 162 names his
+        seed offers exist in BOTH worlds, so his Forest Medallion and his
+        partner's sat under one entry and `hint` picked whichever came first in
+        table order without ever saying which one it had told him about.
+
+        Copies inside one world stay one entry -- five Silver Rupees of the same
+        kind are five identical entries and listing them five times is noise --
+        but the count rides along, so the entry can say that a hint gives away
+        one of several rather than the only one.
+        """
+        n = collections.Counter()
         for c in self.table["checks"]:
             if (c["addr"] is None or (c["game"], c["name"]) in done
                     or not self.is_active(c)):
                 continue
             it = self.item_de(c["game"], c["name"])
             if it and not self.junk.get((c["game"], c["name"]), False):
-                seen.add(it)
-        return sorted(seen)
+                n[(it, self.world_de(c["game"], c["name"]))] += 1
+        # None sorts before any world, which puts yours first among namesakes
+        return [{"item": it, "world": w, "n": k}
+                for (it, w), k in sorted(n.items(), key=lambda kv: (kv[0][0], kv[0][1] or 0))]
 
     def _load_entrances_seen(self):
         """Bring back the doors this seed has been seen to go through. Only
@@ -3077,7 +3116,11 @@ def serve(tracker, host, port, open_window=True):
                 raw = self.rfile.read(n)
                 if route == "/hint":
                     req = json.loads(raw.decode("utf-8"))
-                    got = tracker.hint(str(req.get("item", "")), req.get("level", 1))
+                    # `world` only when the request names it: absent means "any
+                    # copy", which is what a name typed by hand means, and that
+                    # is not the same question as "the one that is mine".
+                    kw = {"world": req["world"]} if "world" in req else {}
+                    got = tracker.hint(str(req.get("item", "")), req.get("level", 1), **kw)
                     self._json({"ok": got is not None, "hint": got,
                                 "error": None if got else "no pending check holds that item"})
                 elif route == "/reveal":

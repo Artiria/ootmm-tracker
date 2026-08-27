@@ -883,6 +883,13 @@ function renderUrls() {
     (souls ? PANELS_SOULS_GAME.map(([n, g, l]) => urlRow(l, n, g, false)).join('') : '');
 }
 
+/* The item box offers one entry per item AND world, so the two Bows of a
+   multiworld are two choices. A datalist hands back the option's VALUE, so the
+   world has to be part of it; this map turns that string back into the pair the
+   server wants, and the separator is one no item name uses. */
+const HINT_SEP = '·';
+let HINT_BY_VALUE = new Map();
+
 // last state received from the server, so we can repaint without polling
 let lastState = null;
 // whether the URL list already knows about the souls panel: it is rebuilt
@@ -1027,11 +1034,21 @@ if ($('urls')) {
 let avisoSpoiler = null;   // outcome of the last load, until the next attempt
 if ($('load-spoiler')) {
   document.querySelectorAll('button[data-hint]').forEach(b => b.onclick = async () => {
-    const item = ($('hint-item').value || '').trim();
-    if (!item) { $('hint-state').textContent = 'type an item first'; return; }
-    const r = await fetch('/hint', { method: 'POST', body: JSON.stringify({ item, level: +b.dataset.hint }) });
+    const escrito = ($('hint-item').value || '').trim();
+    if (!escrito) { $('hint-state').textContent = 'type an item first'; return; }
+    /* Picked from the list: ask about that exact copy, world and all. Typed by
+       hand: send the name alone and let the server match any copy, which is
+       what it has always done -- the box takes free text and half-remembered
+       names should keep working. */
+    const elegido = HINT_BY_VALUE.get(escrito);
+    const cuerpo = elegido
+      ? { item: elegido.item, world: elegido.world, level: +b.dataset.hint }
+      : { item: escrito, level: +b.dataset.hint };
+    const r = await fetch('/hint', { method: 'POST', body: JSON.stringify(cuerpo) });
     const j = await r.json();
-    $('hint-state').textContent = j.ok ? `hint taken: ${item} (${['', 'game', 'region', 'exact check'][j.hint.level]})` : (j.error || 'no');
+    $('hint-state').textContent = j.ok
+      ? `hint taken: ${escrito} (${['', 'game', 'region', 'exact check'][j.hint.level]})`
+      : (j.error || 'no');
     if (lastState) render(lastState);
   });
   document.addEventListener('click', async (ev) => {
@@ -1456,7 +1473,7 @@ function renderEntrances(en) {
 function renderHints(h) {
   const items = (h.items || []).filter(x => keepGame(x.game));
   const lvl = (x) => [
-    `<span class="item">${esc(x.item)}</span>`,
+    `<span class="item">${esc(x.item)}</span>${world(x.world)}`,
     `<span class="from">${x.game === 'mm' ? "Majora's Mask" : 'Ocarina of Time'}${
       x.level >= 2 ? ' · ' + esc(x.region || '?') : ''}${
       x.level >= 3 ? ' · ' + esc(x.check || '?') : ''}${x.done ? ' · <b>found</b>' : ''}</span>`,
@@ -1787,10 +1804,27 @@ function render(s) {
   if ($('hints-title')) $('hints-title').textContent = hs.used ? `Hints · ${hs.used} taken` : 'Hints';
   setShow('hints-empty', !hsHTML);
   if ($('hint-items')) {
+    /* One entry per item AND world: on a multiworld the same name is two
+       different things, and a single entry meant asking about "Forest Medallion"
+       answered about whichever the table listed first, his or his partner's.
+       The world goes in the VALUE because a datalist has to offer two distinct
+       strings to offer two choices; the count goes in the label, which browsers
+       show beside the option and do not type into the box -- it would go stale
+       as the copies are collected. */
+    const want = (s.hint_items || []).map(h => ({
+      value: h.item + (h.world ? ` ${HINT_SEP} world ${h.world}` : ''),
+      label: h.n > 1 ? `${h.n} copies` : '',
+      item: h.item, world: h.world ?? null,
+    }));
     const cur = new Set(Array.from($('hint-items').options).map(o => o.value));
-    const want = s.hint_items || [];
-    if (want.length !== cur.size || want.some(w => !cur.has(w)))
-      $('hint-items').innerHTML = want.map(w => `<option value="${esc(w)}">`).join('');
+    if (want.length !== cur.size || want.some(w => !cur.has(w.value))) {
+      $('hint-items').innerHTML = want.map(w =>
+        `<option value="${esc(w.value)}"${w.label ? ` label="${esc(w.label)}"` : ''}>`).join('');
+    }
+    // what the box says -> what to ask the server. Rebuilt every time, so a
+    // name that stops being offered stops resolving instead of asking about a
+    // copy that is no longer there.
+    HINT_BY_VALUE = new Map(want.map(w => [w.value, { item: w.item, world: w.world }]));
   }
 
   const en = s.entrances || { total: 0, found: [], all: [] };
