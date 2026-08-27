@@ -3064,7 +3064,21 @@ def serve(tracker, host, port, open_window=True):
             else:
                 self.send_error(404)
 
-    srv = ThreadingHTTPServer((host, port), Handler)
+    class Servidor(ThreadingHTTPServer):
+        # Off, and deliberately. Python turns it on for every HTTP server, and
+        # on Windows that means a second tracker binds a port the first is
+        # already serving on -- both listening, and which one the browser or
+        # OBS reaches is a coin toss. With it off the second one says the port
+        # is taken, which is the thing worth knowing.
+        allow_reuse_address = False
+
+    try:
+        srv = Servidor((host, port), Handler)
+    except OSError as ex:
+        print(f"[overlay] cannot serve on {host}:{port} ({ex})")
+        print("[overlay] another tracker is probably already running; close it,")
+        print("[overlay] or start this one with --http-port.")
+        raise SystemExit(1)
     url = f"http://{host}:{port}/"
     print(f"[overlay] OoTMM Tracker {__version__} - {STAGE_NOTE}")
     print(f"[overlay] full view: {url}")

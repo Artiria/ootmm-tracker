@@ -403,6 +403,64 @@ def p64_handshake(sock, label):
     return link
 
 
+def someone_listening(host, port, timeout=0.4):
+    """Whether something alive answers on that port right now.
+
+    A port can be refused for two very different reasons: another tracker is
+    running, or the last one has gone and left a socket of its own closing
+    down. Connecting tells them apart -- a live listener accepts, a leftover
+    does not -- and the tracker on the other end shrugs off the visit: it
+    sends its PING, gets nothing, and goes back to waiting.
+    """
+    try:
+        with socket.create_connection((host, port), timeout):
+            return True
+    except OSError:
+        return False
+
+
+def listen_for_script(host, port, label):
+    """A listening socket for the emulator's script, or None with a reason.
+
+    Exclusive where the platform can be. On Windows SO_REUSEADDR does NOT mean
+    "reuse it once the last one is gone": it means **two processes may hold the
+    same port at once**, and then which of them a connecting script reaches is
+    a coin toss. That is not theory -- on 27 ago 2026 a tracker left running
+    from hours before quietly took the script away from a new one, twice in one
+    afternoon, and once in the middle of a memory hunt where the missing reads
+    looked like the game's fault.
+
+    So: ask for the port exclusively; if that is refused, find out whether
+    something is actually listening. If it is, say so and stop -- two trackers
+    on one port is never what anyone wanted. If nothing answers, what blocked
+    the exclusive bind is a socket of a run that has already ended, and reusing
+    the address is exactly right.
+    """
+    exclusivo = getattr(socket, "SO_EXCLUSIVEADDRUSE", None)
+    ls = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    ls.setsockopt(socket.SOL_SOCKET,
+                  exclusivo or socket.SO_REUSEADDR, 1)
+    try:
+        ls.bind((host, port))
+        return ls
+    except OSError:
+        ls.close()
+
+    if someone_listening(host, port):
+        print(f"[{label}] {host}:{port} is taken -- another tracker is already")
+        print(f"[{label}] listening there. Close it, or start this one with --port.")
+        return None
+
+    ls = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    ls.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    try:
+        ls.bind((host, port))
+        return ls
+    except OSError as ex:
+        print(f"[{label}] cannot listen on {host}:{port} ({ex})")
+        return None
+
+
 def wait_for_emulator(host, port, label, forced="auto", on_link=None):
     """Return a memory link to whichever emulator the user drives.
 
@@ -426,13 +484,8 @@ def wait_for_emulator(host, port, label, forced="auto", on_link=None):
     ev = threading.Event()
 
     def via_socket():
-        ls = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        ls.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        try:
-            ls.bind((host, port))
-        except OSError as ex:
-            if not ev.is_set():
-                print(f"[{label}] cannot listen on {host}:{port} ({ex})")
+        ls = listen_for_script(host, port, label)
+        if ls is None:
             return
         ls.listen(1)
         ls.settimeout(0.5)

@@ -28,6 +28,7 @@ Captura*.png
 capture*-*
 capture*.out
 capture*.stop
+capture*.jsonl
 
 __pycache__/
 *.pyc
