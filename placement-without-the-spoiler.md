@@ -43,8 +43,16 @@ can just read the whole thing in one pass and build a dictionary. Entries where
 `key >> 24 == 0xFF` are the end sentinel. `player` is free multiworld
 information: anything other than `1` means the item belongs to another world.
 
-The address is a structural constant from `combo/defs.h`, not a VROM that moves
-every release the way the xflag tables do.
+**Do not read it by address.** Up to v32.3 there were two files at fixed VROMs
+from `combo/defs.h`, one per game. From gen 943 there is **one**, holding both,
+and an MM key carries bit 31 (`0x80000000`) above its `ovType` — ask for
+`0xF0500000` on such a ROM and the extra DMA does not have it.
+
+Find them by shape instead, which no version so far has changed: 16-byte
+records, keys **strictly ascending** (the game binary-searches them), a known
+`ovType` in the top byte, and sixteen `0xFF` bytes to close. Take the game from
+bit 31 where it is set and from which file it came otherwise; strip the bit and
+the key is the same number in either layout.
 
 ## 2. Forming the key
 

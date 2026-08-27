@@ -17,10 +17,14 @@ the `COMBO_VROM_CHECKS` file, and from there the whole thing can be read:
 The game walks it with a binary search (`overrideData` in item.c); we just read
 it in one go.
 
-**Why this beats depending on the spoiler**: the address is a structural
-constant (`COMBO_EXTRA_DMA_VROM | 0x400000`), not a VROM that moves with every
-version the way the xflag tables do. And there is no file to find, load or
-validate: it comes out of the ROM you are already playing.
+**Why this beats depending on the spoiler**: there is no file to find, load or
+validate — it comes out of the ROM you are already playing.
+
+This used to claim the address was a structural constant as well, unlike the
+xflag tables' VROMs. Gen 943 (master, the release after v32.3) ended that: it
+merged the two files into one at `0xF0400000` and marks an MM key with bit 31.
+The tables are found by their shape now (`locate_tables`) and the addresses are
+what the finding is checked against.
 
 The names come out of the ROM too, out of `kItemNames[]`. That array lives in
 the payload, which is another file of the extra DMA, and it is
@@ -43,8 +47,24 @@ import rom
 
 DATA = pathlib.Path(paths.res("data"))
 
-# combo/defs.h. Structural constants, not addresses of one version.
+# combo/defs.h. Where the generator wrote these two files up to v32.3. They are
+# the CONTRAST for what locate_tables() finds and the net under it, not the way
+# in: on gen 943 -- master, the release after v32.3 -- the second one stopped
+# existing, and asking for it by address raised a KeyError nobody caught.
 VROM_CHECKS = {"oot": 0xF0400000, "mm": 0xF0500000}
+
+# Sixteen 0xFF bytes end a table and the game stops there (overrideData in
+# item.c).
+KEY_END = 0xFFFFFFFF
+
+# From gen 943 the two games share ONE table and an MM key carries this bit.
+# It is stripped on the way out, so a key is the same number whichever layout
+# the ROM uses and override_key() never has to know which one it is.
+KEY_MM = 0x80000000
+
+# Below this many records it is not a placement table. The smallest real one
+# measured here has 381 rows; a few words that happen to ascend are noise.
+MIN_RECORDS = 64
 
 # combo/item.h
 OV = {
@@ -57,6 +77,10 @@ OV_XFLAG0 = 0x10
 # their scene byte is 0 — found by looking at the real keys, after a first
 # attempt in which npc, gs, cow, shop, scrub, sr and fish all failed at once.
 CON_ESCENA = {"chest", "collectible", "sf"}
+
+# The override types as they appear in a key's top byte, for telling a
+# placement table from anything else in the extra DMA.
+_TIPOS_OV = set(OV.values())
 
 
 def override_key(tipo, scene_id, ident, xflag=None):
@@ -82,20 +106,160 @@ def override_key(tipo, scene_id, ident, xflag=None):
     return (ov << 24) | ((escena & 0xFF) << 16) | (ident & 0xFF)
 
 
-def read_tables(rom_bytes):
-    """{(game, key): (gi, player)} with both tables from the ROM.
+def _shape(blob):
+    """(records, mm rows, override types) if `blob` starts a placement table.
 
-    Each build carries its own: OoT's and MM's. An MM check is looked up in
-    MM's table.
+    None when it does not. What identifies one without being told where it
+    lives, and none of it an address:
+
+      * 16-byte records, keys **strictly ascending** -- the game binary-searches
+        them (`overrideData` in item.c), so a table out of order would not work;
+      * a known override type in the top byte: one of OV, or an xflag slice
+        from OV_XFLAG0 up, either of them with KEY_MM on top;
+      * at least one row of a plain OV type, which every seed has (chests) and
+        a run of ascending garbage has no reason to;
+      * KEY_END to close it.
+    """
+    n = mm = 0
+    prev = -1
+    tipos = set()
+    cerrada = False
+    for n in range(len(blob) // 16):
+        key = struct.unpack_from(">I", blob, n * 16)[0]
+        if key == KEY_END:
+            cerrada = True
+            break
+        tipo = (key & ~KEY_MM) >> 24
+        if tipo not in _TIPOS_OV and tipo < OV_XFLAG0:
+            return None
+        if key <= prev:
+            return None
+        prev = key
+        tipos.add(tipo)
+        mm += bool(key & KEY_MM)
+    if not cerrada or n < MIN_RECORDS or not (tipos & _TIPOS_OV):
+        return None
+    return n, mm, tipos
+
+
+def locate_tables(rom_bytes, verbose=False):
+    """[(game, blob)] of the placement tables, found by shape.
+
+    `game` is None for a table that holds both, which is what gen 943 made of
+    them: one file, and KEY_MM on every MM key. Before that there were two
+    files, and which is which is read off what they carry -- MM is the one with
+    stray fairies, OoT the one with gold skulltulas -- and not off the order,
+    because the order is exactly what a version is free to change.
+
+    The constants are the net: if the shape hunt comes back empty -- a build
+    that compressed these files would do it, since extra_entries only walks the
+    raw ones -- they are tried, and the fallback is announced.
+    """
+    hallados = []
+    for vs, _ve, blob in rom.extra_entries(rom_bytes):
+        forma = _shape(blob)
+        if forma:
+            hallados.append((vs, blob, forma))
+    hallados.sort(key=lambda h: h[0])
+
+    tablas = []
+    mezcladas = [h for h in hallados if 0 < h[2][1] < h[2][0]]
+    if mezcladas:
+        tablas = [(None, blob) for _vs, blob, _f in mezcladas]
+    elif hallados:
+        # Separate files, so each has to be named. Three rules, in this order,
+        # and only one of them is an address:
+        #
+        #   1. what is inside. A stray fairy override is MM's alone and a gold
+        #      skulltula one is OoT's, so a single row of either settles it.
+        #   2. where it sits, if that is where defs.h put that game's table.
+        #      The constant as a hint, which is all it is good for.
+        #   3. the order, lowest VROM first -- and only with two of them, so a
+        #      lone unmarked table is left unread instead of guessed at.
+        pendientes = list(hallados)
+
+        def toma(juego, cual):
+            tablas.append((juego, cual[1]))
+            pendientes.remove(cual)
+
+        for juego, marca in (("mm", OV["sf"]), ("oot", OV["gs"])):
+            marcadas = [h for h in pendientes if marca in h[2][2]]
+            if len(marcadas) == 1:
+                toma(juego, marcadas[0])
+        for juego in ("oot", "mm"):
+            if juego in [j for j, _ in tablas]:
+                continue
+            en_sitio = [h for h in pendientes if h[0] == VROM_CHECKS[juego]]
+            if len(en_sitio) == 1:
+                toma(juego, en_sitio[0])
+        if len(hallados) > 1:
+            for juego in ("oot", "mm"):
+                if juego in [j for j, _ in tablas] or not pendientes:
+                    continue
+                toma(juego, pendientes[0] if juego == "oot" else pendientes[-1])
+
+    if tablas:
+        if verbose:
+            _di_donde(hallados, tablas)
+        return tablas
+
+    # Nothing had the shape. Fall back to the addresses and say so: silence
+    # here is how a build that moved them would go unnoticed.
+    for juego, vrom in VROM_CHECKS.items():
+        try:
+            tablas.append((juego, rom.read_extra_vrom(rom_bytes, vrom)))
+        except (KeyError, ValueError, IndexError, struct.error):
+            continue
+    if verbose:
+        print("placement: no table in this ROM has the shape of one;"
+              f" falling back to the defs.h addresses ({len(tablas)} of 2 are there)")
+    return tablas
+
+
+def _di_donde(hallados, tablas):
+    """Where the tables turned up -- in full only when it is not where defs.h says.
+
+    A seed of one game only carries one table, the other being an empty file,
+    and that is not news: what counts as news is a table somewhere the constants
+    do not name, or one holding both games.
+    """
+    donde = {vs: forma for vs, _b, forma in hallados}
+    if all(j for j, _ in tablas) and set(donde) <= set(VROM_CHECKS.values()):
+        cuantas = "both tables" if len(tablas) == 2 else "the one table this seed has"
+        print(f"placement: {cuantas} located by shape,"
+              " and where defs.h v32.0 says")
+        return
+    print("placement: tables located by shape, and they are NOT where defs.h v32.0 says:")
+    for vs, (n, mm, _tipos) in sorted(donde.items()):
+        cual = f"both games, {mm} MM rows of {n}" if mm else f"{n} rows"
+        print(f"   {vs:#010x}: {cual}")
+    print(f"   defs.h v32.0 has two, oot {VROM_CHECKS['oot']:#010x} and"
+          f" mm {VROM_CHECKS['mm']:#010x}")
+
+
+def read_tables(rom_bytes, verbose=False):
+    """{(game, key): (gi, player)} with the placement of both games.
+
+    The key is stored without KEY_MM, so it is the number override_key() builds
+    in every version and the game travels in the tuple, the way it always did.
+
+    Empty -- and a line saying why -- when the tables cannot be read at all: a
+    layout this does not recognise must not take the whole build down with it,
+    because checks.json is still worth writing without each spot's item.
     """
     out = {}
-    for juego, vrom in VROM_CHECKS.items():
-        blob = rom.read_extra_vrom(rom_bytes, vrom)
+    try:
+        tablas = locate_tables(rom_bytes, verbose)
+    except Exception as ex:
+        print(f"placement: the tables could not be read ({type(ex).__name__}: {ex})")
+        return out
+    for juego, blob in tablas:
         for i in range(len(blob) // 16):
             key, player, value, _cloak = struct.unpack_from(">IhHh", blob, i * 16)
             if key >> 24 == 0xFF:
                 continue          # end-of-table sentinel
-            out[(juego, key)] = (value, player)
+            g = juego or ("mm" if key & KEY_MM else "oot")
+            out[(g, key & ~KEY_MM)] = (value, player)
     return out
 
 
@@ -278,7 +442,7 @@ def resolve(rom_bytes, checks, gi_path=None, verbose=True):
     version than the bundled `data/`, so the pool CSVs may not line up either
     and the check names —which do come from those CSVs— can be wrong.
     """
-    tabla = read_tables(rom_bytes)
+    tabla = read_tables(rom_bytes, verbose)
     gi = load_gi(gi_path)
     nombres, alineado = names_from_rom(rom_bytes, gi, verbose)
     resueltos = sin_clave = no_estan = 0

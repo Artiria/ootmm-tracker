@@ -1634,9 +1634,14 @@ the spoiler loaded by hand.
 
 Yes, but it is worth not overselling it:
 
-- **It is more stable in the address**: `0xF0400000` is a structural constant,
-  as against the xflag tables' VROMs, which are v32.0's and have already broken
-  once with a seed from another version.
+- ~~**It is more stable in the address**~~: **wrong, corrected 27 ago 2026.**
+  Gen 943 —master, after v32.3— merged the two files into one at `0xF0400000`
+  and tagged MM's keys with bit 31, so asking for `0xF0500000` raised a
+  KeyError nobody caught and the tracker could not build tables for that build
+  at all. Found by shape since (`placement.locate_tables`), with the constants
+  as the contrast: over 92 ROMs here, 81 read identically to before, 0
+  differences, and the four master seeds that used to crash come out at 967
+  rows —583 OoT + 384 MM— which is the same split the two files had.
 - **It is not version-independent**: the key's format, the `ovType` numbering
   and above all the `gi` index can change between versions — a new item in the
   middle of the list shifts everything behind it.
