@@ -1250,12 +1250,25 @@ def main(argv=None):
     # the ROM you are already playing.
     colocacion = None
     misma_version = None
+    mundo = None
     if args.rom:
         import placement
 
+        # The spoiler's worlds, when there is one: which of them matches what
+        # the ROM placed is the surest way of knowing which world this ROM is,
+        # and it needs no address, so it outlives any version.
+        por_mundo = None
+        if args.spoiler:
+            try:
+                import ootmm as _o
+                por_mundo = _o.load_spoiler_worlds(args.spoiler)
+            except Exception as ex:
+                print(f"spoiler: could not be read by world ({type(ex).__name__}: {ex})")
+
         print()
         try:
-            ok, sin_clave, no_estan, misma_version = placement.resolve(rom_bytes, checks)
+            ok, sin_clave, no_estan, misma_version, mundo = placement.resolve(
+                rom_bytes, checks, spoiler_worlds=por_mundo)
         except Exception as ex:
             # missing placement does not invalidate checks.json: the overlay
             # keeps working and a spoiler can still be loaded by hand
@@ -1336,6 +1349,10 @@ def main(argv=None):
         # False when the ROM's item names disagree with data/gi.yml, i.e. the
         # seed is from another OoTMM version. Null when built without a ROM.
         "same_version_as_data": misma_version,
+        # Which world of a multiworld this ROM plays (placement.world_of_rom).
+        # 1 on any single-player seed; null when nothing could say, and then
+        # the first world is assumed, as it always was.
+        "world": mundo,
         "layout": LAYOUT,
         "custom_save": {
             # gSharedCustomSave with the game running OoT. It is one single

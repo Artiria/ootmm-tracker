@@ -905,20 +905,59 @@ def locate_play(link, game, verbose=True):
     return hits[0]
 
 
-def parse_spoiler(lines):
+def parse_spoiler_worlds(lines):
+    """{world: {(game, location): item}} out of a spoiler log's lines.
+
+    A multiworld log lists **every** world's placement, one section per world
+    under `Location List`, and the same location name appears in all of them
+    with different items. Reading it flat, which is what this did until anyone
+    noticed the sections, let the last world overwrite the first — so on a
+    two-player seed the spoiler disagreed with the ROM on roughly one spot in
+    seven and nobody could see why.
+
+    A single-player log has no world header at all and comes back as world 1.
+    """
+    mundos = {}
+    seccion = None
+    mundo = 1
+    # the sections open with a line in column 0; a world with "  World N (984)"
+    cabecera = re.compile(r"^\s{1,3}World (\d+)\b")
+    pat = re.compile(r"^\s{2,}(OOT|MM) (.+?): (.+?)\s*$")
+    for line in lines:
+        line = line.rstrip("\n")
+        if line and not line[0].isspace():
+            seccion = line.split("(")[0].strip()
+            mundo = 1
+            continue
+        m = cabecera.match(line)
+        if m:
+            mundo = int(m.group(1))
+            continue
+        m = pat.match(line)
+        if m and seccion != "Spheres":
+            mundos.setdefault(mundo, {})[(m.group(1).lower(), m.group(2))] = m.group(3)
+    return mundos
+
+
+def parse_spoiler(lines, world=None):
     """Pull 'location -> item' out of a spoiler log's lines. The useful ones
     carry the game in front: '    OOT Mido's House Top Right: Minuet'.
+
+    `world` picks one world's section of a multiworld log — the one the ROM in
+    your hands plays. Without it every world is read in order, which on a
+    multiworld log means the last one wins: right for a single-player seed,
+    and a mix of two placements for anything else.
 
     Kept separate from load_spoiler because the overlay allows loading a
     spoiler from the page itself, and there what you have is uploaded text,
     not a path.
     """
+    mundos = parse_spoiler_worlds(lines)
+    if world is not None and world in mundos:
+        return mundos[world]
     items = {}
-    pat = re.compile(r"^\s{2,}(OOT|MM) (.+?): (.+?)\s*$")
-    for line in lines:
-        m = pat.match(line.rstrip("\n"))
-        if m:
-            items[(m.group(1).lower(), m.group(2))] = m.group(3)
+    for w in sorted(mundos):
+        items.update(mundos[w])
     return items
 
 
@@ -934,10 +973,16 @@ def spoiler_version(lines):
     return None
 
 
-def load_spoiler(path):
+def load_spoiler(path, world=None):
     """The same, from a file."""
     with open(path, encoding="utf-8", errors="replace") as fh:
-        return parse_spoiler(fh)
+        return parse_spoiler(fh, world)
+
+
+def load_spoiler_worlds(path):
+    """{world: {(game, location): item}}, from a file."""
+    with open(path, encoding="utf-8", errors="replace") as fh:
+        return parse_spoiler_worlds(fh)
 
 
 def cmd_items(args):
@@ -1232,7 +1277,9 @@ def cmd_overlay(args):
         print('[overlay]     ootmm-tracker.exe overlay --rom "C:\\path\\to\\your\\seed.z64"')
         print("[overlay]   Items still work once the emulator connects; the check list needs the ROM.")
 
-    spoiler = load_spoiler(spoiler_path) if spoiler_path else {}
+    # The tables know which world this ROM plays; a multiworld spoiler holds
+    # every world's placement and only that one matches what is in your hands.
+    spoiler = load_spoiler(spoiler_path, table.get("world")) if spoiler_path else {}
     if spoiler_path:
         print(f"[overlay] spoiler: {len(spoiler)} locations")
 
@@ -1326,7 +1373,7 @@ def cmd_overlay(args):
                               " and they are what the page is showing.")
                         tracker.rebuilding(False)
                         continue
-                    sp = load_spoiler(spoiler2) if spoiler2 else None
+                    sp = load_spoiler(spoiler2, fresh.get("world")) if spoiler2 else None
                     tracker.reload_from_table(fresh, spoiler=sp)
                     print(f"[overlay] now tracking {rom}")
                     if faltan:

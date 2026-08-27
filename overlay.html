@@ -1469,8 +1469,12 @@ async function tick() {
    the last state received, without waiting for the next poll. */
 function render(s) {
   if (s.version) {
+    /* On a multiworld the `world N` beside an item is somebody else's world,
+       and which one is yours is the missing half of that sentence. */
+    const quien = s.multiworld && s.world
+      ? ` — you are <b>world ${esc(String(s.world))}</b>` : '';
     setHTML('build', `OoTMM Tracker <b>${esc(s.version)}</b> — early beta:
-      single player is tested, multiworld is not.`);
+      single player is tested, multiworld is not.${quien}`);
   }
   /* The skulltula switch belongs to the server, so the box shows what the
      tracker is actually doing: a second window agrees with the first, and a

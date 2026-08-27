@@ -38,6 +38,7 @@ symbol and does not survive compilation. It is only used if it still lines up
 with the ROM, and it says so when it does not.
 """
 
+import collections
 import pathlib
 import re
 import struct
@@ -65,6 +66,16 @@ KEY_MM = 0x80000000
 # Below this many records it is not a placement table. The smallest real one
 # measured here has 381 rows; a few words that happen to ascend are noise.
 MIN_RECORDS = 64
+
+# The generator writes one file per world with that world's settings, and up
+# to v32.3 its first byte is the world number. Gen 943 moved it (the payload
+# carries an `sWorldId` byte instead), so like every other address here it is
+# checked before it is believed. See world_of_rom().
+VROM_CONFIG = 0xF0200000
+
+# A world number above this is not one; it is whatever else got read. OoTMM
+# generates far fewer, but the point is only to rule out garbage.
+MAX_WORLD = 64
 
 # combo/item.h
 OV = {
@@ -430,7 +441,77 @@ def names_from_rom(rom_bytes, gi, verbose=True):
     return por_indice, alineado
 
 
-def resolve(rom_bytes, checks, gi_path=None, verbose=True):
+def world_of_rom(rom_bytes, tabla=None, por_mundo=None, verbose=False):
+    """(world, how): which world of a multiworld this ROM plays.
+
+    It decides one line and that line was wrong. An override carries the
+    PLAYER its item belongs to, and anything that was not player 1 used to be
+    called somebody else's — so on the second world's ROM your own items are
+    labelled as another world's and your partner's arrive with no label at
+    all, which is exactly backwards. The panel then says it with a straight
+    face, which is the worst kind of wrong here.
+
+    Three signals, and the answer says which one spoke:
+
+      * **config** — the ROM's own word for it, `VROM_CONFIG`'s first byte.
+        Exact up to v32.3, and gen 943 moved it, so it counts only if it is a
+        plausible world AND one that actually owns items in this ROM.
+      * **spoiler** — the world whose section of the Location List agrees with
+        what the ROM placed. No address at all, so it survives any version.
+        The caller counts the agreement and passes `por_mundo` as
+        {world: (agree, comparable)}: only it can join a location name to an
+        override key.
+      * **majority** — most of the items in your world are yours. True with
+        room to spare on the seeds measured here (778 of 967 on a fresh
+        multi), but only 1656 of 3002 on a real one, so it never decides
+        alone: it confirms, or it answers when nothing else can and says that
+        it is a guess.
+
+    None when nothing can say, and then the caller is on its own — but at
+    least it knows it is.
+    """
+    duenos = collections.Counter(p for _, p in (tabla or {}).values() if p)
+    presentes = set(duenos)
+    mayoria = duenos.most_common(1)[0][0] if duenos else None
+
+    config = None
+    try:
+        b = rom.read_extra_vrom(rom_bytes, VROM_CONFIG, 1)[0]
+        if 1 <= b <= MAX_WORLD and (not presentes or b in presentes):
+            config = b
+    except (KeyError, ValueError, IndexError, struct.error):
+        pass
+
+    # A clear winner among the spoiler's worlds, not just the best of them:
+    # two worlds of the same seed share every filler item, so a thin lead is
+    # noise. A quarter of the comparable spots is not.
+    spoiler = None
+    if por_mundo:
+        marcador = sorted(((a / c, w) for w, (a, c) in por_mundo.items() if c),
+                          reverse=True)
+        if marcador and (len(marcador) == 1 or marcador[0][0] - marcador[1][0] >= 0.25):
+            spoiler = marcador[0][1]
+
+    elegido = config or spoiler or mayoria
+    como = ("the ROM's own config" if config else
+            "the spoiler's world sections" if spoiler else
+            "a guess from who owns most of the items" if mayoria else None)
+    if elegido is None:
+        if verbose:
+            print("world: this ROM does not say which world it plays, and nothing"
+                  " else could tell; assuming the first, as before")
+        return None, None
+
+    if verbose and (len(presentes) > 1 or config != elegido or spoiler):
+        print(f"world: this ROM plays world {elegido}, by {como}")
+        for etiqueta, valor in (("config", config), ("spoiler", spoiler),
+                                ("majority", mayoria)):
+            if valor is not None and valor != elegido:
+                print(f"   NOTE: {etiqueta} says {valor} instead; going with {elegido}")
+    return elegido, como
+
+
+def resolve(rom_bytes, checks, gi_path=None, verbose=True, spoiler_worlds=None):
     """Fill in `item` and `item_id` on every check that shows up in the table.
 
     Returns (resolved, no_key, not_found, names_aligned). Checks that do not
@@ -465,7 +546,63 @@ def resolve(rom_bytes, checks, gi_path=None, verbose=True):
         if alineado or nombres is None:
             c["item_id"] = simbolo
         c["item"] = nombre
-        if player and player != 1:
-            c["player"] = player   # multiworld: the item belongs to someone else
         resueltos += 1
-    return resueltos, sin_clave, no_estan, alineado
+
+    # Which world this is has to be settled before any item can be called
+    # somebody else's, so the labels go on in a second pass. The spoiler's
+    # worlds are scored here because this is where a location name and an
+    # override key are both in hand.
+    mundo, _como = world_of_rom(
+        rom_bytes, tabla, _score_worlds(checks, spoiler_worlds), verbose)
+    for c in checks:
+        hit = tabla.get((c["game"], c["ovkey"])) if "ovkey" in c else None
+        player = hit[1] if hit else None
+        if player and player != (mundo or 1):
+            c["player"] = player   # multiworld: the item belongs to someone else
+    return resueltos, sin_clave, no_estan, alineado, mundo
+
+
+def _score_worlds(checks, spoiler_worlds):
+    """{world: (agree, comparable)} of each spoiler world against the ROM.
+
+    The one that matches is the world this ROM plays: a spoiler names every
+    world's placement and only one of them is the one in your hands. Items are
+    compared bare, the way _vet_spoiler does, because the spoiler writes the
+    owner in front of the name and the ROM keeps it in its own field.
+    """
+    if not spoiler_worlds:
+        return None
+    de_rom = {(c["game"], c["name"]): c["item"] for c in checks if c.get("item")}
+    out = {}
+    for mundo, sitios in spoiler_worlds.items():
+        acuerdo = comparables = 0
+        for clave, item in sitios.items():
+            mio = de_rom.get(clave)
+            if mio is None:
+                continue
+            comparables += 1
+            nombre = item[0] if isinstance(item, tuple) else item
+            acuerdo += bare_item(nombre) == bare_item(mio)
+        out[mundo] = (acuerdo, comparables)
+    return out
+
+
+def bare_item(name):
+    """An item name reduced to what the ROM and a spoiler can agree on.
+
+    Two names for the same item differ in ways that are not disagreements: a
+    multiworld spoiler writes `Player N ` in front, and a spoiler tags which
+    game an item belongs to with a ` (OoT)` / ` (MM)` suffix that the ROM's own
+    `kItemNames` does not carry. Left in, that suffix alone dropped a seed's
+    agreement with its OWN spoiler from 86% to 21% and got it wrongly refused
+    (24 ago 2026). Only the game tag is stripped, never a real parenthesis
+    like `Rupee (5)`.
+
+    It lives here rather than in the overlay because two things depend on it
+    agreeing with itself: which world a ROM is (_score_worlds) and whether a
+    spoiler is this seed's at all (Tracker._vet_spoiler). Two copies of this
+    would decide those two with different rules the first time one changed.
+    """
+    s = re.sub(r"^Player \d+ ", "", name or "")
+    s = re.sub(r"\s*\((?:OoT|OOT|MM)\)\s*$", "", s)
+    return s.strip().lower()

@@ -44,6 +44,9 @@ import urllib.parse
 import webbrowser
 
 import paths
+# the one that decides which world a ROM is normalises names the same way,
+# and the two must not drift apart: see placement.bare_item
+from placement import bare_item
 from version import STAGE_NOTE, __version__
 
 # One block per anchor: how much to read from it to cover its checks. The
@@ -102,20 +105,6 @@ WHOLE_SCENE = {("oot", "GERUDO_FORTRESS")}
 SPOILER_MIN_COMPARABLE = 100
 SPOILER_MIN_AGREEMENT = 0.5
 
-
-def bare_item(name):
-    """An item name reduced to what the ROM and the spoiler can agree on.
-
-    Two names for the same item differ in ways that are not disagreements:
-    a multiworld spoiler writes `Player N ` in front, and a single-player
-    spoiler tags which game an item belongs to with a ` (OoT)` / ` (MM)`
-    suffix the ROM's own `kItemNames` does not carry. Left in, that suffix
-    alone dropped a seed's agreement with its OWN spoiler from 86% to 21% and
-    got it wrongly refused (24 ago 2026). Only the game tag is stripped, never
-    a real parenthesis like `Rupee (5)`."""
-    s = re.sub(r"^Player \d+ ", "", name or "")
-    s = re.sub(r"\s*\((?:OoT|OOT|MM)\)\s*$", "", s)
-    return s.strip().lower()
 
 # The live scene flags, inside the PlayState. Chests and collectibles are the
 # two kinds of check that only reach the save context when the scene is left:
@@ -280,14 +269,17 @@ JUNK_PATTERNS = [
 #
 # It was worked out from the seed at first, and that lasted a few hours: junk
 # when every token still sat in its vanilla spot, a real check when the seed
-# had moved one. The rule had to ask whether a token was YOURS, and that is
-# precisely what the tracker cannot tell on a multiworld ROM -- placement.py
-# reads the player number stamped on each item and calls anything that is not 1
-# somebody else's, so on world 2's ROM your own tokens read as your partner's.
-# The rule then saw no tokens of yours at all, decided the seed had shuffled
-# them, and filtered nothing; the same reading also made a seed look like it
-# had tokensanity on when it did not. A switch the player presses does not care
-# whose world anything is in, which is why it replaced the rule outright.
+# had moved one. The rule had to ask whether a token was YOURS, and at the
+# time that was precisely what it could not tell on a multiworld ROM:
+# placement.py called anything that was not player 1 somebody else's, so on
+# world 2's ROM your own tokens read as your partner's. The rule then saw no
+# tokens of yours at all, decided the seed had shuffled them, and filtered
+# nothing; the same
+# reading also made a seed look like it had tokensanity on when it did not.
+# The tracker knows its world now (placement.world_of_rom), so that reason has
+# gone -- but the switch stays, because it never needed to know: it does not
+# care whose world anything is in, and there is nothing left in it to get
+# wrong.
 TOKEN_KINDS = {
     "GS_TOKEN": "Gold Skulltula Token",
     "GS_TOKEN_SWAMP": "Swamp Skulltula Token",
@@ -627,6 +619,12 @@ class Tracker:
         self.worlds = {
             (c["game"], c["name"]): c["player"] for c in table["checks"] if c.get("player")
         }
+        # Which world of a multiworld this ROM plays, worked out when the
+        # tables were built (placement.world_of_rom). The labels above are
+        # relative to it: what is not yours carries a world, yours carries
+        # none. Null means nothing could say, and then the first world was
+        # assumed -- which is what the tracker always did, silently.
+        self.world = table.get("world")
         # Whether the ROM's placement table was read for this checks.json. When
         # it was, a row without an item is a spot the generator did not make a
         # location in this seed -- see is_active().
@@ -746,6 +744,13 @@ class Tracker:
                 len(self.rom_items) / max(1, sum(
                     1 for c in table["checks"] if c["addr"] is not None)), 3),
             "rom_of_table": table.get("rom"),
+            # This ROM's own world. The `world N` on an item is somebody
+            # else's; without this the reader cannot tell whose.
+            "world": self.world,
+            # Whether any spot holds an item that is not this world's, which is
+            # what makes the number above worth showing. A single-player seed
+            # is world 1 and saying so would be noise.
+            "multiworld": bool(self.worlds),
             # The ROM the emulator has open right now, and whether it is the
             # one the tables were built from. Read from Project64's own config
             # every ROM_CHECK_SECONDS; null when there is no emulator to ask.
@@ -2886,7 +2891,9 @@ def cargar_spoiler(tracker, raw):
     import ootmm
 
     lineas = raw.decode("utf-8", "replace").splitlines()
-    spoiler = ootmm.parse_spoiler(lineas)
+    # A multiworld log carries every world's placement: only this ROM's
+    # section describes the seed in front of you (see parse_spoiler_worlds).
+    spoiler = ootmm.parse_spoiler(lineas, getattr(tracker, "world", None))
     if not spoiler:
         return {"ok": False, "error": "no locations in there; that is not an OoTMM spoiler log"}
 

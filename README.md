@@ -8,8 +8,8 @@ checks.
 **No spoiler log needed.** What item sits in each location is read from the
 seed ROM itself.
 
-> **0.1.5-beta.** Single player is tested and measured; multiworld has had one
-> session. Expect rough edges, and please report what you find.
+> **0.1.6-beta.** Single player is tested and measured; multiworld has had a
+> few sessions. Expect rough edges, and please report what you find.
 
 ## Install
 
@@ -96,10 +96,15 @@ Every player runs their own ROM, save and tracker. Set it up exactly as above.
 From the first real session:
 
 - **Your own world tracks correctly**, the same as in single player.
+- **It knows which world your ROM is**, and says so next to the version. That
+  is not cosmetic: the ROM stamps every item with the player it belongs to,
+  and the tracker used to take itself for world 1 — so on any world but the
+  first the tags came out inverted, your own items marked as somebody else's
+  and your partner's arriving unmarked.
 - **It cannot see your partner's world.** It reads your machine's memory, and
   their progress is not in it.
 - **It marks the spots holding someone else's item** with a `world N` tag,
-  wherever the ROM records it. No tag means "yours, as far as the ROM says".
+  wherever the ROM records it. No tag means "yours".
 
 ## Support
 

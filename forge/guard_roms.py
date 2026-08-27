@@ -435,8 +435,10 @@ def check_placement(rep, data, spoiler, world, logp):
             hard_item.append(f"{key[0].upper()} {key[1]}: spoiler '{item}' / rom '{got[0]}'")
         if owner != got[1]:
             owner_wrong += 1
-            # checks.json marks an item as someone else's only when it is not
-            # Player 1's, so a ROM of another world reads every owner as its own
+            # Until 27 ago 2026 checks.json marked an item as someone else's
+            # only when it was not Player 1's, so a ROM of another world read
+            # every owner as its own. Kept as a regression check: if this
+            # pattern comes back, so has the bug.
             owner_wrong_p1 += owner == 1 and got[1] == world
             wrong_owner.append(f"{key[0].upper()} {key[1]}: spoiler P{owner} / rom P{got[1]} ('{item}')")
     rom_only = [k for k in resolved if k not in truth]
@@ -476,7 +478,8 @@ def check_placement(rep, data, spoiler, world, logp):
                      "as another version than its data/ (names/pool shifted) -- expected, not a regression")
     if known_p2_bug:
         notes.append(f"all {owner_wrong} wrong owners are Player 1's items read as world {world}'s: "
-                     "the tracker assumes the ROM is Player 1 (known multiworld limit)")
+                     "the tracker is taking itself for world 1 again — that is the bug "
+                     "fixed on 27 ago 2026, come back")
     if notes:
         detail += "  [" + "; ".join(notes) + "]"
 
