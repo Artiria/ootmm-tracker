@@ -614,6 +614,12 @@ body.chroma-green .card { background: var(--surface); }
           </select>
         </label>
       </div>
+      <!-- Said out loud, like everything else a panel decides on its own: these
+           come back next time, they are kept in this browser and not on the
+           server, and a panel URL that names an option still wins. -->
+      <p class="hint" id="opts-kept" hidden>These are remembered in this
+        browser, so closing the tracker keeps them. The panel links below carry
+        their own, and those always win.</p>
       <!-- Hints you give yourself, by degrees, and the audience sees the same
            degree: game, then region, then the exact check. Levels only go up
            and everything taken is counted, so a hint has a visible cost. -->
@@ -684,11 +690,74 @@ const PANELS_SOULS_GAME = [
   ['souls', 'mm',  "Souls · Majora's Mask"],
 ];
 
+/* Single-panel mode: /p/<name> keeps only that block. Declared up here because
+   what gets remembered below depends on it. */
+const panel = (location.pathname.match(/^\/p\/([a-z]+)/) || [])[1];
+
 const q = new URLSearchParams(location.search);
+
+/* What the director view remembers between runs.
+
+   The URL is the only memory these options have, and syncUrl() only puts them
+   there: that survives a reload, not closing the tracker and opening the bare
+   address again, which put every selector back to its default (his report).
+   So the choices are also kept on this browser, and read back for anything the
+   address bar does not mention.
+
+   Two rules stop that from surprising anyone:
+
+     * only the director view. A /p/ panel's URL *is* its configuration -- that
+       is how an OBS source gets pinned -- so fiddling with the selectors while
+       playing must never reach the stream. Panels neither read this nor write
+       it.
+     * whatever the address bar says wins. A link with ?spoiler=off means it,
+       however the last session ended.
+
+   On the browser and not in options.json, unlike the two filler switches,
+   for that same reason: those change what a check IS and every window should
+   agree, while these are how one window draws it, and the window he clicks in
+   is not the one OBS renders. Storage can be refused (private browsing, a
+   locked-down CEF), and then this is simply a page that does not remember --
+   never one that fails to open. */
+const RECALL_KEY = 'ootmm-tracker:view';
+const RECALLED = ['spoiler', 'junk', 'done', 'untouched', 'rooms', 'remaining',
+                  'souls', 'chroma', 'hide'];
+/* Asked once, because the page says out loud that it remembers and it must not
+   say so when it cannot. Writing is the only honest test: storage can be
+   present and still throw on write. */
+const RECUERDA = (() => {
+  try {
+    localStorage.setItem(RECALL_KEY + ':probe', '1');
+    localStorage.removeItem(RECALL_KEY + ':probe');
+    return true;
+  } catch { return false; }
+})();
+
+function recallOpts() {
+  if (panel) return;
+  let saved = null;
+  try { saved = JSON.parse(localStorage.getItem(RECALL_KEY) || 'null'); }
+  catch { return; }
+  if (!saved || typeof saved !== 'object') return;
+  for (const k of RECALLED) {
+    // An empty value means "the default": the option was turned off on purpose
+    // and must not come back to life on the next run.
+    if (!q.has(k) && saved[k]) q.set(k, String(saved[k]));
+  }
+}
+
+function rememberOpts(vals) {
+  if (panel || !RECUERDA) return;
+  try { localStorage.setItem(RECALL_KEY, JSON.stringify(vals)); }
+  catch { /* nothing to be done, and nothing worth breaking the page over */ }
+}
+
+recallOpts();
+
 /* The options below can be changed live from the director view, so they are
-   state, not constants: the URL only says how we start. applyOpts() is what
-   changes them — it repaints with the last state received and rewrites the
-   address bar so a reload does not lose them. */
+   state, not constants: the URL (or what was remembered) only says how we
+   start. applyOpts() is what changes them — it repaints with the last state
+   received and rewrites the address bar so a reload does not lose them. */
 let chroma = q.get('chroma');
 if (chroma === 'none') document.body.classList.add('chroma-none');
 if (chroma === 'green') document.body.classList.add('chroma-green');
@@ -750,8 +819,6 @@ let puedeFiltrar = false;
 let SOLO_CLAVE = false;
 const keepGame = (g) => !GAMEF || g === GAMEF;
 
-/* Single-panel mode: /p/<name> keeps only that block. */
-const panel = (location.pathname.match(/^\/p\/([a-z]+)/) || [])[1];
 if (panel) {
   document.body.classList.add('panel', 'panel-' + panel);
   document.querySelectorAll('[data-panel]').forEach(el => {
@@ -826,9 +893,12 @@ let urlsHaveSouls = false;
    they generate. They used to call only renderUrls(), so you would switch to
    "only what matters" and the numbers stayed unfiltered: it looked broken. */
 function syncUrl() {
-  // so reloading (or copying the address bar) keeps what was chosen
+  // so reloading (or copying the address bar) keeps what was chosen -- and so
+  // does closing it, because the same values go to rememberOpts. One `set` for
+  // both, or the address bar and the memory would drift apart.
   const p = new URLSearchParams(location.search);
-  const set = (k, v) => v ? p.set(k, v) : p.delete(k);
+  const vals = {};
+  const set = (k, v) => { vals[k] = v || ''; v ? p.set(k, v) : p.delete(k); };
   set('spoiler', SPOILER === 'item' ? '' : SPOILER);   // 'item' is the default
   set('junk', PIDE_FILTRO ? 'hide' : '');
   set('done', OCULTA_HECHAS ? 'hide' : '');
@@ -840,6 +910,7 @@ function syncUrl() {
   set('hide', HIDE_ALL ? '1' : '');
   const qs = p.toString();
   history.replaceState(null, '', location.pathname + (qs ? '?' + qs : ''));
+  rememberOpts(vals);
 }
 
 function applyOpts() {
@@ -877,8 +948,10 @@ function applyOpts() {
 }
 
 if ($('urls')) {
-  // the selectors start from whatever the URL carries, or the links they
-  // generate would ignore the options already in effect
+  // the selectors start from whatever the URL carries -- or, where it is
+  // silent, from what was remembered -- or the links they generate would
+  // ignore the options already in effect
+  if ($('opts-kept') && RECUERDA) $('opts-kept').hidden = false;
   $('opt-spoiler').value = SPOILER;
   $('opt-chroma').value = chroma || '';
   $('opt-junk').value = PIDE_FILTRO ? 'hide' : '';
@@ -890,6 +963,11 @@ if ($('urls')) {
   $('opt-hide').checked = HIDE_ALL;
   $('opt-spoiler').disabled = HIDE_ALL;
   document.querySelector('.killswitch').classList.toggle('on', HIDE_ALL);
+  // With options coming back from the browser instead of the address bar, the
+  // address bar stopped describing what you are looking at: a customised view
+  // on a bare URL, so copying it handed someone else the defaults. Writing it
+  // once here puts that back, and it is the same call the selectors make.
+  syncUrl();
   // The filler switches go to the server (they change what counts as filler,
   // not just what this page draws), so they do not ride applyOpts: each posts,
   // waits, and repaints from the state that comes back. Disabled while its own
