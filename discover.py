@@ -388,7 +388,7 @@ def _has_key(path, *keys):
     regenerated on every start.
 
     Several keys walk into nested objects: _has_key(p, "payload", "oot",
-    "triforce_off") asks for the last one down that path.
+    "triforce") asks for the last one down that path.
     """
     try:
         with open(path, encoding="utf-8") as fh:
@@ -448,7 +448,7 @@ def ensure_tables(rom, spoiler, verbose=True):
             or not _has_key(checks, "payload")
             or not _has_key(checks, "souls")
             or not _has_key(checks, "scene_layers")
-            or not _has_key(checks, "payload", "oot", "triforce_off")):
+            or not _has_key(checks, "payload", "oot", "triforce")):
         argv = ["--rom", rom]
         if spoiler:
             argv += ["--spoiler", spoiler]

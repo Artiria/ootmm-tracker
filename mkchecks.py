@@ -1084,8 +1084,8 @@ def _payload_json(pl):
         # it has moved between versions, so it is measured, not assumed. Null
         # when the records look like no build seen before, and then the figure
         # simply does not show.
-        if "triforce_off" in b:
-            out[game]["triforce_off"] = b["triforce_off"]
+        if "triforce" in b:
+            out[game]["triforce"] = b["triforce"]
     lay = pl.get("layout")
     if lay:
         out["layout"] = {g: {k: v for k, v in lay[g].items() if not k.startswith("_")}

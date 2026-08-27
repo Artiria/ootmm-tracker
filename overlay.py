@@ -679,10 +679,10 @@ class Tracker:
         # by payload.py when the tables were built (it is not the same record in
         # every OoTMM version). None on a checks.json built without a ROM or by
         # a tracker older than this, and then the figure stays out.
-        self.triforce_off = ((table.get("payload") or {}).get("oot") or {}).get("triforce_off")
-        if self.triforce_off is None and table["checks"]:
-            print("[overlay] Triforce count: this build's record was not recognised,"
-                  " so the figure will not be shown")
+        self.triforce = ((table.get("payload") or {}).get("oot") or {}).get("triforce")
+        if self.triforce is None and table["checks"]:
+            print("[overlay] Triforce count: this build does not hand the piece to a"
+                  " handler that could be followed, so the figure will not be shown")
         # The player's own "skulltulas are junk" switch, remembered between
         # runs. Read before the first _rebuild_items, or a tracker started with
         # it on would show them until the page came up and said so.
@@ -1665,7 +1665,7 @@ class Tracker:
         items = {}
         oot_blk = self.link.read_block(bases["oot"], 0x1500) if "oot" in bases else None
         if oot_blk is not None:
-            items["oot"] = inventory.snapshot(oot_blk, self.triforce_off)
+            items["oot"] = inventory.snapshot(oot_blk, self._triforce(oot_blk))
 
         # The running game's save entrance: OoT keeps it at +0x00, MM at
         # MmSave+0x00, eight bytes before the base this project uses.
@@ -2080,6 +2080,22 @@ class Tracker:
                 time.sleep(2.0)
                 continue
             time.sleep(interval)
+
+    def _triforce(self, oot_blk):
+        """The Triforce count, out of whichever buffer this build keeps it in.
+
+        Up to v32.3 it is a u32 in OoT's save; gen 943 moved it to a u16 in
+        gSharedCustomSave. checks.json says which and how wide
+        (payload.triforce_counter), so nothing here has to know.
+        """
+        d = self.triforce
+        if not d:
+            return None
+        blob = oot_blk if d.get("buffer") == "oot" else self._custom_blob
+        off, ancho = d.get("off"), d.get("width", 4)
+        if blob is None or off is None or off + ancho > len(blob):
+            return None
+        return int.from_bytes(blob[off:off + ancho], "big")
 
     def snapshot(self):
         with self.lock:

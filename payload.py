@@ -729,6 +729,158 @@ def incremented_records(scan, own, window=10):
     return out
 
 
+# --------------------------------------------------------------------------
+# Where this build keeps the Triforce count, by following what the game does
+# --------------------------------------------------------------------------
+#
+# The rule below (an extra record above the stable prefix, incremented by one)
+# held from v29 to v32.3 and then stopped: gen 943 moved the count OUT of OoT's
+# save into gSharedCustomSave and made it a u16, so nothing above record 12 is
+# touched at all any more and the tracker showed no figure. Guessing at a new
+# layout would only buy time until the next one.
+#
+# So it is followed instead, and every step is read out of the ROM:
+#
+#   1. `kItemNames` says which id the item "Triforce Piece" has -- the tracker
+#      already reads that table for every item's name.
+#   2. `kAddItemFuncs[id - 1]` says which handler the game runs when you are
+#      given it. That table is a u8 per item, an index, not an address.
+#   3. The handlers are a run of pointers into the payload's own code, and it
+#      is found by its length: exactly one more than the largest index the
+#      table uses (0xFF being "no handler"). One run fits in every version
+#      measured -- 105 entries on v29, 126 on v31 through v32.3, 127 on 943.
+#   4. That handler is six or seven instructions: load one address, add one,
+#      store it back, return. Whatever it loads IS the counter, and the store
+#      says how wide it is.
+#
+# Measured with forge's symbol tables: the handler reached this way is exactly
+# `addItemTriforce` in v29, v30, v31, v32.0, v32.3 and 943. The old rule stays
+# underneath as the net, and locate() says which of the two answered.
+
+TRIFORCE_ITEM = "Triforce Piece"
+NO_HANDLER = 0xFF               # kAddItemFuncs' "nothing runs for this item"
+HANDLER_BODY = 0x40             # a bump handler is far shorter than this
+JR_RA = 0x03E00008              # `jr ra`: where the handler ends
+OOT_SAVE_SIZE = 0x1500          # what the overlay reads of gSaveContext
+_LOADS = {"lw": 4, "lhu": 2, "lh": 2, "lbu": 1, "lb": 1}
+_STORES = {"sw": 4, "sh": 2, "sb": 1}
+
+
+def _handler_table(blob, ram, funcs):
+    """The run of payload pointers kAddItemFuncs indexes, or None if unclear.
+
+    Found by length alone: the table has one entry per handler index in use,
+    and the largest index a build uses is what says how long that is. More
+    than one run of that exact length means the answer is not certain, and an
+    uncertain answer here is worse than none.
+    """
+    top = max((f for f in funcs if f != NO_HANDLER), default=None)
+    if top is None:
+        return None
+    n = len(blob) // 4
+    words = struct.unpack_from(f">{n}I", blob, 0)
+    fin = ram + len(blob)
+    encontradas = []
+    i = 0
+    while i < n:
+        if ram <= words[i] < fin:
+            a = i
+            while i + 1 < n and ram <= words[i + 1] < fin:
+                i += 1
+            if i - a + 1 == top + 1:
+                encontradas.append(words[a:i + 1])
+        i += 1
+    return encontradas[0] if len(encontradas) == 1 else None
+
+
+def _bumped_by(scan, fn):
+    """(address, width) the function at `fn` loads, adds one to and stores.
+
+    The whole body is that, in every version measured, so there is no need to
+    follow the arithmetic: one address loaded and stored inside the same short
+    function is the counter. Anything less clear-cut returns None.
+
+    The body ends where it returns, and that has to be measured rather than
+    assumed: the handlers sit one after another, and a fixed window long enough
+    for one of them reaches into the next -- which is how this first came back
+    with two candidates and refused to answer at all.
+    """
+    words, ram = scan.words, scan.ram
+    i = (fn - ram) // 4
+    if not 0 <= i < len(words):
+        return None
+    fin = None
+    for j in range(i, min(i + HANDLER_BODY // 4, len(words))):
+        if words[j] == JR_RA:
+            fin = ram + (j + 2) * 4       # the delay slot is still the function
+            break
+    if fin is None:
+        return None
+
+    cargas, guardas = {}, {}
+    for r in scan.refs:
+        if not (fn <= r.pc < fin):
+            continue
+        if r.kind in _LOADS:
+            cargas.setdefault(r.addr, r.kind)
+        elif r.kind in _STORES:
+            guardas.setdefault(r.addr, r.kind)
+    comunes = set(cargas) & set(guardas)
+    if len(comunes) != 1:
+        return None
+    addr = comunes.pop()
+    return addr, _STORES[guardas[addr]]
+
+
+def triforce_counter(rom_bytes, scan, bases):
+    """{"buffer", "off", "width"} for gTriforceCount, or None.
+
+    `bases` is what buffers() worked out for OoT: `own` (gSaveContext) and
+    `custom` (gSharedCustomSave). The answer says which of the two the count
+    lives in, because since gen 943 it is not the save.
+    """
+    # local imports: this module is otherwise free of the project's own, and
+    # the two it wants here already depend on things it does not
+    import placement
+    import rom as romlib
+    import souls
+
+    nombres = placement.find_item_names(rom_bytes, "oot")
+    if not nombres or TRIFORCE_ITEM not in nombres:
+        return None
+    gi = nombres.index(TRIFORCE_ITEM)          # kItemNames is indexed by gi - 1
+
+    tablas = souls.find_tables(rom_bytes, "oot")
+    if not tablas or "funcs_off" not in tablas:
+        return None
+    vrom, ram = placement.PAYLOAD["oot"]
+    try:
+        blob = romlib.read_extra_vrom(rom_bytes, vrom)
+    except (KeyError, ValueError, IndexError, struct.error):
+        return None
+    funcs = blob[tablas["funcs_off"]:tablas["funcs_off"] + tablas["n"]]
+    if gi >= len(funcs) or funcs[gi] == NO_HANDLER:
+        return None
+
+    tabla = _handler_table(blob, ram, funcs)
+    if tabla is None or funcs[gi] >= len(tabla):
+        return None
+    bumped = _bumped_by(scan, tabla[funcs[gi]])
+    if bumped is None:
+        return None
+    addr, ancho = bumped
+
+    own = (bases.get("own") or (None, None))[0]
+    custom = bases.get("custom") or (None, None)
+    if own is not None and 0 <= addr - own < OOT_SAVE_SIZE:
+        return {"buffer": "oot", "off": addr - own, "width": ancho,
+                "how": "the item's own handler"}
+    if custom[0] is not None and 0 <= addr - custom[0] < custom[1]:
+        return {"buffer": "custom", "off": addr - custom[0], "width": ancho,
+                "how": "the item's own handler"}
+    return None
+
+
 def triforce_offset(scan, own):
     """Offset of gTriforceCount inside the OoT save, or None if unrecognised.
 
@@ -794,7 +946,15 @@ def locate(rom_bytes, verbose=False):
         # Only OoT's payload: the records live in OoT's save and it is OoT's
         # side that counts the pieces.
         if game == "oot" and "own" in b:
-            b["triforce_off"] = triforce_offset(scans[game], b["own"][0])
+            # the item's handler first; the extra-record rule is the net under
+            # it, and it is the one that gen 943 broke
+            d = triforce_counter(rom_bytes, scans[game], b)
+            if d is None:
+                off = triforce_offset(scans[game], b["own"][0])
+                if off is not None:
+                    d = {"buffer": "oot", "off": off, "width": 4,
+                         "how": "the extra-record rule"}
+            b["triforce"] = d
         out[game] = b
     if "oot" in scans and "mm" in scans and \
             "custom" in out.get("oot", {}) and "custom" in out.get("mm", {}):

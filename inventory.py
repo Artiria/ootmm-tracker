@@ -149,12 +149,12 @@ def read(buf, base, off, size, signed=False):
     return v
 
 
-def snapshot(save, triforce_off=None):
+def snapshot(save, triforce=None):
     """save = the save context bytes. Returns {label: value}.
 
-    `triforce_off` is where THIS build keeps gTriforceCount inside the save,
-    measured by payload.triforce_offset and carried in checks.json; without it
-    the Triforce figure is left out entirely."""
+    `triforce` is the count already read, because since gen 943 it is not in
+    this buffer at all: the caller knows which one it is in (payload puts the
+    answer in checks.json) and reads it there. None leaves the figure out."""
     st = {}
     for name, off, size, signed in OOT_SCALARS:
         st[name] = read(save, None, off, size, signed)
@@ -187,14 +187,16 @@ def snapshot(save, triforce_off=None):
         st[f"key:{i}"] = read(save, None, OOT_KEYS_ADDR + i, 1, signed=True)
 
     # Triforce hunt: how many pieces so far. Zero on any other seed, and the
-    # page hides it then. WHICH extra record holds it moved between OoTMM
-    # versions, so the offset is measured from the payload's own code
-    # (payload.triforce_offset, carried in checks.json) and handed in here; with
-    # no offset there is no figure, which is the honest answer for a build whose
-    # records are not recognised. A hardcoded record is what kept this at zero
-    # on every release seed until 25 ago 2026.
-    if triforce_off is not None:
-        st["triforce"] = read(save, None, triforce_off, 4)
+    # page hides it then. Where the count lives has moved twice -- between
+    # extra records of this save up to v32.3, and out of the save entirely in
+    # gen 943, which keeps it as a u16 in gSharedCustomSave -- so it is not
+    # looked up here at all: payload.triforce_counter follows the item's own
+    # handler to it and the caller reads whichever buffer it named. With no
+    # answer there is no figure, which is the honest thing for a build nobody
+    # recognises. A hardcoded record is what kept this at zero on every
+    # release seed until 25 ago 2026.
+    if triforce is not None:
+        st["triforce"] = triforce
     return st
 
 
@@ -399,8 +401,10 @@ MM_NOISE = set(range(0x04, 0x06)) | set(range(0x36, 0x38))
 #   gMmOwlFlags     index 11   |= 1 << owl on every owl statue (item_add.c)
 # Index 11 is the same from v29 to v32.3 (checked against OoTMM's save.h at
 # each tag), so the owls can keep a constant. The Triforce counter cannot: it
-# sits at 19, 18 or 14 depending on the build, so it is measured instead --
-# see payload.triforce_offset and snapshot()'s `triforce_off`.
+# sat at record 19, 18 or 14 depending on the build and then gen 943 took it
+# out of this save altogether, into a u16 in gSharedCustomSave. It is followed
+# rather than placed -- see payload.triforce_counter, which asks the handler
+# the game runs when you are given the piece.
 EXTRA_RECORD = lambda i: 0xD4 + 0x10 + 0x1C * i
 MM_OWL_FLAGS_ADDR = EXTRA_RECORD(11)
 
