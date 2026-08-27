@@ -562,6 +562,116 @@ def resolve(rom_bytes, checks, gi_path=None, verbose=True, spoiler_worlds=None):
     return resueltos, sin_clave, no_estan, alineado, mundo
 
 
+# What follows tells "the same item, spelled another way" from "another item".
+# It grew in forge's guard, comparing every ROM against its spoiler, and it
+# lives here because two things need the very same judgement: whether a spoiler
+# is this seed's at all (Tracker._vet_spoiler) and which world a ROM is
+# (_score_worlds). Two copies would answer differently the first time one of
+# them learnt a new spelling -- and on a real seed this is not a detail: 390 of
+# 3002 spots disagreed by wording alone, which read as 87% agreement with the
+# seed's OWN spoiler.
+# The spellings a spoiler and kItemNames are known to differ on. Only for
+# seeds without the version's data; with it the comparison needs no guessing.
+FUZZY_ALIASES = {
+    "milk": "lon lon milk",
+    "romani milk": "milk",
+    "bottle of milk": "bottle of lon lon milk",
+    "gold rupee": "huge rupee",
+    "double defense": "defense upgrade",
+    "bow": "hero's bow",
+    "ocarina": "ocarina of time",
+    "gerudo's membership card": "gerudo's card",
+    "world map of ranch": "world map (romani ranch)",
+}
+PROGRESSIVE = {
+    "strength": ("bracelet", "gauntlet"),
+    "sword": ("sword", "knife"),
+    "goron sword": ("knife", "biggoron", "sword"),
+    "hookshot": ("hookshot", "longshot"),
+    "scale": ("scale",),
+    "wallet": ("wallet",),
+    "ocarina": ("ocarina",),
+    "bow": ("bow",),
+}
+# a "Shared X" (after "shared " is stripped) is whichever game's weapon the
+# location holds; accept the ROM name if it carries any of these words
+SHARED_FAMILIES = {
+    "bow": ("bow",),
+    "bomb bag": ("bomb bag",),
+    "magic upgrade": ("magic",),
+}
+
+
+def _tokens(s):
+    """Words that survive apostrophes, hyphens, parentheses and 'of': the
+    spoiler's "World Map of Clock Town" is the ROM's "World Map (Clock Town)"."""
+    s = s.replace("'", "").replace("-", " ").replace("(", " ").replace(")", " ")
+    return [t.rstrip("s") for t in re.sub(r"[^a-z0-9 /]", "", s).split() if t != "of"]
+
+
+def same_item(spoiler_name, rom_name):
+    """Whether the spoiler's item and the one the tracker read from the ROM are
+    the same thing. Both come from OoTMM's own naming, but by different paths:
+    the spoiler tags the game (`(OoT)`/`(MM)`), spells a trap by its cloak
+    (`Ice Trap (cloaked as ...)`), writes `Bottle of X` and the shared/split
+    variants differently. None of those are placement errors, so they are
+    normalised away; a genuinely different item still shows."""
+    # a trap is the item; the cloak it wears is cosmetic, strip it first
+    spoiler_name = re.sub(r"\s*\(cloaked as .*\)\s*$", "", spoiler_name)
+    a, b = bare_item(spoiler_name), bare_item(rom_name)
+    # bare_item only strips an exact "(OoT)"/"(OOT)"/"(MM)"; older spoilers
+    # write "(Oot)", so drop any game tag case-insensitively too
+    a = re.sub(r"\s*\((?:oot|mm)\)$", "", a)
+    b = re.sub(r"\s*\((?:oot|mm)\)$", "", b)
+    if a == b:
+        return True
+    # Souls (soul shuffle): the spoiler and the ROM name the same soul by
+    # different NPCs, often a "/"-list ("Soul of Malon/Romani/Cremia" vs
+    # "Soul of Romani/Cremia"). Same soul if the NPC token sets overlap.
+    ms = re.match(r"^soul?d? of (?:the )?(.*)", a)
+    mr = re.match(r"^soul?d? of (?:the )?(.*)", b)
+    if ms and mr:
+        ta = {t for part in ms.group(1).split("/") for t in _tokens(part)}
+        tb = {t for part in mr.group(1).split("/") for t in _tokens(part)}
+        return bool(ta & tb)
+    # Silver rupees vs silver-rupee pouches are different items, but each is
+    # named with a full dungeon in the spoiler and an abbreviation in the ROM;
+    # the group is not comparable, so match on rupee-vs-pouch alone.
+    if a.startswith("silver") and b.startswith("silver"):
+        return ("pouch" in a) == ("pouch" in b)
+    a = re.sub(r"^shared ", "", a)
+    a = re.sub(r"^1 ", "", a)
+    a = re.sub(r"^bottle of ", "", a)
+    b = re.sub(r"^bottle of ", "", b)
+    a = re.sub(r" refill$", "", a)
+    b = re.sub(r" refill$", "", b)
+    # a "Shared X" weapon is whichever game's version the location holds: the
+    # shared bow is OoT's Fairy Bow or MM's Hero's Bow
+    if a in SHARED_FAMILIES and any(w in b for w in SHARED_FAMILIES[a]):
+        return True
+    a = FUZZY_ALIASES.get(a, a)
+    # "Hylian/Hero Shield": either
+    if "/" in a and "(" not in a:
+        head, _, tail = a.partition(" ")
+        if any(_tokens(f"{alt} {tail}") == _tokens(b) for alt in head.split("/")):
+            return True
+    # "Small Key (Fire Temple)" vs "Small Key"; "Silver Rupee (Shadow Temple -
+    # Scythe)" vs "Silver Rupee (Shadow Scythe)": the group is not compared
+    base_a, paren_a = re.match(r"^([^(]*?)\s*(\(.*\))?$", a).groups()
+    base_b, paren_b = re.match(r"^([^(]*?)\s*(\(.*\))?$", b).groups()
+    if paren_a and base_a == "map":     # "Map (Deku Tree)" is the ROM's "Dungeon Map"
+        base_a = "dungeon map"
+    if paren_a and _tokens(base_a) == _tokens(base_b):
+        return True
+    if _tokens(a) == _tokens(b):
+        return True
+    if a.startswith("progressive "):
+        fam = a[len("progressive "):]
+        words = PROGRESSIVE.get(fam, (fam.split()[-1],))
+        return any(w in b for w in words)
+    return False
+
+
 def _score_worlds(checks, spoiler_worlds):
     """{world: (agree, comparable)} of each spoiler world against the ROM.
 
@@ -582,7 +692,7 @@ def _score_worlds(checks, spoiler_worlds):
                 continue
             comparables += 1
             nombre = item[0] if isinstance(item, tuple) else item
-            acuerdo += bare_item(nombre) == bare_item(mio)
+            acuerdo += same_item(nombre, mio)
         out[mundo] = (acuerdo, comparables)
     return out
 

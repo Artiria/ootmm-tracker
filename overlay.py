@@ -44,9 +44,9 @@ import urllib.parse
 import webbrowser
 
 import paths
-# the one that decides which world a ROM is normalises names the same way,
-# and the two must not drift apart: see placement.bare_item
-from placement import bare_item
+# Both of these live in placement.py so that vetting a spoiler here and
+# deciding which world a ROM is there cannot judge two spellings differently.
+from placement import same_item
 from version import STAGE_NOTE, __version__
 
 # One block per anchor: how much to read from it to cover its checks. The
@@ -897,7 +897,7 @@ class Tracker:
             if mine is None:
                 continue
             comparable += 1
-            if bare_item(item) == bare_item(mine):
+            if same_item(item, mine):
                 agree += 1
         self.spoiler_agreement = [agree, comparable]
         self.spoiler_rejected = None
