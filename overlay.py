@@ -751,6 +751,15 @@ class Tracker:
             # every ROM_CHECK_SECONDS; null when there is no emulator to ask.
             "rom_open": None,
             "rom_mismatch": False,
+            # Set while the tables are being rebuilt for a ROM the user just
+            # opened. That takes the best part of a minute, and the page has to
+            # say so instead of showing the previous seed's numbers as though
+            # nothing had happened.
+            "rom_rebuilding": False,
+            # Whether anything is watching for that change and will rebuild on
+            # its own. False when the tables were pinned with --rom or
+            # --no-auto, and then a restart really is the only cure.
+            "follows_rom": False,
             # Entrance shuffle: how many entrances this seed moves, which have
             # been gone through (newest first) and, for ?spoiler=full, all of
             # them. Empty `all` means the seed does not shuffle entrances.
@@ -810,6 +819,9 @@ class Tracker:
         self._custom_blob = None
         self._rom_check_at = 0.0
         self._rom_open = None
+        # Set by cmd_overlay when its follower thread starts. It changes no
+        # behaviour here, only what the console and the page ADVISE.
+        self.follows_rom = False
         # What the ROM's code says about its own globals, per running game
         # (mkchecks writes it, payload.py reads it). Empty on a checks.json
         # built without a ROM or before this existed: then everything below
@@ -2022,9 +2034,31 @@ class Tracker:
             self.state["rom_open"] = abierta
             self.state["rom_mismatch"] = mismatch
         if mismatch and self._rom_open != abierta:
+            que_toca = ("Rebuilding them for it." if self.follows_rom
+                        else "Restart the tracker to rebuild them.")
             print(f"[overlay] the emulator has another ROM open: {abierta}; the tables are "
-                  f"{de_tabla}'s. Restart the tracker to rebuild them.")
+                  f"{de_tabla}'s. {que_toca}")
         self._rom_open = abierta
+
+    def rom_open_elsewhere(self):
+        """The ROM the emulator has open when it is not the tables', else None.
+
+        check_rom_open() works this out every ROM_CHECK_SECONDS; this is how
+        another thread asks for the answer without reaching into `state`.
+        """
+        with self.lock:
+            return self.state["rom_open"] if self.state["rom_mismatch"] else None
+
+    def rebuilding(self, yes):
+        """Say on the page that the tables are being built for the new ROM."""
+        with self.lock:
+            self.state["rom_rebuilding"] = bool(yes)
+
+    def set_follows_rom(self, yes):
+        """Record that a follower thread is watching for a change of ROM."""
+        self.follows_rom = bool(yes)
+        with self.lock:
+            self.state["follows_rom"] = self.follows_rom
 
     def run(self, interval=POLL_SECONDS):
         while True:
@@ -2058,15 +2092,27 @@ class Tracker:
         finally builds a checks.json this swaps it in: a fresh Tracker is built
         on the same link and this object adopts its whole state, keeping its
         identity —the HTTP server and the poll thread hold it— and its lock and
-        uptime. It is only ever reached from the no-tables state, where nothing
-        has been tracked yet, so nothing tracked is thrown away.
+        uptime.
+
+        Two situations reach here and cmd_overlay's follower thread drives
+        both: the tables were never built (the seed not opened in the emulator
+        yet, or the tracker started first), or the user changed seed while this
+        ran, which Project64 announces in `Recent Rom 0`. What gets thrown away
+        differs. From the no-tables state nothing had been tracked yet; after a
+        change of seed what goes is the previous seed's progress, which is the
+        point of it going — it is not this ROM's.
         """
         fresh = Tracker(self.link, new_table, spoiler=spoiler or self.spoiler, locate=self.locate)
         with self.lock:
             keep_lock, keep_started = self.lock, self._started
+            keep_follows = self.follows_rom
             d = dict(fresh.__dict__)
             d["lock"] = keep_lock          # same lock object other threads sync on
             d["_started"] = keep_started   # keep uptime continuous across the swap
+            # The swap replaces every attribute, this one included, and losing
+            # it would put the page back to advising a restart nobody needs.
+            d["follows_rom"] = keep_follows
+            d["state"]["follows_rom"] = keep_follows
             self.__dict__ = d
         print(f"[overlay] tables loaded without a restart: {len(new_table['checks'])} checks")
 

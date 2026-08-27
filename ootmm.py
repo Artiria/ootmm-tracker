@@ -403,7 +403,7 @@ def p64_handshake(sock, label):
     return link
 
 
-def wait_for_emulator(host, port, label, forced="auto"):
+def wait_for_emulator(host, port, label, forced="auto", on_link=None):
     """Return a memory link to whichever emulator the user drives.
 
     Project64-EM's tracker.lua connects a socket; BizHawk's tracker-bizhawk.lua
@@ -411,6 +411,14 @@ def wait_for_emulator(host, port, label, forced="auto"):
     flow as Project64). In `auto` both are waited on at once and the first to
     answer wins; an explicit emulator waits on only its own. Whichever the user
     opens, the tracker adapts -- and it opens nothing itself.
+
+    With `on_link` the socket does not close after the first script: every one
+    that connects afterwards is handed over too, and the first is handed over
+    as well as returned. That is what lets a run survive its Lua stopping --
+    Project64 stops the script by itself when you load another ROM, and a
+    reset or a stray click does the same -- instead of needing the whole
+    tracker restarted to get a link back. Without it, one link and the port
+    closes, which is what the one-shot subcommands want.
     """
     import mmflink
 
@@ -428,7 +436,12 @@ def wait_for_emulator(host, port, label, forced="auto"):
             return
         ls.listen(1)
         ls.settimeout(0.5)
-        while not ev.is_set():
+        # `mio` once a script of ours has connected: from then on this thread
+        # keeps accepting even though the event is set, which is the whole
+        # point of on_link. Without a link yet it still steps aside if BizHawk
+        # answers first.
+        mio = False
+        while mio or not ev.is_set():
             try:
                 sock, _ = ls.accept()
             except socket.timeout:
@@ -443,8 +456,15 @@ def wait_for_emulator(host, port, label, forced="auto"):
                 continue
             if not ev.is_set():
                 found["link"] = link
+                mio = True
                 ev.set()
-            break
+            if on_link is None:
+                break
+            mio = True
+            # The one it replaces is not closed: it is a socket the script on
+            # the other end already dropped, and closing one that somehow is
+            # still alive would kill a link that is being read right now.
+            on_link(link)
         ls.close()
 
     def via_mmf():
@@ -462,6 +482,8 @@ def wait_for_emulator(host, port, label, forced="auto"):
                     if not ev.is_set():
                         found["link"] = link
                         ev.set()
+                        if on_link:
+                            on_link(link)
                     return
             except mmflink.MmfDown:
                 pass
@@ -1229,8 +1251,13 @@ def cmd_overlay(args):
 
     def wait_for_lua():
         try:
-            link = wait_for_emulator(args.host, args.port, "overlay", forced)
-            tracker.attach(link)
+            # Through on_link and not the return value, so this covers the
+            # second script and the tenth as well as the first: the port stays
+            # open and whoever connects becomes the link. Changing ROM stops
+            # the Lua on Project64's own initiative, and until now that meant
+            # closing the tracker to get it back.
+            wait_for_emulator(args.host, args.port, "overlay", forced,
+                              on_link=tracker.attach)
         except SystemExit as ex:
             # a handshake may report with sys.exit, which from a thread kills
             # only the thread: without catching it the page would wait for ever.
@@ -1241,28 +1268,68 @@ def cmd_overlay(args):
     threading.Thread(target=wait_for_lua, daemon=True).start()
     threading.Thread(target=tracker.run, args=(args.interval,), daemon=True).start()
 
-    # If the tables were not built at startup -- the ROM was not found because
-    # the seed was not open in the emulator yet, or the tracker started first --
-    # keep looking. The moment discovery finds the ROM, build the tables and
-    # load them into the running tracker, so the page recovers on its own
-    # instead of sitting on "no ROM found" until the user restarts. Only runs
-    # while there are no tables, and only under auto-detection.
-    if not table["checks"] and not args.no_auto:
-        def keep_looking_for_rom():
+    # Keep the tables pointed at the ROM the emulator actually has open. Two
+    # situations, one loop, because the cure is the same: build the tables for
+    # that ROM and swap them into the running tracker.
+    #
+    #   * There were none at startup — the seed was not open in the emulator
+    #     yet, or the tracker started first. The page sits on "no ROM found"
+    #     until this finds it.
+    #   * The seed changed while the tracker ran, which is the everyday one:
+    #     Project64 writes the new ROM to `Recent Rom 0` the moment it opens
+    #     it, check_rom_open sees it within ROM_CHECK_SECONDS, and all the page
+    #     could do until now was ask the user to close the tracker and open it
+    #     again — the one thing a tracker living in an OBS source should never
+    #     ask for.
+    #
+    # Only under auto-detection: an explicit --rom is the user pinning the
+    # tables to a seed, and following the emulator would undo that. There the
+    # page keeps saying the ROM is another one, which is the right answer.
+    if not args.no_auto and not args.rom:
+        tracker.set_follows_rom(True)
+
+        def follow_the_open_rom():
             import discover
-            while not tracker.has_tables():
+
+            # The ROM the last rebuild was for. mkchecks refuses on a seed it
+            # cannot read and leaves the previous checks.json in place, so
+            # without this the same impossible build would be attempted every
+            # few seconds for as long as that ROM stayed open.
+            intentada = None
+            while True:
                 time.sleep(RETRY_TABLES_SECONDS)
-                if tracker.has_tables():
-                    return
+                faltan = not tracker.has_tables()
+                otra = tracker.rom_open_elsewhere()
+                if not faltan and not otra:
+                    intentada = None     # in agreement; a later change tries again
+                    continue
+                if otra and discover._same(otra, intentada):
+                    continue
                 try:
-                    rom, spoiler2, _ = discover.resolve(args.rom, args.spoiler, verbose=False)
-                    if not rom:
+                    if otra:
+                        intentada = otra
+                        tracker.rebuilding(True)
+                    # A spoiler named on the command line was named for the ROM
+                    # of that moment, so it is not the new seed's; let discovery
+                    # find the one that sits beside it.
+                    rom, spoiler2, _ = discover.resolve(
+                        None, args.spoiler if faltan else None, verbose=bool(otra))
+                    fresh = overlay.load_table() if rom else {"checks": []}
+                    if not fresh["checks"]:
+                        tracker.rebuilding(False)
                         continue
-                    fresh = overlay.load_table()
-                    if fresh["checks"]:
-                        sp = load_spoiler(spoiler2) if spoiler2 else None
-                        tracker.reload_from_table(fresh, spoiler=sp)
-                        print(f"[overlay] ROM found at runtime: {rom}")
+                    if otra and not discover._same(fresh.get("rom"), rom):
+                        # They could not be built for it and the ones on disk
+                        # are still the previous seed's: loading them would
+                        # change nothing and clear the warning that says so.
+                        print("[overlay] the tables are still the previous seed's,"
+                              " and they are what the page is showing.")
+                        tracker.rebuilding(False)
+                        continue
+                    sp = load_spoiler(spoiler2) if spoiler2 else None
+                    tracker.reload_from_table(fresh, spoiler=sp)
+                    print(f"[overlay] now tracking {rom}")
+                    if faltan:
                         # The emulator turned up after startup, so its Scripts
                         # folder got no tracker.lua then: put it there now,
                         # while File > Lua Scripts... is the next thing to open.
@@ -1270,11 +1337,11 @@ def cmd_overlay(args):
                             discover.ensure_lua()
                         except Exception as ex:
                             print(f"[overlay] could not install tracker.lua ({ex})")
-                        return
                 except Exception as ex:
-                    print(f"[overlay] still looking for the ROM ({type(ex).__name__}: {ex})")
+                    tracker.rebuilding(False)
+                    print(f"[overlay] could not follow the ROM ({type(ex).__name__}: {ex})")
 
-        threading.Thread(target=keep_looking_for_rom, daemon=True).start()
+        threading.Thread(target=follow_the_open_rom, daemon=True).start()
 
     try:
         overlay.serve(tracker, args.http_host, args.http_port, open_window=not args.no_window)

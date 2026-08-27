@@ -1543,6 +1543,15 @@ function render(s) {
       the bundled v32.0 tables — so a check can be marked under the wrong name, in the
       wrong region. If you are seeing progress in places you have never been, that is
       this. Counts and completed totals are still meaningful; names are not.</div>`);
+  } else if (s.rom_rebuilding) {
+    /* Changing seed is a normal thing to do mid-session and the tracker follows
+       it, but building the tables reads the whole ROM and unpacks its icons:
+       the best part of a minute in which every number on screen is still the
+       previous seed's. Saying which one it is beats a silent stale panel. */
+    setHTML('alert', `<div class="warn"><b>You changed seed.</b>
+      Building the tables for <code>${esc(s.rom_open || '?')}</code> — it reads the
+      ROM's own code and unpacks its icons, so give it a moment. What is on the
+      page until then is the seed you left.</div>`);
   } else if (s.rom_mismatch) {
     /* Project64 says which ROM it has open; if it is not the one the tables were
        built from, every item shown belongs to another seed. This used to be
@@ -1550,8 +1559,9 @@ function render(s) {
        seed drops below the threshold with nothing wrong. */
     setHTML('alert', `<div class="warn"><b>The emulator has another ROM open.</b>
       The tables were built from <code>${esc(s.rom_of_table || '?')}</code>, but
-      Project64 has <code>${esc(s.rom_open || '?')}</code> loaded. The tracker works out
-      which seed you are on once, at startup: close it and open it again.</div>`);
+      Project64 has <code>${esc(s.rom_open || '?')}</code> loaded. ${s.follows_rom
+        ? 'Rebuilding them for it — this goes when they land.'
+        : 'This tracker was started pinned to a ROM (<code>--rom</code> or <code>--no-auto</code>), so it will not follow: restart it to rebuild them.'}</div>`);
   } else if (s.waiting) {
     setHTML('alert', `<div class="warn"><b>Waiting for the emulator.</b>
       In <b>Project64-EM</b>: <b>File &gt; Lua Scripts…</b> and run <b>tracker.lua</b>,
@@ -1560,7 +1570,9 @@ function render(s) {
       <b>tracker-bizhawk.lua</b>, next to the tracker's exe.
       This page updates on its own as soon as it connects.</div>`);
   } else if (s.error) {
-    setHTML('alert', `<div class="warn"><b>No connection to the game.</b> ${esc(s.error)}</div>`);
+    setHTML('alert', `<div class="warn"><b>No connection to the game.</b> ${esc(s.error)}
+      <br>If the emulator stopped the script —loading another ROM does that— run
+      <b>tracker.lua</b> again: this reconnects on its own, no need to close the tracker.</div>`);
   } else if (s.spoiler_rejected) {
     /* A spoiler was loaded that is not this seed's — it disagreed with the
        ROM on all but a handful of spots. Harmless (items come from the ROM),

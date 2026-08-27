@@ -32,10 +32,12 @@ seed ROM itself.
 
 That is all. There is nothing to configure and no paths to type in.
 
-> **Changing seed? Restart the tracker.** It works out which seed you are on
-> once, when it starts. Swap the ROM without restarting and it keeps building on
-> the previous seed's tables — every item it names is then from the wrong game.
-> It now says so on the page when it notices, but restarting is the fix.
+> **Changing seed? Just change it.** The tracker follows the ROM the emulator
+> has open: it notices within seconds, rebuilds its tables for the new seed —
+> the page says so while it works, and it takes a moment — and carries on with
+> the new one. If the emulator stopped `tracker.lua` on the way (loading a ROM
+> can), run it again: the tracker is still listening and picks it up. Nothing
+> to close and reopen.
 
 > **Windows may still warn you.** The `.exe` is signed as *Open Source
 > Developer Juan Ramos Ruiz* (a Certum certificate), so Windows names the
