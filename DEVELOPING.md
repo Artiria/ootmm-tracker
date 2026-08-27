@@ -89,6 +89,7 @@ read from the ROM.
 | `capture.py` | records a live session: prints what the ROM predicts, runs the overlay, keeps `/state.json` and the console, dumps RAM at the end |
 | `release.py` | builds, signs, verifies and zips the `.exe`; refuses to zip an unsigned build unless told to — see [Releasing](#releasing) |
 | `data/` | data from the OoTMM repository (pool, scenes, npc) — see [`THIRD-PARTY.md`](THIRD-PARTY.md) |
+| `forge/` | seeds of any OoTMM version built from source, and the guard that checks the tracker against them — see [`forge/README.md`](forge/README.md) |
 
 ## Testing without an emulator
 
@@ -148,6 +149,26 @@ Whenever the `.exe` is rebuilt:
   the `[auto] ROM:` line the console prints: once, on the very first launch of
   a fresh build, the tables came out as another seed's despite `--rom`; not
   reproduced since, but that line is what would show it.
+
+### Other OoTMM versions
+
+Everything the tracker reads from the ROM moves with OoTMM's build, and the
+seeds at hand are only the ones somebody played. `forge/` builds any tag —or
+any commit of master— from source in OoTMM's own CI container, generates seeds
+with the settings a test needs (a preset, a multiworld, a real spoiler's
+settings), and keeps the linker's symbol table of each payload next to them.
+The guard then checks `payload.locate()`, `kItemNames`, `mkchecks` and the
+placement against that truth and against the spoiler:
+
+```
+python forge/forge.py roms <oot.z64> <mm.z64>                          once
+python forge/forge.py make v29.0 v30.0 v31.0 v32.3 master --players 2 --guard
+```
+
+Do this before a release, and whenever `payload.py`, `placement.py` or
+`mkchecks.py` change. Details, options and what it does not cover are in
+[`forge/README.md`](forge/README.md). It needs Docker; nothing it produces is
+committed.
 
 ## Releasing
 

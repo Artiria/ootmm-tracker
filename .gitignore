@@ -42,3 +42,9 @@ BACKLOG.md
 # PyInstaller: `ootmm.spec` is source, what it produces is not
 build/
 dist/
+
+# forge: the vanilla ROMs it needs, the seeds it builds (Nintendo's code, like
+# any seed) and the job files it hands to the container. The scripts stay.
+forge/roms/
+forge/out/
+forge/.jobs/
