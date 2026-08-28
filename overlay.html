@@ -9,26 +9,35 @@
    with ?chroma=none / ?chroma=green to drop it into OBS. */
 :root {
   color-scheme: dark;
-  --plane:      #0d0d0d;
-  --surface:    #1a1a19;
-  --surface-2:  #222221;
-  --ink:        #ffffff;
-  --ink-2:      #c3c2b7;
-  --muted:      #898781;
-  --hairline:   #2c2c2a;
+  --plane:      #0b0c0f;
+  --surface:    #15171b;
+  --surface-2:  #1e2126;
+  --ink:        #f4f4f1;
+  --ink-2:      #c6c6bd;
+  --muted:      #8b8c86;
+  --hairline:   #2a2d33;
   --ring:       rgba(255,255,255,0.10);
+  --radius:     12px;
+  /* depth: a hairline of light along the top edge and a soft drop below */
+  --lift:       inset 0 1px 0 rgba(255,255,255,.045);
+  --drop:       0 10px 28px rgba(0,0,0,.38);
   --oot:        #3987e5;   /* categorico slot 1 */
   --mm:         #d95926;   /* categorico slot 2 */
   --good:       #0ca30c;
   --warning:    #fab219;
-  --font: system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font: "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system, sans-serif;
+  --font-display: "Segoe UI Variable Display", "Segoe UI", system-ui, -apple-system, sans-serif;
 }
+@media (prefers-reduced-motion: reduce) { *, *::before, *::after { transition: none !important; } }
 * { box-sizing: border-box; }
 html, body { margin: 0; padding: 0; }
 body {
-  background: var(--plane);
+  /* a faint vignette: the plane is not one flat colour, the cards sit on it */
+  background: radial-gradient(1200px 600px at 20% -10%, #14161b 0%, var(--plane) 60%);
+  background-color: var(--plane);
   color: var(--ink);
   font-family: var(--font);
+  -webkit-font-smoothing: antialiased;
   font-size: 14px;
   line-height: 1.45;
   padding: 14px;
@@ -43,10 +52,11 @@ body.chroma-none .card, body.chroma-green .card { backdrop-filter: blur(2px); }
 @media (max-width: 1100px) { .cols { grid-template-columns: 1fr; } }
 
 .card {
-  background: var(--surface);
+  background: linear-gradient(180deg, color-mix(in oklab, var(--surface) 92%, white) 0%, var(--surface) 22%);
   border: 1px solid var(--ring);
-  border-radius: 10px;
+  border-radius: var(--radius);
   padding: 14px 16px;
+  box-shadow: var(--lift), var(--drop);
 }
 /* An overlay has to fit the OBS source, usually 720p. Each panel scrolls
    inside itself instead of stretching the page, so the composition
@@ -62,8 +72,8 @@ body.chroma-none .card, body.chroma-green .card { backdrop-filter: blur(2px); }
 .card h2 {
   margin: 0 0 10px;
   font-size: 11px;
-  font-weight: 600;
-  letter-spacing: .08em;
+  font-weight: 700;
+  letter-spacing: .12em;
   text-transform: uppercase;
   color: var(--muted);
 }
@@ -80,8 +90,11 @@ input.search:focus { outline: none; border-color: var(--muted); }
 
 /* -- cabecera: la unica cifra heroe de la vista ------------------------- */
 .head { display: flex; align-items: center; gap: 22px; flex-wrap: wrap; }
-.hero { font-size: 52px; font-weight: 650; line-height: 1; letter-spacing: -.02em; }
-.hero small { font-size: 18px; font-weight: 500; color: var(--ink-2); letter-spacing: 0; }
+.hero {
+  font-size: 52px; font-weight: 750; line-height: 1; letter-spacing: -.035em;
+  font-family: var(--font-display); font-variant-numeric: tabular-nums;
+}
+.hero small { font-size: 18px; font-weight: 500; color: var(--muted); letter-spacing: 0; }
 .head-meta { display: flex; flex-direction: column; gap: 6px; min-width: 260px; flex: 1; }
 .head-sub { color: var(--ink-2); font-size: 13px; }
 
@@ -89,11 +102,13 @@ input.search:focus { outline: none; border-color: var(--muted); }
   display: inline-flex; align-items: center; gap: 6px;
   padding: 3px 10px; border-radius: 999px;
   font-size: 12px; font-weight: 600;
-  border: 1px solid var(--ring); color: var(--ink-2);
+  border: 1px solid color-mix(in oklab, var(--series, var(--ink)) 45%, transparent);
+  background: color-mix(in oklab, var(--series, var(--ink)) 14%, var(--surface));
+  color: var(--ink);
 }
-.badge .dot { width: 8px; height: 8px; border-radius: 50%; }
-.badge.oot .dot { background: var(--oot); }
-.badge.mm  .dot { background: var(--mm); }
+.badge .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--series, var(--ink)); box-shadow: 0 0 8px var(--series, transparent); }
+.badge.oot { --series: var(--oot); }
+.badge.mm  { --series: var(--mm); }
 
 /* Plain rich text: `display: flex` here turned every text node and <code> into
    its own column, and the ROM warning came out as six narrow stacks. */
@@ -108,13 +123,14 @@ input.search:focus { outline: none; border-color: var(--muted); }
 /* -- medidores ---------------------------------------------------------- */
 /* track = a muted step of the same hue, so the state reads along the whole
    bar; fill rounded at the data end and square at the base */
-.meter { height: 8px; border-radius: 2px; overflow: hidden; background: var(--track); }
+.meter { height: 8px; border-radius: 999px; overflow: hidden; background: var(--track); box-shadow: inset 0 1px 1px rgba(0,0,0,.35); }
 .meter > i {
   display: block; height: 100%;
-  background: var(--series);
-  border-radius: 0 4px 4px 0;
+  background: linear-gradient(90deg, var(--series), color-mix(in oklab, var(--series) 72%, white));
+  border-radius: 0 999px 999px 0;
+  transition: width .5s ease;
 }
-.meter.full > i { border-radius: 2px; }
+.meter.full > i { border-radius: 999px; }
 /* the track sits well below the fill in tone: if they get close, a nearly
    empty bar reads as full, and on a stream that misinforms the viewer */
 .row-oot { --series: var(--oot); --track: color-mix(in oklab, var(--oot) 24%, #0b0b0b); }
@@ -123,7 +139,7 @@ input.search:focus { outline: none; border-color: var(--muted); }
 .meter > i.some { min-width: 3px; }
 
 .region { display: grid; grid-template-columns: 1fr auto; gap: 4px 10px; margin-bottom: 11px; }
-.region .name { font-size: 13px; color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.region .name { font-size: 13px; font-weight: 500; color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .region .num { font-size: 12px; color: var(--ink-2); font-variant-numeric: tabular-nums; }
 .region .meter { grid-column: 1 / -1; }
 .region.untouched .name, .region.untouched .num { opacity: .55; }
@@ -135,11 +151,13 @@ input.search:focus { outline: none; border-color: var(--muted); }
 /* -- cifras ------------------------------------------------------------- */
 .stats { display: flex; gap: 10px; flex-wrap: wrap; }
 .stat {
-  background: var(--surface-2); border: 1px solid var(--ring);
-  border-radius: 8px; padding: 7px 12px; min-width: 92px;
+  background: linear-gradient(180deg, var(--surface-2), color-mix(in oklab, var(--surface-2) 70%, var(--surface)));
+  border: 1px solid var(--ring);
+  border-radius: 10px; padding: 7px 12px; min-width: 92px;
+  box-shadow: var(--lift);
 }
-.stat .k { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; }
-.stat .v { font-size: 19px; font-weight: 600; }
+.stat .k { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .08em; }
+.stat .v { font-size: 19px; font-weight: 700; font-variant-numeric: tabular-nums; letter-spacing: -.01em; }
 
 /* -- rejilla de items --------------------------------------------------- */
 /* A grid of fixed cells, not a list that grows: the OBS composition must not
@@ -176,9 +194,10 @@ input.search:focus { outline: none; border-color: var(--muted); }
 }
 /* The menu page, hinted at: a faint frame grouping the grid */
 .chips {
-  padding: 5px; border-radius: 8px;
+  padding: 5px; border-radius: 10px;
   background: color-mix(in oklab, var(--surface-2) 55%, transparent);
   border: 1px solid var(--hairline);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.025);
   width: max-content;
   max-width: 100%;
 }
@@ -194,7 +213,15 @@ input.search:focus { outline: none; border-color: var(--muted); }
   border-radius: 7px; border: 1px solid var(--hairline);
   background: transparent; overflow: hidden;
 }
-.chip.on { border-color: var(--ring); background: var(--surface-2); }
+/* An item you have is lit in the game's colour: a tinted cell with a soft
+   halo. The halo is a shadow, so it costs the grid no room. */
+.chip.on {
+  border-color: color-mix(in oklab, var(--series, var(--ink)) 55%, transparent);
+  background: color-mix(in oklab, var(--series, var(--ink)) 16%, var(--surface-2));
+  box-shadow: 0 0 0 1px color-mix(in oklab, var(--series, var(--ink)) 18%, transparent),
+              0 0 10px color-mix(in oklab, var(--series, var(--ink)) 28%, transparent);
+  transition: background .15s ease, border-color .15s ease, box-shadow .15s ease;
+}
 
 /* The icon comes from the sheet mkicons.py extracts from the ROM. When off,
    gris y hundido; encendido, a todo color. */
@@ -209,10 +236,10 @@ input.search:focus { outline: none; border-color: var(--muted); }
   background-size: calc(var(--ico) * 16) auto;
   background-position: calc(var(--cx) * var(--ico) * -1) calc(var(--cy) * var(--ico) * -1);
   image-rendering: pixelated;
-  filter: grayscale(1) brightness(.42) contrast(.85);
+  filter: grayscale(1) brightness(.5) contrast(.9);
   transition: filter .15s ease;
 }
-.chip.on .ico { filter: none; }
+.chip.on .ico { filter: drop-shadow(0 1px 1px rgba(0,0,0,.5)); }
 
 /* Song note: the ROM texture clipped as a mask and painted in the
    color de la cancion. Apagada, en gris hundido como el resto. */
@@ -233,7 +260,7 @@ input.search:focus { outline: none; border-color: var(--muted); }
    gris y hundida cuando no lo tienes, a color cuando si. */
 .chip .usr {
   width: 78%; height: 78%; object-fit: contain;
-  filter: grayscale(1) brightness(.42) contrast(.85);
+  filter: grayscale(1) brightness(.5) contrast(.9);
   transition: filter .15s ease;
 }
 .chip.on .usr { filter: none; }
@@ -316,19 +343,30 @@ ul.feed li:first-child, ul.pend li:first-child { border-top: 0; }
 .hints li.done .item { opacity: .6; text-decoration: line-through; }
 .hintbox input { flex: 1 1 200px; min-width: 160px; background: var(--card-2, transparent); color: var(--ink);
   border: 1px solid var(--line, #444); border-radius: 6px; padding: 5px 8px; font: inherit; font-size: 12px; }
-button.peek { margin-left: 6px; font-size: 11px; line-height: 1; padding: 1px 6px; border-radius: 8px;
-  border: 1px solid var(--line, #444); background: transparent; color: var(--muted); cursor: pointer; }
+button.peek { margin-left: 6px; font-size: 11px; line-height: 1; padding: 2px 7px; border-radius: 999px;
+  border: 1px solid var(--hairline); background: var(--surface-2); color: var(--muted); cursor: pointer;
+  transition: color .15s ease, border-color .15s ease; }
 button.peek:hover { color: var(--ink); border-color: var(--muted); }
 .entr li.maybe .from i { font-style: normal; color: var(--muted); }
 .world {
-  font-size: 10px; font-weight: 700; letter-spacing: .04em;
-  padding: 1px 5px; border-radius: 4px; white-space: nowrap;
-  color: var(--warning); border: 1px solid var(--warning);
+  font-size: 10px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase;
+  padding: 1px 7px; border-radius: 999px; white-space: nowrap;
+  color: var(--warning); border: 1px solid color-mix(in oklab, var(--warning) 55%, transparent);
+  background: color-mix(in oklab, var(--warning) 12%, transparent);
 }
 .pend .name { color: var(--ink-2); }
 /* what is in the very room you are standing in, which the server puts first */
 .pend li.here .name { color: var(--ink); font-weight: 600; }
-.pend .room { color: var(--muted); font-size: 11px; margin-left: auto; }
+/* the room / place tag: a quiet pill at the end of the row, lit for the room you are in */
+.pend .room {
+  margin-left: auto; white-space: nowrap;
+  font-size: 10px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase;
+  color: var(--muted); padding: 1px 7px; border-radius: 999px;
+  border: 1px solid var(--hairline); background: color-mix(in oklab, var(--surface-2) 70%, transparent);
+}
+.pend li.here .room { color: var(--ink); border-color: var(--ring); background: var(--surface-2); }
+/* the director's mouse over a row: only there, never on stream */
+body:not(.panel) ul.pend li:hover, body:not(.panel) ul.feed li:hover { background: color-mix(in oklab, white 3%, transparent); }
 .more { color: var(--muted); font-size: 12px; padding-top: 8px; }
 .empty { color: var(--muted); font-size: 13px; }
 
@@ -365,21 +403,23 @@ button.peek:hover { color: var(--ink); border-color: var(--muted); }
 .controls select {
   font: inherit; font-size: 12px; color: var(--ink-2);
   background: var(--surface-2); border: 1px solid var(--ring);
-  border-radius: 5px; padding: 4px 8px;
+  border-radius: 8px; padding: 4px 8px;
 }
+.controls select:hover, .controls select:focus { color: var(--ink); border-color: var(--muted); outline: none; }
 table.urls { border-collapse: collapse; width: 100%; font-size: 12px; }
 table.urls td { padding: 5px 10px 5px 0; border-top: 1px solid var(--hairline); vertical-align: middle; }
 table.urls tr:first-child td { border-top: 0; }
 table.urls tr.sep td { border-top: 1px solid var(--ring); padding-top: 12px; }
 table.urls .p { color: var(--ink); width: 1%; white-space: nowrap; }
 table.urls code {
-  background: var(--surface-2); border: 1px solid var(--ring); border-radius: 5px;
+  background: var(--surface-2); border: 1px solid var(--ring); border-radius: 6px;
   padding: 2px 7px; color: var(--ink-2); font-size: 12px;
 }
 button.copy, button.act {
   font: inherit; font-size: 12px; cursor: pointer;
   background: var(--surface-2); color: var(--ink-2);
-  border: 1px solid var(--ring); border-radius: 5px; padding: 3px 10px;
+  border: 1px solid var(--ring); border-radius: 8px; padding: 3px 10px;
+  transition: color .15s ease, border-color .15s ease;
 }
 button.copy:hover, button.act:hover { color: var(--ink); border-color: var(--muted); }
 
@@ -390,7 +430,8 @@ button.copy:hover, button.act:hover { color: var(--ink); border-color: var(--mut
 .killswitch {
   display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
   margin: 0; padding: 8px 10px; cursor: pointer;   /* .dirtools spaces it now */
-  border: 1px solid var(--ring); border-radius: 8px; background: var(--surface-2);
+  border: 1px solid var(--ring); border-radius: 10px; background: var(--surface-2);
+  box-shadow: var(--lift);
 }
 .killswitch .hint { margin: 0; }
 .killswitch.on {
@@ -435,8 +476,9 @@ body.opts-live:not(.panel) .dirtools { display: grid; }
    panel. A minimal veil stays behind the grids so the off icons do not get
    lost over light backgrounds. */
 body.chroma-none .card {
-  background: transparent; border-color: transparent; backdrop-filter: none;
+  background: transparent; border-color: transparent; backdrop-filter: none; box-shadow: none;
 }
+body.chroma-green .card { box-shadow: none; }
 body.chroma-none .card, body.chroma-none .card * { text-shadow: 0 1px 3px rgba(0,0,0,.95); }
 body.chroma-none .chips {
   background: color-mix(in oklab, #000 28%, transparent);
@@ -1118,6 +1160,16 @@ function pintaSpoiler(s) {
 
 function pct(a, b) { return b ? (100 * a / b) : 0; }
 
+/* Scene ids are what the server knows -- KOKIRI_SARIA, DEATH_MOUNTAIN_CRATER --
+   and on screen they should read as places. Only an id is touched: anything
+   with lowercase letters or spaces is already a name and comes back as is. */
+const SMALL_WORDS = new Set(['of', 'the', 'to', 'and', 'in', 'at']);
+function pretty(id) {
+  if (!id || !/^[A-Z0-9_]+$/.test(id)) return id || '';
+  return id.toLowerCase().split('_').filter(Boolean).map((w, i) =>
+    w === 'mq' ? 'MQ' : (i && SMALL_WORDS.has(w)) ? w : w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
+}
+
 function renderRegions(all, counts) {
   let regions = all.filter(r => keepGame(r.game));
   if (SOLO_CLAVE) regions = regions.filter(r => r.total_key > 0);
@@ -1145,7 +1197,7 @@ function renderRegions(all, counts) {
     const total = SOLO_CLAVE ? r.total_key : r.total;
     const p = pct(hechos, total);
     return `<div class="region row-${r.game}${r.done ? '' : ' untouched'}">
-      <div class="name">${esc(r.scene)}</div>
+      <div class="name" title="${esc(r.scene)}">${esc(pretty(r.scene))}</div>
       <div class="num">${hechos} / ${total}</div>
       <div class="meter${p >= 100 ? ' full' : ''}"><i class="${hechos ? 'some' : ''}" style="width:${p.toFixed(1)}%"></i></div>
     </div>`;
@@ -1475,7 +1527,7 @@ function renderHints(h) {
   const lvl = (x) => [
     `<span class="item">${esc(x.item)}</span>${world(x.world)}`,
     `<span class="from">${x.game === 'mm' ? "Majora's Mask" : 'Ocarina of Time'}${
-      x.level >= 2 ? ' · ' + esc(x.region || '?') : ''}${
+      x.level >= 2 ? ' · ' + esc(pretty(x.region) || '?') : ''}${
       x.level >= 3 ? ' · ' + esc(x.check || '?') : ''}${x.done ? ' · <b>found</b>' : ''}</span>`,
   ].join(' ');
   return items.map(x => `<li${x.done ? ' class="done"' : ''}>${lvl(x)}</li>`).join('');
@@ -1861,10 +1913,13 @@ function render(s) {
   // you are in, or says plainly that it could not and lists everything --
   // naming one and being wrong is the failure this panel must never have.
   const inst = here.instance;
-  const instTag = !inst ? '' : (inst.label ? ` · ${inst.label}` : ' · which one is not known, all listed');
+  // the place stands in for the scene when it is known: "Zora River Fairy
+  // Fountain" says more than "Fairy Fountain · Zora River Fairy Fountain"
+  const where = (inst && inst.label) ? inst.label : pretty(here.scene);
+  const instTag = (inst && !inst.label) ? ' · which one is not known, all listed' : '';
   const roomTag = (ROOMS_ALL || here.whole) ? ' · whole scene'
     : ((inst && inst.label) ? '' : (here.room > 0 ? ` · room ${here.room}` : ''));
-  setText('pend-title', here.scene ? `Remaining in ${here.scene}${instTag}${roomTag}` : 'Remaining here');
+  setText('pend-title', here.scene ? `Remaining in ${where}${instTag}${roomTag}` : 'Remaining here');
   setHTML('pend', renderPend(here));
   // Count what is actually VISIBLE, junk filter included: with the filter on
   // and only junk left, the list came out empty with no message at all.
