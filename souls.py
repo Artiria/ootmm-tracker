@@ -301,12 +301,14 @@ class Decoder:
 
     COLS = 8
 
-    def __init__(self, table_block):
+    def __init__(self, table_block, multiworld=False):
         self.ok = False
         self.why = None
         self.catalogue = []
         self.arrays = {}
         self.end = 0
+        self.multiworld = bool(multiworld)
+        self.elsewhere = 0
         if not table_block:
             self.why = "no souls table for this seed"
             return
@@ -321,16 +323,38 @@ class Decoder:
             return
         self.end = block.get("end") or (max(self.arrays.values()) + 8)
         self.ok = True
-        # (game, type) -> ordered souls, only groups the seed placed
+        # (game, type) -> ordered souls. A soul is `in_seed` when some row of
+        # this table holds it (build). On a single-player ROM that is exact --
+        # every copy is in this world -- and the groups the seed did not
+        # shuffle stay out of the grid. On a multiworld ROM it is not: the
+        # table only lists this world's spots, and a soul of yours that the
+        # generator put in a partner's world has no row here. It reaches you
+        # through the partner, and under the per-soul rule its chip did not
+        # exist to light up (Saria's soul, 28 Aug 2026). So there a group is
+        # shown whole as soon as one soul of it is placed here, for anyone:
+        # the shuffle is a setting, and the worlds of a seed share settings.
+        # `elsewhere` counts the chips that rule adds -- souls with no row of
+        # this world, wherever they are.
         self.groups = defaultdict(list)
-        for s in self.catalogue:
-            if s.get("in_seed"):
-                self.groups[(s["game"], s["type"])].append(s)
+        if self.multiworld:
+            on = {(s["game"], s["type"]) for s in self.catalogue if s.get("in_seed")}
+            for s in self.catalogue:
+                if (s["game"], s["type"]) in on:
+                    self.groups[(s["game"], s["type"])].append(s)
+                    self.elsewhere += not s.get("in_seed")
+        else:
+            for s in self.catalogue:
+                if s.get("in_seed"):
+                    self.groups[(s["game"], s["type"])].append(s)
         self.total = sum(len(v) for v in self.groups.values())
 
     @classmethod
     def from_table(cls, table):
-        return cls((table or {}).get("souls"))
+        table = table or {}
+        # multiworld the way the overlay tells it: some spot of this world
+        # holds an item that belongs to another player
+        multi = any(c.get("player") for c in table.get("checks") or [])
+        return cls(table.get("souls"), multiworld=multi)
 
     def has(self, blob, soul):
         off = self.arrays.get(f"{soul['type']}_{soul['game']}")
@@ -383,7 +407,10 @@ class Decoder:
                 by_game[game] = {"have": g_have, "total": g_total}
                 have += g_have
         return {"ok": True, "why": None, "have": have, "total": self.total,
-                "by_game": by_game, "grid": grid}
+                "by_game": by_game, "grid": grid,
+                # on a multiworld ROM the shuffled groups are listed whole;
+                # `elsewhere` of them have no spot in this world (see __init__)
+                "multiworld": self.multiworld, "elsewhere": self.elsewhere}
 
 
 # --------------------------------------------------------------------------

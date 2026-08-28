@@ -221,6 +221,21 @@ MM_SCALARS = [
     ("ocean skulltulas", 0xEBA, 2, False),
 ]
 
+# The Bombers' code: five digits, a permutation of 1..5, drawn when the file
+# is created and shown by the game only after the hide-and-seek. Found by
+# shape in five dumps of five seeds (a different permutation in each, always
+# here) and then by adding up combo/mm/save.h from skullCountSwamp (0xEC0):
+# bomberCode[5] sits at MmSave+0xFFB, which is +0xFF3 from the tracker's base
+# (MmSave + 8). Reading it is what spares the minigame.
+MM_BOMBERS_CODE_OFF = 0xFF3
+
+
+def bombers_code(save):
+    """The five digits as a string ("52143"), or None when the bytes are not
+    a permutation of 1..5 -- a save not yet created, or another build."""
+    digs = list(save[MM_BOMBERS_CODE_OFF:MM_BOMBERS_CODE_OFF + 5])
+    return "".join(str(d) for d in digs) if sorted(digs) == [1, 2, 3, 4, 5] else None
+
 # MmQuestItems, bit indices taken from combo/mm/save.h.
 MM_QUEST_BITS = {
     0: "Odolwa's Remains",

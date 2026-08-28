@@ -347,6 +347,13 @@ button.peek { margin-left: 6px; font-size: 11px; line-height: 1; padding: 2px 7p
   border: 1px solid var(--hairline); background: var(--surface-2); color: var(--muted); cursor: pointer;
   transition: color .15s ease, border-color .15s ease; }
 button.peek:hover { color: var(--ink); border-color: var(--muted); }
+/* Notes: the box sits above the list while a note is being written; the
+   automatic ones (the Bombers' code) are marked, the rest read like the feed. */
+.notebox { display: flex; gap: 8px; align-items: center; margin: 0 0 8px; }
+.notebox input { flex: 1; min-width: 0; }
+body.panel .notebox { display: none; }   /* a /p/ panel only lists */
+.notes li.auto .item { color: var(--accent, #e0c25a); }
+.notes .when { color: var(--muted); font-size: 11px; margin-left: 6px; }
 .entr li.maybe .from i { font-style: normal; color: var(--muted); }
 .world {
   font-size: 10px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase;
@@ -569,6 +576,20 @@ body.chroma-green .card { background: var(--surface); }
           <div class="empty" id="hints-empty">no hints taken</div>
         </div>
       </div>
+      <!-- Notes: the player's memorandum, one line each with where it was
+           written. The box opens with the note key (F9 unless options.json
+           says otherwise), from the emulator too on Windows. -->
+      <div class="card" data-panel="notes">
+        <h2 id="notes-title">Notes</h2>
+        <div class="scroll pane-third">
+          <div class="notebox" id="note-box">
+            <span class="room" id="note-where"></span>
+            <input id="note-text" placeholder="a note for here… Enter adds, Esc leaves" autocomplete="off" maxlength="400">
+          </div>
+          <ul class="feed notes" id="notes"></ul>
+          <div class="empty" id="notes-empty">no notes yet</div>
+        </div>
+      </div>
     </div>
   </div>
 
@@ -714,6 +735,7 @@ const PANELS = [
   ['remaining', 'Remaining in this area'],
   ['entrances', 'Entrances gone through'],
   ['hints',     'Hints taken'],
+  ['notes',     'Notes'],
 ];
 // The same panels narrowed to one game, to build two separate overlays.
 const PANELS_GAME = [
@@ -931,6 +953,9 @@ function renderUrls() {
    server wants, and the separator is one no item name uses. */
 const HINT_SEP = '·';
 let HINT_BY_VALUE = new Map();
+// how the box's text is matched against the offered values: case and runs of
+// whitespace do not make it a different entry
+const hintKey = (s) => String(s || '').toLowerCase().replace(/\s+/g, ' ').trim();
 
 // last state received from the server, so we can repaint without polling
 let lastState = null;
@@ -1082,9 +1107,13 @@ if ($('load-spoiler')) {
        hand: send the name alone and let the server match any copy, which is
        what it has always done -- the box takes free text and half-remembered
        names should keep working. */
-    const elegido = HINT_BY_VALUE.get(escrito);
+    /* Matched loosely -- case and spacing aside -- because that is how a name
+       gets typed: "deku mask" is the entry "Deku Mask" and must ask about that
+       copy (yours), not go over the wire as free text for the server to settle
+       on whichever copy the table lists first (his report, 28 Aug 2026). */
+    const elegido = HINT_BY_VALUE.get(hintKey(escrito));
     const cuerpo = elegido
-      ? { item: elegido.item, world: elegido.world, level: +b.dataset.hint }
+      ? { item: elegido.item, world: elegido.world, ...(elegido.copy ? { copy: elegido.copy } : {}), level: +b.dataset.hint }
       : { item: escrito, level: +b.dataset.hint };
     const r = await fetch('/hint', { method: 'POST', body: JSON.stringify(cuerpo) });
     const j = await r.json();
@@ -1522,10 +1551,77 @@ function renderEntrances(en) {
 }
 
 /* The hints panel: each item asked about, with as much as was revealed. */
+/* Notes: a memorandum the player writes while playing. Each line carries the
+   game, scene and room it was written in, and the automatic ones come from
+   the save itself (the Bombers' code, read off MM's save from the start, so
+   the hide-and-seek can be skipped).
+
+   The field is always there in the director view, saying where a note written
+   now would be filed; Enter adds it and clears the field for the next one, Esc
+   empties it and leaves. The note key only puts the cursor in it: pressed on
+   this page (keydown below), or anywhere -- in the emulator -- when the server
+   holds it system-wide (Windows): the server then brings this window forward
+   and sets `note_prompt` in the state, and the page focuses the field. Adding
+   or leaving posts to the server either way, so it can hand the focus back to
+   where it was. A /p/ panel just lists (the field is hidden there). */
+let lastNotesHTML = null;
+let notePromptSeen = null;
+
+function notePlace(n) {
+  if (!n || !n.scene) return '';
+  return `${pretty(n.scene)}${n.room != null ? ` · room ${esc(String(n.room))}` : ''}`;
+}
+
+function currentPlace() {
+  const h = (lastState && lastState.pending_here) || {};
+  return { game: h.game || null, scene: h.scene || null, room: (h.room == null ? null : h.room) };
+}
+
+function focusNoteBox() {
+  if (panel || !$('note-text')) return;
+  const box = $('note-text');
+  box.focus();
+  box.select();
+}
+
+/* Enter (save) or Esc (leave). An empty Enter is a leave too: nothing to add,
+   but the server still gets to hand the focus back if the key brought it here. */
+async function postNote(save) {
+  const box = $('note-text');
+  if (!box) return;
+  const text = (box.value || '').trim();
+  const body = save && text ? { text, ...currentPlace() } : { cancel: true };
+  box.value = '';
+  if (!(save && text)) box.blur();
+  try {
+    await fetch('/note', { method: 'POST', body: JSON.stringify(body) });
+  } catch {}
+  await tick();
+}
+
+function renderNotes(list) {
+  return list.map(n => `<li${n.auto ? ' class="auto"' : ''}>
+    <span class="item">${esc(n.text)}</span>${n.game ? (n.game === 'mm' ? ' <span class="from">MM</span>' : ' <span class="from">OoT</span>') : ''}
+    ${notePlace(n) ? `<span class="room">${notePlace(n)}</span>` : ''}
+    ${n.t ? `<span class="when">${esc(new Date(n.t * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }))}</span>` : ''}
+    ${(!panel && !n.auto) ? `<button class="peek del" data-del="${esc(n.id)}" title="delete this note">×</button>` : ''}
+  </li>`).join('');
+}
+
 function renderHints(h) {
   const items = (h.items || []).filter(x => keepGame(x.game));
+  // two hints about the same name in the same world are two copies: number
+  // them in the order they were taken, so the lines read apart at level 1
+  const count = new Map(), ordinal = new Map();
+  for (const x of [...items].sort((a, b) => (a.t || 0) - (b.t || 0))) {
+    const k = `${x.item}|${x.world ?? ''}`;
+    count.set(k, (count.get(k) || 0) + 1);
+    ordinal.set(x, count.get(k));
+  }
+  const copyTag = (x) => count.get(`${x.item}|${x.world ?? ''}`) > 1
+    ? ` <span class="from">copy ${ordinal.get(x)}</span>` : '';
   const lvl = (x) => [
-    `<span class="item">${esc(x.item)}</span>${world(x.world)}`,
+    `<span class="item">${esc(x.item)}</span>${copyTag(x)}${world(x.world)}`,
     `<span class="from">${x.game === 'mm' ? "Majora's Mask" : 'Ocarina of Time'}${
       x.level >= 2 ? ' · ' + esc(pretty(x.region) || '?') : ''}${
       x.level >= 3 ? ' · ' + esc(x.check || '?') : ''}${x.done ? ' · <b>found</b>' : ''}</span>`,
@@ -1836,7 +1932,10 @@ function render(s) {
       let have = 0, total = 0;
       const bg = so.by_game || {};
       for (const g of games) { have += (bg[g] || {}).have || 0; total += (bg[g] || {}).total || 0; }
-      setText('souls-title', (total ? `Souls · ${have} of ${total}` : 'Souls') + (GAMEF ? ` · ${GAME[GAMEF]}` : ''));
+      // on a multiworld ROM the shuffled groups are listed whole: some of
+      // your souls sit in a partner's world and this ROM cannot name them
+      setText('souls-title', (total ? `Souls · ${have} of ${total}` : 'Souls') + (GAMEF ? ` · ${GAME[GAMEF]}` : '')
+              + (so.multiworld && so.elsewhere ? ' · multiworld, groups listed whole' : ''));
       const soulsHTML = games.length ? renderSouls(grid) : '';
       if (soulsHTML !== lastSoulsHTML) {
         setHTML('souls', soulsHTML || `<div class="empty">${esc(so.why || (GAMEF ? 'no souls in this game' : 'no data yet'))}</div>`);
@@ -1856,6 +1955,26 @@ function render(s) {
   setHTML('hints', hsHTML);
   if ($('hints-title')) $('hints-title').textContent = hs.used ? `Hints · ${hs.used} taken` : 'Hints';
   setShow('hints-empty', !hsHTML);
+
+  // Notes: the memorandum, and the box the note key asks for (see notes below)
+  if ($('notes')) {
+    const notes = (s.notes || []).filter(n => !n.game || keepGame(n.game));
+    const nHTML = renderNotes(notes);
+    if (nHTML !== lastNotesHTML) { setHTML('notes', nHTML); lastNotesHTML = nHTML; }
+    const mine = notes.filter(n => !n.auto).length;
+    if ($('notes-title')) $('notes-title').textContent = mine ? `Notes · ${mine}` : 'Notes';
+    if ($('notes-empty')) $('notes-empty').textContent = panel ? 'no notes yet'
+      : `no notes yet — press ${s.note_key || 'F9'} (in the game too) to write one`;
+    setShow('notes-empty', !nHTML);
+    // the field is always there; it says where a note written now would go,
+    // and the note key -- pressed here or in the emulator -- just puts the
+    // cursor in it
+    if (!panel && $('note-where')) $('note-where').textContent = notePlace(currentPlace()) || 'no place yet';
+    if (!panel && s.note_prompt && s.note_prompt.t !== notePromptSeen) {
+      notePromptSeen = s.note_prompt.t;
+      focusNoteBox();
+    }
+  }
   if ($('hint-items')) {
     /* One entry per item AND world: on a multiworld the same name is two
        different things, and a single entry meant asking about "Forest Medallion"
@@ -1864,11 +1983,22 @@ function render(s) {
        strings to offer two choices; the count goes in the label, which browsers
        show beside the option and do not type into the box -- it would go stale
        as the copies are collected. */
-    const want = (s.hint_items || []).map(h => ({
-      value: h.item + (h.world ? ` ${HINT_SEP} world ${h.world}` : ''),
-      label: h.n > 1 ? `${h.n} copies` : '',
-      item: h.item, world: h.world ?? null,
-    }));
+    const want = [];
+    for (const h of (s.hint_items || [])) {
+      const tail = h.world ? ` ${HINT_SEP} world ${h.world}` : '';
+      if (h.n > 1) {
+        // several copies in one world: one entry per copy, numbered in the
+        // table's order among the ones still out there -- the way to the
+        // second Hookshot, which one entry per name kept out of reach (his
+        // report, 28 Aug 2026: "Hookshot · 2 copies" only ever told the first)
+        for (let k = 1; k <= h.n; k++) {
+          want.push({ value: `${h.item} ${HINT_SEP} ${k} of ${h.n}${tail}`, label: '',
+                      item: h.item, world: h.world ?? null, copy: k });
+        }
+      } else {
+        want.push({ value: h.item + tail, label: '', item: h.item, world: h.world ?? null, copy: null });
+      }
+    }
     const cur = new Set(Array.from($('hint-items').options).map(o => o.value));
     if (want.length !== cur.size || want.some(w => !cur.has(w.value))) {
       $('hint-items').innerHTML = want.map(w =>
@@ -1877,7 +2007,7 @@ function render(s) {
     // what the box says -> what to ask the server. Rebuilt every time, so a
     // name that stops being offered stops resolving instead of asking about a
     // copy that is no longer there.
-    HINT_BY_VALUE = new Map(want.map(w => [w.value, { item: w.item, world: w.world }]));
+    HINT_BY_VALUE = new Map(want.map(w => [hintKey(w.value), { item: w.item, world: w.world, copy: w.copy }]));
   }
 
   const en = s.entrances || { total: 0, found: [], all: [] };
@@ -1942,6 +2072,25 @@ function render(s) {
 }
 
 tick();
+// the note key on this page puts the cursor in the field; Enter in it adds,
+// Esc empties it and leaves; the delete buttons of the list. Panels have
+// none of this.
+if (!panel && $('note-text')) {
+  document.addEventListener('keydown', (ev) => {
+    const key = (lastState && lastState.note_key) || 'F9';
+    if (ev.key === key) { ev.preventDefault(); focusNoteBox(); }
+    else if (ev.key === 'Escape' && document.activeElement === $('note-text')) { ev.preventDefault(); postNote(false); }
+  });
+  $('note-text').addEventListener('keydown', (ev) => {
+    if (ev.key === 'Enter') { ev.preventDefault(); postNote(true); }
+  });
+  document.addEventListener('click', async (ev) => {
+    const b = ev.target.closest('button.del');
+    if (!b) return;
+    await fetch('/note', { method: 'POST', body: JSON.stringify({ delete: b.dataset.del }) });
+    await tick();
+  });
+}
 setInterval(tick, 700);
 
 

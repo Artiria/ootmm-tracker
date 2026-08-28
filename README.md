@@ -83,6 +83,7 @@ anyway. `?spoiler=full` reveals what is in the checks you have not done.
 | ✅ Which grotto or fairy fountain you are in | read from what the game itself records (the grotto byte and `gLastScene`), found in the ROM's code; "remaining here" lists that one and says so when it cannot tell |
 | ✅ Entrances gone through | read from the ROM, no spoiler; shown as you take them (`/p/entrances`), the whole list only with `?spoiler=full` |
 | ✅ Souls (soul shuffle) | every soul read from the ROM, grouped by kind; a compact per-kind summary by default, the full names on demand (`/p/souls`) |
+| ✅ Notes | a memorandum: press the note key (F9; `note_key` in `options.json`) — in the emulator too, on Windows — type a line, Enter; it is kept with the game, area and room you were in, per seed (`/p/notes`). The Bombers' code is read off the save and listed on its own, no hide-and-seek needed |
 | ✅ Item placement and names read from the ROM | no spoiler log, on v32.0 and dev builds |
 | ✅ Addresses read from the ROM's own code | `gSharedCustomSave` and the other game's save buffer are found in the payload's code, so a build that moves them needs no update; measured over 42 seeds, six builds |
 | ✅ OBS overlay, one URL per panel | transparent background, a standalone panel each |
@@ -106,6 +107,10 @@ From the first real session:
   their progress is not in it.
 - **It marks the spots holding someone else's item** with a `world N` tag,
   wherever the ROM records it. No tag means "yours".
+- **Souls are listed by group.** Your ROM cannot name a soul of yours that
+  the generator put in a partner's world, so on a multiworld ROM every soul
+  of a shuffled kind gets a chip and the panel title says so; in single
+  player only the placed ones do, which there is exact.
 
 ## Support
 

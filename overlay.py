@@ -38,6 +38,7 @@ import json
 import os
 import re
 import struct
+import sys
 import threading
 import time
 import urllib.parse
@@ -205,7 +206,7 @@ SCENE_CHECKS_SUSPICIOUS = 3
 # Each panel is also served on its own at /p/<name>, so the streamer captures
 # only the ones they want to show, wherever they want them. The names have to
 # match the data-panel attributes in overlay.html.
-PANELS = ["summary", "regions", "items", "activity", "remaining", "entrances", "hints", "souls"]
+PANELS = ["summary", "regions", "items", "activity", "remaining", "entrances", "hints", "souls", "notes"]
 
 # The hint ladder: what a hint about an item gives away at each level.
 HINT_LEVELS = {1: "game", 2: "region", 3: "check"}
@@ -638,6 +639,54 @@ def load_options():
     return opts if isinstance(opts, dict) else {}
 
 
+# --- notes: a memorandum the player writes while playing ------------------
+#
+# One line each, stamped with the game, scene and room it was written in, kept
+# per ROM in notes.json next to options.json. The note key is registered
+# system-wide on Windows (RegisterHotKey), so it works with the emulator in
+# front: the server remembers which window had the focus, brings the tracker's
+# own window forward, and tells the page to open its box (`note_prompt` in the
+# state). When the note is posted -- or cancelled -- the focus goes back.
+NOTES_FILE = "notes.json"
+DEFAULT_NOTE_KEY = "F9"
+# what the page titles itself, and therefore what the --app window is called
+WINDOW_TITLE = "OoTMM Tracker"
+VK_KEYS = {f"F{i}": 0x6F + i for i in range(1, 13)}
+VK_KEYS.update({"INSERT": 0x2D, "PAUSE": 0x13, "SCROLLLOCK": 0x91, "NUMLOCK": 0x90})
+
+
+def hotkey_thread(tracker):
+    """Windows only: hold the note key system-wide and hand every press to
+    the tracker. Anything that goes wrong leaves the page's own key handling
+    in place and says so once."""
+    if sys.platform != "win32":
+        return
+    key = str(tracker.note_key or "").upper().replace(" ", "")
+    if key in ("", "NONE", "OFF"):
+        return
+    vk = VK_KEYS.get(key)
+    if vk is None:
+        print(f"[overlay] note key {tracker.note_key!r} is not one this build can hold"
+              f" ({', '.join(VK_KEYS)}); the box still opens from the page")
+        return
+    try:
+        import ctypes
+        from ctypes import wintypes
+        user32 = ctypes.windll.user32
+        if not user32.RegisterHotKey(None, 1, 0x4000, vk):   # MOD_NOREPEAT
+            print(f"[overlay] {key} is taken by another program; the note box still opens from the page")
+            return
+        print(f"[overlay] note key: {key}, anywhere -- press it in the emulator to write a note")
+        msg = wintypes.MSG()
+        while user32.GetMessageW(ctypes.byref(msg), None, 0, 0) > 0:
+            if msg.message == 0x0312:   # WM_HOTKEY
+                tracker.request_note()
+            user32.TranslateMessage(ctypes.byref(msg))
+            user32.DispatchMessageW(ctypes.byref(msg))
+    except Exception as ex:  # a hotkey must never take the tracker down
+        print(f"[overlay] note key off: {type(ex).__name__}: {ex}")
+
+
 def save_options(opts):
     ruta = paths.user(OPTIONS_FILE)
     try:
@@ -735,6 +784,14 @@ class Tracker:
         # with the level reached, and checks whose item was revealed outright.
         self.hints = collections.OrderedDict()   # item -> {level, game, region, check, t}
         self.revealed = set()                    # "game:name"
+        # The player's notes for this ROM (see NOTES_FILE), the pending
+        # request to write one (the note key was pressed), the window to hand
+        # the focus back to, and the Bombers' code read off MM's save.
+        self.note_key = load_options().get("note_key") or DEFAULT_NOTE_KEY
+        self.notes = self._load_notes()
+        self.note_prompt = None
+        self._note_prev_hwnd = None
+        self._bombers_code = None
         # The soul bitmaps of the shared custom save and the ROM's catalogue
         # (souls.py), read from checks.json's `souls` block. The Decoder is
         # harmless on a seed that shuffles no souls: it reports not-ok and the
@@ -876,6 +933,7 @@ class Tracker:
         self._seeded = False
         self._drop_polls = 0
         self._bases = None
+        self._bases_from_rom = None   # running game's base == the ROM's own (None: payload gave none)
         self._play = {}          # game -> PlayState address, cached like the bases
         self._play_retry = {}    # game -> when the next full scan is allowed
         self._play_misses = {}   # game -> polls in a row it failed to validate
@@ -1240,7 +1298,8 @@ class Tracker:
             # for the rest of the session.
             if (ootmm.bases_coherentes(self._bases)
                     and all(ootmm.save_looks_sane(self.link, g, b)
-                            for g, b in self._bases.items())):
+                            for g, b in self._bases.items())
+                    and not self.own_save_appeared(self._bases)):
                 return self._bases
             # crossing between games moves both: they have to be found again
             self._bases = None
@@ -1250,6 +1309,49 @@ class Tracker:
             else self.locate(self.link, verbose=False)
         self._bases = bases or None
         return bases
+
+    def own_base(self, game):
+        """The save context of `game` as this ROM's code names it, in the
+        tracker's convention (MM's base is MmSave + 8, signature at +0x1C),
+        or None when the payload did not give it."""
+        b = (self.payload.get(game) or {}).get("own")
+        return None if not b else b + (8 if game == "mm" else 0)
+
+    def own_save_appeared(self, bases):
+        """Whether the running game's live save has shown up where the ROM's
+        code keeps it while the base in use is some other buffer.
+
+        A base is found once and kept while it validates, and a copy of a
+        save validates forever: OoT keeps a debug save -- ZELDAZ, fourteen
+        hearts, 150 rupees, every item, eight keys per dungeon -- in a static
+        buffer below the live one (0x800FBFB8 under 0x8011A5D0). Start the
+        tracker on the title screen, where the live context is not a save
+        yet, and that copy is what answers -- and it went on answering for a
+        whole session on 28 Aug 2026: the inventory full, 78 phantom checks
+        done, the confidence measure at 1.0 because it only watches the
+        custom save. So while the base in use is not the ROM's own, the own
+        address is looked at on every poll, and the moment it carries a sane
+        save the bases are found again (the own one is first in line there).
+        """
+        import ootmm
+
+        if not bases:
+            return False
+        running = min(bases, key=lambda g: bases[g])
+        own = self.own_base(running)
+        if own is None or bases[running] == own:
+            return False
+        try:
+            sig = ootmm.SIG_OOT if running == "oot" else ootmm.SIG_MM
+            if self.link.read_block(own + ootmm.SIG_OFFSET, 8)[:6] != sig:
+                return False
+        except (ConnectionError, OSError):
+            return False
+        if not ootmm.save_looks_sane(self.link, running, own):
+            return False
+        print(f"[overlay] {running}'s save has appeared at {own:#x}, where this ROM's code keeps it;"
+              f" until now a copy at {bases[running]:#x} was answering. Locating the bases again.")
+        return True
 
     def payload_hints(self):
         """(base, game) pairs the ROM's code names, for locate_saves to try
@@ -1513,47 +1615,59 @@ class Tracker:
         cands = custom_candidates(bases, active)
         return cands[0] if cands else None
 
-    def hint(self, item, level, world=ANY_WORLD):
+    def hint(self, item, level, world=ANY_WORLD, copy=None):
         """A hint about where `item` is, up to `level` (1 game, 2 region, 3 the
-        check itself). Picks one holder: the first not-done check carrying that
-        item in table order, so asking again lands on the same one; a
-        progressive item with several copies gives away one location, not all.
-        Levels only ever go up. Returns the hint entry or None.
+        check itself). Levels only ever go up. Returns the hint entry or None.
 
-        `world` narrows it to the copy belonging to that world -- None being
-        yours -- which is what the item list now offers separately. Left out, it
-        matches any, so a name typed by hand still works as it always did. Either
-        way the entry records the world of the holder it settled on, and that is
-        also what it is filed under: two namesakes from different worlds are two
-        hints, each with its own level, instead of one that answers for both.
+        A hint is about one check -- the holder it settled on -- and that is
+        what it is filed under, (item, world, check): asking again lands on the
+        same one, and two namesakes from different worlds, or two copies of a
+        progressive item, are two hints with their own levels.
+
+        `world` narrows it to the copy belonging to that world, None being
+        yours; left out (a name typed by hand) it matches any, yours first.
+        `copy` is which of the holders still out there, in the table's order,
+        the item list numbered ("Hookshot · 2 of 2"): the way to the second
+        copy, which one entry per name and "asking again lands on the same one"
+        kept out of reach (his report, 28 Aug 2026). Without it, an entry
+        already given about a copy still out there is answered again, else the
+        first one still out there, else -- all collected -- the first at all.
         """
         level = max(1, min(3, int(level)))
-        # Looked up before anything is searched, or "asking again lands on the
-        # same one" would stop holding: once the copy you were told about is
-        # collected, a fresh search would settle on the next one along and quietly
-        # answer about a different item. Unnarrowed, any world's entry for this
-        # name will do -- that is the question that was asked.
+        holders = [c for c in self.table["checks"]
+                   if c["addr"] is not None and self.is_active(c)
+                   and self.item_de(c["game"], c["name"]) == item
+                   and (world is ANY_WORLD
+                        or self.world_de(c["game"], c["name"]) == world)]
+        if not holders:
+            return None
+        # Unnarrowed and the name exists in both worlds: yours first. A bare
+        # name is a question about your own item; settling on the partner's
+        # copy because the table lists it earlier answered about the wrong
+        # thing and looked like the first hit (his report, 28 Aug 2026:
+        # "Deku Mask" typed, the partner's copy told). Stable, so within a
+        # world the order is still the table's.
         if world is ANY_WORLD:
-            cur = next((h for k, h in self.hints.items() if k[0] == item), None)
+            holders.sort(key=lambda h: self.world_de(h["game"], h["name"]) is not None)
+        pending = [h for h in holders if (h["game"], h["name"]) not in self._done]
+        target = None
+        if copy is not None and 1 <= copy <= len(pending):
+            target = pending[copy - 1]
         else:
-            cur = self.hints.get((item, world))
+            given = {(h["game"], h["check"]) for (k_item, k_world, _k_check), h in self.hints.items()
+                     if k_item == item and (world is ANY_WORLD or k_world == world)}
+            target = next((p for p in pending if (p["game"], p["name"]) in given), None) \
+                or (pending[0] if pending else holders[0])
+        de_quien = self.world_de(target["game"], target["name"])
+        key = (item, de_quien, target["name"])
+        cur = self.hints.get(key)
         if cur is None:
-            holders = [c for c in self.table["checks"]
-                       if c["addr"] is not None and self.is_active(c)
-                       and self.item_de(c["game"], c["name"]) == item
-                       and (world is ANY_WORLD
-                            or self.world_de(c["game"], c["name"]) == world)]
-            if not holders:
-                return None
-            c = next((h for h in holders
-                      if (h["game"], h["name"]) not in self._done), holders[0])
-            de_quien = self.world_de(c["game"], c["name"])
             # the region is the scene, made readable: the pool's `hint` column
             # is a hint-group id and NONE on 98% of the rows, so it will not do
-            region = (c["scene"] or "").replace("_", " ").title()
-            cur = {"item": item, "world": de_quien, "level": 0, "game": c["game"],
-                   "region": region, "check": c["name"], "t": time.time()}
-            self.hints[(item, de_quien)] = cur
+            region = (target["scene"] or "").replace("_", " ").title()
+            cur = {"item": item, "world": de_quien, "level": 0, "game": target["game"],
+                   "region": region, "check": target["name"], "t": time.time()}
+            self.hints[key] = cur
         if level > cur["level"]:
             cur["level"] = level
             cur["t"] = time.time()
@@ -1737,6 +1851,20 @@ class Tracker:
         # the active game is the one whose save sits low in RDRAM
         active = min(bases, key=lambda g: bases[g]) if bases else None
 
+        # The running game's save has to be where this ROM's code keeps it.
+        # Whatever else validates is a copy -- OoT's static debug save, a
+        # buffer left over from before a crossing -- and then the file is
+        # simply not loaded yet: title screen, file select, a crossing half
+        # done. Read on and the copy's flags pass for progress (28 Aug 2026:
+        # 78 phantom checks and a full inventory, for a whole session). So
+        # wait, and say so; locate_cached looks at the own address every poll
+        # (own_save_appeared). A payload that named no own base gates nothing.
+        own = self.own_base(active) if active else None
+        self._bases_from_rom = None if own is None else bases[active] == own
+        if self._bases_from_rom is False:
+            self._game_mode = GAME_MODE_COPY
+            return None
+
         # Not in a run (title screen, file select, credits): stop here, before
         # anything is read. What the RAM holds then is not this file, and every
         # reader below -- checks, feed, entrances, souls -- would take it as
@@ -1874,8 +2002,11 @@ class Tracker:
             if custom_blob is not None and cs.get("halfDays") is not None \
                     and cs["halfDays"] < len(custom_blob) and self._custom_ok:
                 half_days = custom_blob[cs["halfDays"]]
-            items["mm"] = inventory.mm_snapshot(
-                self.link.read_block(bases["mm"], 0x1500), oot_blk, half_days)
+            mm_blk = self.link.read_block(bases["mm"], 0x1500)
+            items["mm"] = inventory.mm_snapshot(mm_blk, oot_blk, half_days)
+            # the Bombers' code lives in the same block, whichever game runs
+            # (the other game's copy carries it too)
+            self._bombers_code = inventory.bombers_code(mm_blk)
 
         # A scene transition rewrites the PlayState, so for a poll or two it
         # stops validating. Falling straight through to the save context there
@@ -1923,6 +2054,7 @@ class Tracker:
                 s["in_game"] = False
                 s["game_mode"] = GAME_MODES.get(self._game_mode, f"mode {self._game_mode}")
                 s["bases"] = {g: f"0x{b:08X}" for g, b in (self._bases or {}).items()}
+                s["bases_from_rom"] = self._bases_from_rom
                 s["uptime"] = int(time.time() - self._started)
             return
         active, done, conf, items, scene, room, live, setup_raw = polled
@@ -2129,6 +2261,9 @@ class Tracker:
             s["confidence"] = round(conf, 3)
             s["trusted"] = conf >= CONFIDENCE_MIN
             s["bases"] = {g: f"0x{b:08X}" for g, b in (self._bases or {}).items()}
+            # whether the running game's save is read where this ROM's code
+            # keeps it (None: the payload named no own base, nothing gated)
+            s["bases_from_rom"] = self._bases_from_rom
             s["custom_base"] = (
                 f"0x{self._custom_addr:08X}" if self._custom_addr else None)
             s["custom_bits"] = self._custom_bits
@@ -2401,9 +2536,115 @@ class Tracker:
             return None
         return int.from_bytes(blob[off:off + ancho], "big")
 
+    # -- notes ---------------------------------------------------------------
+
+    def _notes_key(self):
+        return os.path.basename(self.table.get("rom") or "") or "no-rom"
+
+    def _read_notes_file(self):
+        try:
+            d = json.loads(open(paths.user(NOTES_FILE), encoding="utf-8").read())
+        except (OSError, ValueError):
+            return {}
+        return d if isinstance(d, dict) else {}
+
+    def _load_notes(self):
+        lst = self._read_notes_file().get(self._notes_key()) or []
+        return [n for n in lst if isinstance(n, dict) and n.get("text")]
+
+    def _save_notes(self):
+        d = self._read_notes_file()
+        d[self._notes_key()] = self.notes
+        ruta = paths.user(NOTES_FILE)
+        try:
+            tmp = ruta + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump(d, f, ensure_ascii=False, indent=1)
+            os.replace(tmp, ruta)
+        except OSError as ex:
+            print(f"[overlay] notes not saved: {ex}")
+
+    def add_note(self, text, game=None, scene=None, room=None):
+        """One line, stamped with where it was written. Empty text is no note."""
+        text = " ".join(str(text or "").split())[:400]
+        if not text:
+            return None
+        n = {"id": f"{int(time.time() * 1000):x}", "t": time.time(), "text": text,
+             "game": game if game in ("oot", "mm") else None,
+             "scene": str(scene) if scene else None,
+             "room": room if isinstance(room, int) else None}
+        with self.lock:
+            self.notes.append(n)
+        self._save_notes()
+        return n
+
+    def delete_note(self, nid):
+        with self.lock:
+            before = len(self.notes)
+            self.notes = [n for n in self.notes if n.get("id") != nid]
+            changed = len(self.notes) != before
+        if changed:
+            self._save_notes()
+        return changed
+
+    def notes_state(self):
+        """Newest first, the automatic ones on top. Called under the lock."""
+        out = sorted(self.notes, key=lambda n: -(n.get("t") or 0))
+        if self._bombers_code:
+            out.insert(0, {"id": "bombers", "auto": True, "t": None, "game": "mm",
+                           "scene": None, "room": None,
+                           "text": f"Bombers' code: {'-'.join(self._bombers_code)}"})
+        return out
+
+    def request_note(self):
+        """The note key was pressed, wherever the focus was: remember the place
+        and the window to go back to, bring the tracker's window forward, and
+        ask the page to open its box."""
+        with self.lock:
+            here = self.state.get("pending_here") or {}
+            self.note_prompt = {"t": time.time(), "game": here.get("game"),
+                                "scene": here.get("scene"), "room": here.get("room")}
+        if sys.platform != "win32":
+            return
+        try:
+            import ctypes
+            user32 = ctypes.windll.user32
+            prev = user32.GetForegroundWindow()
+            hwnd = user32.FindWindowW(None, WINDOW_TITLE)
+            if hwnd and hwnd != prev:
+                self._note_prev_hwnd = prev
+                user32.SetForegroundWindow(hwnd)
+        except Exception as ex:
+            print(f"[overlay] could not bring the window forward: {ex}")
+
+    def note_done(self):
+        """The note was posted or cancelled: hand the focus back."""
+        with self.lock:
+            self.note_prompt = None
+        prev, self._note_prev_hwnd = self._note_prev_hwnd, None
+        if not prev or sys.platform != "win32":
+            return
+        try:
+            import ctypes
+            user32 = ctypes.windll.user32
+            # a process that is not in front may not put another there; a tap
+            # of ALT first is the long-standing way Windows lets it through
+            user32.keybd_event(0x12, 0, 0, 0)
+            user32.keybd_event(0x12, 0, 2, 0)
+            user32.SetForegroundWindow(prev)
+        except Exception as ex:
+            print(f"[overlay] could not hand the focus back: {ex}")
+
     def snapshot(self):
         with self.lock:
-            return json.dumps(self.state)
+            d = dict(self.state)
+            # what the page needs beyond the poll: the memorandum, whether a
+            # note is being asked for, the key, and the code
+            d["notes"] = self.notes_state()
+            d["note_prompt"] = self.note_prompt
+            d["note_key"] = self.note_key
+            d["bombers_code"] = self._bombers_code
+            return json.dumps(d)
 
     def has_tables(self):
         return bool(self.table["checks"])
@@ -3168,6 +3409,10 @@ SETUP_OFF = {"oot": 0x1360, "mm": 0x3CAC - 0x08}
 # the last picture stands, and the page says why.
 GAME_MODE_OFF = {"oot": 0x135C, "mm": 0x3CA8 - 0x08}
 GAME_MODES = {0: "playing", 1: "title screen", 2: "file select", 3: "credits", 4: "owl save"}
+# Not a gameMode the game has: what poll_once reports while the running
+# game's save is not yet where this ROM's code keeps it (see own_save_appeared).
+GAME_MODE_COPY = "copy"
+GAME_MODES[GAME_MODE_COPY] = "menu, the save is not loaded yet"
 # The modes that mean "not in a run" and DO stop the read. 0 is playing; None
 # is "could not read"; anything else fits no mode at all -- almost always a
 # single poll caught mid-cross between OoT and MM, when the bases are flipping
@@ -3274,7 +3519,7 @@ def serve(tracker, host, port, open_window=True):
             # file read, and the server can end up listening off 127.0.0.1
             # with --http-host.
             route = self.path.split("?", 1)[0]
-            if route not in ("/spoiler", "/hint", "/reveal", "/junk"):
+            if route not in ("/spoiler", "/hint", "/reveal", "/junk", "/note"):
                 self.send_error(404)
                 return
             # Only from our own page. Any website you happen to have open can
@@ -3302,6 +3547,12 @@ def serve(tracker, host, port, open_window=True):
                     # copy", which is what a name typed by hand means, and that
                     # is not the same question as "the one that is mine".
                     kw = {"world": req["world"]} if "world" in req else {}
+                    # which copy, when the list numbered them
+                    if req.get("copy") is not None:
+                        try:
+                            kw["copy"] = int(req["copy"])
+                        except (TypeError, ValueError):
+                            pass
                     got = tracker.hint(str(req.get("item", "")), req.get("level", 1), **kw)
                     self._json({"ok": got is not None, "hint": got,
                                 "error": None if got else "no pending check holds that item"})
@@ -3309,6 +3560,21 @@ def serve(tracker, host, port, open_window=True):
                     req = json.loads(raw.decode("utf-8"))
                     ok = tracker.reveal(str(req.get("game", "")), str(req.get("name", "")))
                     self._json({"ok": ok, "error": None if ok else "unknown check"})
+                elif route == "/note":
+                    # add (text + where), delete (by id), or cancel the box the
+                    # note key opened; add and cancel both hand the focus back
+                    req = json.loads(raw.decode("utf-8"))
+                    if req.get("cancel"):
+                        tracker.note_done()
+                        self._json({"ok": True})
+                    elif "delete" in req:
+                        self._json({"ok": tracker.delete_note(str(req["delete"]))})
+                    else:
+                        n = tracker.add_note(req.get("text"), req.get("game"),
+                                             req.get("scene"), req.get("room"))
+                        tracker.note_done()
+                        self._json({"ok": n is not None, "note": n,
+                                    "error": None if n else "an empty note is no note"})
                 elif route == "/junk":
                     # One switch per request, named by the key that is there:
                     # an older page that only knows "tokens" keeps working, and
@@ -3401,6 +3667,8 @@ def serve(tracker, host, port, open_window=True):
     print("[overlay] spoiler: ?spoiler=off (nothing) | item (default) | full\n")
     if open_window:
         threading.Thread(target=open_app_window, args=(url,), daemon=True).start()
+    # the note key, held system-wide (Windows); see hotkey_thread
+    threading.Thread(target=hotkey_thread, args=(tracker,), daemon=True).start()
     srv.serve_forever()
 
 

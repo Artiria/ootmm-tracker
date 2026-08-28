@@ -8,6 +8,7 @@ discover-cache.json
 entrances-seen.json
 bizhawk.json
 options.json
+notes.json
 
 # Iconos que cada uno ponga a mano (ver icons/README.md), menos el propio README
 icons/*

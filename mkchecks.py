@@ -489,13 +489,32 @@ def load_scenes():
     return scenes
 
 
+# Rows of OoTMM's pool CSVs filed under a scene the check is not in. The scene
+# only decides which panel lists the check and which region counts it; the
+# flag that marks it is untouched, and no npc row keys on its scene
+# (placement.CON_ESCENA), so the override table matches exactly as before.
+SCENE_FIXES = {
+    # pool_mm.csv puts it in FAIRY_FOUNTAIN; the statue stands at Snowhead,
+    # before the temple, the way Woodfall's stands in WOODFALL. His report,
+    # 28 Aug 2026: "Snowhead Owl Statue" listed inside Clock Town's fountain.
+    ("mm", "Snowhead Owl Statue"): "SNOWHEAD",
+}
+
+
 def load_pool(path):
+    # every reader of the CSV goes through here, so the fixes apply to the
+    # placement index, the scene recovery and the rows alike
+    game = "mm" if pathlib.Path(path).name.startswith("pool_mm") else "oot"
     with open(path, newline="", encoding="utf-8") as fh:
         r = csv.reader(fh)
         header = [h.strip() for h in next(r)]
         for row in r:
             if row and any(c.strip() for c in row):
-                yield dict(zip(header, [c.strip() for c in row]))
+                d = dict(zip(header, [c.strip() for c in row]))
+                fix = SCENE_FIXES.get((game, d.get("location")))
+                if fix:
+                    d["scene"] = fix
+                yield d
 
 
 def load_mq(spoiler):
