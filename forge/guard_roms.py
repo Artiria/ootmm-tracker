@@ -126,11 +126,24 @@ def check_locate(rep, rb, syms):
                 bad.append(f"{game} {key}: tracker {mine[0]:#x}, nm {sym} {truth[0]:#x}")
             elif truth[1] and mine[1] and mine[1] != truth[1]:
                 bad.append(f"{game} {key}: size tracker {mine[1]:#x}, nm {truth[1]:#x}")
+        # gLastScene, the payload global that tells one grotto or fairy
+        # fountain from the others sharing its scene (payload.last_scene)
+        mine = got.get("last_scene")
+        truth = s.get("gLastScene")
+        if mine is None:
+            bad.append(f"{game} last_scene: not located" + (f" (nm: gLastScene {truth[0]:#x})" if truth else ""))
+        elif truth is None:
+            bad.append(f"{game} last_scene: gLastScene is not in the symbol table")
+        elif mine != truth[0]:
+            bad.append(f"{game} last_scene: tracker {mine:#x}, nm gLastScene {truth[0]:#x}")
+        if got.get("grotto_data") is None:
+            bad.append(f"{game} grotto_data: not located")
     if bad:
         rep.add("locate", "FAIL", "; ".join(bad))
     else:
         c = loc["oot"]["custom"]
-        rep.add("locate", "ok", f"8 addresses match nm; gSharedCustomSave {c[0]:#x} ({c[1]:#x} bytes)")
+        rep.add("locate", "ok", f"10 addresses match nm; gSharedCustomSave {c[0]:#x} ({c[1]:#x} bytes);"
+                f" grotto byte at own+{loc['oot']['grotto_data']:#x}/{loc['mm']['grotto_data']:#x}")
     return loc
 
 

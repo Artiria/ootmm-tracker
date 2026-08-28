@@ -44,6 +44,7 @@ import urllib.parse
 import webbrowser
 
 import paths
+from payload import MM_BASE_DELTA
 # Both of these live in placement.py so that vetting a spoiler here and
 # deciding which world a ROM is there cannot judge two spellings differently.
 from placement import same_item
@@ -100,6 +101,37 @@ OTHER_ROOM_CAP = 80
 # scene, so a room filter hides the very checks being hit. The Rooms control
 # and ?rooms= still apply everywhere; this only flips the default here.
 WHOLE_SCENE = {("oot", "GERUDO_FORTRESS")}
+
+# Scenes that several places share, and how OoTMM tells the instances apart.
+# GROTTOS holds every grotto of its game and FAIRY_FOUNTAIN the five fairy
+# fountains, one room each, so the live scene and room say nothing about which
+# one you are in. The game itself uses two things (payload.py says where they
+# come from): the grotto byte the hole writes when it swallows you, whose low
+# five bits are the generic grotto's id, and gLastScene, the place you came in
+# from. The maps below are OoTMM's own -- EnElf_Aliases (En_Elf.c) for the
+# fountains, ObjComb_InitXflag (Obj_Comb.c) for the scrub grottos and MM's cow
+# grotto, comboXflagInit (xflags.c) for the generic ones -- and give the room
+# checks.json lists that instance's checks under.
+FOUNTAIN_ROOMS = {"HYRULE_FIELD": 0x20, "ZORA_RIVER": 0x21, "SACRED_FOREST_MEADOW": 0x22,
+                  "ZORA_DOMAIN": 0x23, "GERUDO_FORTRESS": 0x24}
+SCRUB2_ROOMS = {"SACRED_FOREST_MEADOW": 0x21, "ZORA_RIVER": 0x24,
+                "GERUDO_VALLEY": 0x25, "DESERT_COLOSSUS": 0x26}
+SCRUB3_ROOMS = {"LON_LON_RANCH": 0x27, "GORON_CITY": 0x2A,
+                "DEATH_MOUNTAIN_CRATER": 0x2B, "LAKE_HYLIA": 0x2D}
+COW_ROOMS = {"TERMINA_FIELD": 0x0A, "GREAT_BAY_COAST": 0x0F}
+# (game, scene) -> {live room: ("grotto" | "last_scene", came-from -> room)}
+SHARED_SCENES = {
+    ("oot", "FAIRY_FOUNTAIN"): {0: ("last_scene", FOUNTAIN_ROOMS)},
+    ("oot", "GROTTOS"): {0: ("grotto", None), 9: ("last_scene", SCRUB2_ROOMS),
+                         0xC: ("last_scene", SCRUB3_ROOMS)},
+    ("mm", "GROTTOS"): {4: ("grotto", None), 0xA: ("last_scene", COW_ROOMS)},
+}
+GROTTO_ID_MASK = 0x1F
+# Outside a shared scene gLastScene IS the live scene; polls in a row where it
+# is not before the address is given up as another build's. One poll can
+# straddle a scene load (the PlayState is written before the hook that copies
+# the scene), so a single disagreement means nothing.
+LAST_SCENE_ODD_PERSIST = 6
 # A spoiler is refused when, over at least this many spots both it and the
 # ROM name, it agrees on fewer than this fraction (see Tracker._vet_spoiler).
 SPOILER_MIN_COMPARABLE = 100
@@ -918,6 +950,22 @@ class Tracker:
         for game, _, n, _k in self.regions:
             self.state["totals"][game] += n
         self.state["totals"] = dict(self.state["totals"])
+        # Which instance of a shared scene you are in (SHARED_SCENES): the
+        # address of gLastScene in the payload and the offset of the grotto
+        # byte in the save context, both measured off the ROM by payload.py
+        # when the tables were built. Either can be null -- a build the code
+        # walk did not resolve -- and then every instance is listed, as before.
+        pl = table.get("payload") or {}
+        self.last_scene_addr = {g: (pl.get(g) or {}).get("last_scene") for g in ("oot", "mm")}
+        self.grotto_off = {g: (pl.get(g) or {}).get("grotto_data") for g in ("oot", "mm")}
+        self._last_scene_val = {}       # game -> gLastScene as read this poll
+        self._grotto_val = {}           # game -> the grotto byte this poll
+        self._last_scene_odd = 0
+        self._last_scene_off = set()    # games whose address proved wrong
+        self.instance_labels = self._instance_labels(table)
+        if table["checks"] and all(v is None for v in self.last_scene_addr.values()):
+            print("[overlay] gLastScene was not found in this build's code: grottos and"
+                  " fairy fountains will list every instance sharing the scene")
 
     def _vet_spoiler(self):
         """Refuse a spoiler that contradicts the ROM. Said once per spoiler.
@@ -1787,6 +1835,10 @@ class Tracker:
         if oot_blk is not None:
             items["oot"] = inventory.snapshot(oot_blk, self._triforce(oot_blk))
 
+        # The two signals that tell a shared scene's instances apart (see
+        # SHARED_SCENES): a word of the payload and a byte of the save context.
+        self._read_instance_signals(active, bases, oot_blk)
+
         # The running game's save entrance: OoT keeps it at +0x00, MM at
         # MmSave+0x00, eight bytes before the base this project uses.
         if active in bases and self.entrances:
@@ -1874,6 +1926,7 @@ class Tracker:
                 s["uptime"] = int(time.time() - self._started)
             return
         active, done, conf, items, scene, room, live, setup_raw = polled
+        self._check_last_scene(active, scene, live)
 
         # Nothing a run has done ever comes undone, so a poll where any check
         # that WAS done is not any more is either a transient or another file
@@ -1983,6 +2036,13 @@ class Tracker:
             sala_propia = room is not None and room in self.scene_rooms.get((active, scene), ())
             # some scenes are one place however many rooms they have
             whole = (active, self.scene_names.get((active, scene))) in WHOLE_SCENE
+            # ... and some are many places in one: which grotto or fountain
+            # this is, when the game's own two signals say (SHARED_SCENES).
+            # Its checks are listed under `vroom`, so that is the room they are
+            # compared against; unresolved, they stay candidates as before.
+            shared = (active, here["scene"]) in SHARED_SCENES
+            vroom, how = self.instance_room(active, here["scene"], room)
+            cmp_room = vroom if vroom is not None else room
 
             lista, otras, otros, fuera = [], [], 0, 0
             for c in pend:
@@ -1998,7 +2058,8 @@ class Tracker:
                     if sala_propia:
                         fuera += 1
                         continue
-                    croom = None   # in the generic room they are all candidates
+                    if vroom is None:
+                        croom = None   # in the generic room they are all candidates
                 if whole:
                     croom = None   # no room of its own: listed, untagged, unfiltered
                 entry = {
@@ -2008,7 +2069,9 @@ class Tracker:
                     "type": c["type"],
                     "junk": self.junk.get((c["game"], c["name"]), False),
                     "room": croom,
-                    "here": croom is not None and croom == room,
+                    "here": croom is not None and croom == cmp_room,
+                    # in a shared scene a room is a place with a name
+                    "place": self.instance_labels.get((active, scene, croom)) if shared and croom is not None else None,
                     # the item shows regardless of the spoiler level once the
                     # streamer asked for it, or a level-3 hint named this check
                     "revealed": (f"{c['game']}:{c['name']}" in self.revealed
@@ -2025,7 +2088,7 @@ class Tracker:
                 # (Gerudo Fortress's archery crates read room 1) is one click
                 # away instead of counted-but-invisible. Capped, since GROTTOS'
                 # other rooms run to the hundreds.
-                if room is not None and room >= 0 and croom is not None and croom != room:
+                if room is not None and room >= 0 and croom is not None and croom != cmp_room:
                     fuera += 1
                     if len(otras) < OTHER_ROOM_CAP:
                         otras.append(entry)
@@ -2041,6 +2104,16 @@ class Tracker:
             # over the cap): the page needs it to say what it is still hiding.
             here["other_room_listed"] = len(otras)
             here["whole"] = whole
+            if shared and how is not None:
+                # standing where the instances are told apart: what the page
+                # says in the title is the place, or that it could not be told
+                # and everything is listed. A real room of GROTTOS is a place
+                # of its own and keeps its room number.
+                here["instance"] = {
+                    "room": vroom,
+                    "label": self.instance_labels.get((active, scene, vroom)) if vroom is not None else None,
+                    "how": how,
+                }
 
         with self.lock:
             s = self.state
@@ -2048,6 +2121,10 @@ class Tracker:
             s["error"] = None
             s["in_game"] = True
             s["game_mode"] = GAME_MODES.get(self._game_mode, "playing")
+            s["instance_signals"] = {
+                "last_scene": self._last_scene_val.get(active),
+                "grotto": self._grotto_val.get(active),
+            }
             s["active"] = active
             s["confidence"] = round(conf, 3)
             s["trusted"] = conf >= CONFIDENCE_MIN
@@ -2202,6 +2279,111 @@ class Tracker:
                 time.sleep(2.0)
                 continue
             time.sleep(interval)
+
+    @staticmethod
+    def _instance_labels(table):
+        """{(game, scene_id, room): what the checks under that room call the place}.
+
+        A shared scene's instances exist only as rows -- "Zora River Fairy
+        Fountain Fairy 3", "Path to Snowhead Grotto Grass 07" -- so the words
+        every row of a room shares, minus the trailing type and number, name
+        the place. That is what the panel shows instead of a room number
+        nobody would recognise.
+        """
+        by_room = collections.defaultdict(list)
+        for c in table["checks"]:
+            xf = c.get("xflag")
+            if not xf or c["scene_id"] is None or xf.get("room") is None:
+                continue
+            by_room[c["game"], c["scene_id"], xf["room"]].append((c["name"], (c.get("type") or "").lower()))
+        out = {}
+        for key, rows in by_room.items():
+            prefix = rows[0][0].split()
+            for name, _ in rows[1:]:
+                words = name.split()
+                k = 0
+                while k < len(prefix) and k < len(words) and prefix[k] == words[k]:
+                    k += 1
+                prefix = prefix[:k]
+            types = {t for _, t in rows}
+            while prefix and (prefix[-1].isdigit() or prefix[-1].lower() in types
+                              or prefix[-1].lower().rstrip("s") in types):
+                prefix.pop()
+            if prefix:
+                out[key] = " ".join(prefix)
+        return out
+
+    def _read_instance_signals(self, active, bases, oot_blk):
+        """gLastScene and the grotto byte of the running game, for this poll."""
+        self._last_scene_val.pop(active, None)
+        self._grotto_val.pop(active, None)
+        if active not in bases:
+            return
+        addr = self.last_scene_addr.get(active)
+        if addr is not None and active not in self._last_scene_off:
+            try:
+                self._last_scene_val[active] = struct.unpack(">i", self.link.read_block(addr, 4))[0]
+            except (ConnectionError, OSError, struct.error):
+                pass
+        off = self.grotto_off.get(active)
+        if off is not None:
+            try:
+                if active == "oot" and oot_blk is not None and off < len(oot_blk):
+                    self._grotto_val[active] = oot_blk[off]
+                else:
+                    # the offset is from gSaveContext; MM's base here is 8 past it
+                    own = bases[active] - (MM_BASE_DELTA if active == "mm" else 0)
+                    raw = self.link.read_block(own + (off & ~3), 4)
+                    self._grotto_val[active] = raw[off & 3]
+            except (ConnectionError, OSError, struct.error, IndexError):
+                pass
+
+    def instance_room(self, active, scene_name, room):
+        """Which instance of a shared scene the player is in.
+
+        (room its checks are listed under, how it was told) -- or (None, why)
+        when it cannot be told, and (None, None) for a scene that is not
+        shared, where the caller carries on as for any other.
+        """
+        rules = SHARED_SCENES.get((active, scene_name))
+        if not rules or room not in rules:
+            return None, None
+        how, table = rules[room]
+        if how == "grotto":
+            b = self._grotto_val.get(active)
+            if b is None:
+                return None, "the grotto byte could not be read"
+            return 0x20 | (b & GROTTO_ID_MASK), f"grotto byte {b:#04x}"
+        v = self._last_scene_val.get(active)
+        if v is None:
+            if self.last_scene_addr.get(active) is None or active in self._last_scene_off:
+                return None, "this build's gLastScene is not known"
+            return None, "gLastScene could not be read"
+        came_from = self.scene_names.get((active, v))
+        r = table.get(came_from)
+        if r is None:
+            return None, f"came from {came_from or v}, not one of the {len(table)} this scene knows"
+        return r, f"came from {came_from}"
+
+    def _check_last_scene(self, active, scene, live):
+        """Outside a shared scene gLastScene IS the live scene; when it keeps
+        not being, the address is another build's, and the instance is then
+        left unnamed rather than misnamed. Said once."""
+        if active in self._last_scene_off or not live or scene is None:
+            return
+        v = self._last_scene_val.get(active)
+        if v is None or (active, self.scene_names.get((active, scene))) in SHARED_SCENES:
+            return
+        if v == scene:
+            self._last_scene_odd = 0
+            return
+        self._last_scene_odd += 1
+        if self._last_scene_odd >= LAST_SCENE_ODD_PERSIST:
+            self._last_scene_off.add(active)
+            self._last_scene_odd = 0
+            print(f"[overlay] gLastScene at {self.last_scene_addr[active]:#x} has read {v} while"
+                  f" the live scene was {scene} for {LAST_SCENE_ODD_PERSIST} polls: not this"
+                  f" build's, so {active}'s grottos and fountains will list every instance")
 
     def _triforce(self, oot_blk):
         """The Triforce count, out of whichever buffer this build keeps it in.

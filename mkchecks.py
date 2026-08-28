@@ -1101,6 +1101,14 @@ def _payload_json(pl):
         # simply does not show.
         if "triforce" in b:
             out[game]["triforce"] = b["triforce"]
+        # Which instance of a shared scene the player is in (GROTTOS,
+        # FAIRY_FOUNTAIN): gLastScene's address in the payload's BSS and the
+        # grotto byte's offset in the save context, both read off the code
+        # (payload.last_scene / payload.grotto_data). Null when the code did
+        # not give them, and then the panel lists every instance.
+        for key in ("last_scene", "last_scene_entrance", "grotto_data"):
+            if key in b:
+                out[game][key] = b[key]
     lay = pl.get("layout")
     if lay:
         out["layout"] = {g: {k: v for k, v in lay[g].items() if not k.startswith("_")}

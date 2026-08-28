@@ -1497,7 +1497,8 @@ function renderPend(here) {
     <span class="name">${esc(p.name)}</span>
     ${(showPending || p.revealed) && p.item ? `<span class="from">→ ${esc(p.item)}</span>${world(p.world)}` : ''}
     ${p.here ? '<span class="room">this room</span>'
-       : (p.room != null ? `<span class="room">room ${esc(String(p.room))}</span>` : '')}
+       : (p.place ? `<span class="room">${esc(p.place)}</span>`
+       : (p.room != null ? `<span class="room">room ${esc(String(p.room))}</span>` : ''))}
     ${(!panel && !showPending && !p.revealed && p.item)
         ? `<button class="peek" data-game="${esc(here.game)}" data-name="${esc(p.name)}" title="reveal what this check holds (counts as a hint)">?</button>` : ''}
   </li>`).join('');
@@ -1856,8 +1857,14 @@ function render(s) {
   // one: room 0 is every single-room area, and saying so is just noise. With
   // "whole scene" on, the title says so instead of naming one room.
   // a WHOLE_SCENE area (Gerudo Fortress) says so too: the server sent it unfiltered
-  const roomTag = (ROOMS_ALL || here.whole) ? ' · whole scene' : (here.room > 0 ? ` · room ${here.room}` : '');
-  setText('pend-title', here.scene ? `Remaining in ${here.scene}${roomTag}` : 'Remaining here');
+  // A shared scene (GROTTOS, FAIRY_FOUNTAIN) names the place it worked out
+  // you are in, or says plainly that it could not and lists everything --
+  // naming one and being wrong is the failure this panel must never have.
+  const inst = here.instance;
+  const instTag = !inst ? '' : (inst.label ? ` · ${inst.label}` : ' · which one is not known, all listed');
+  const roomTag = (ROOMS_ALL || here.whole) ? ' · whole scene'
+    : ((inst && inst.label) ? '' : (here.room > 0 ? ` · room ${here.room}` : ''));
+  setText('pend-title', here.scene ? `Remaining in ${here.scene}${instTag}${roomTag}` : 'Remaining here');
   setHTML('pend', renderPend(here));
   // Count what is actually VISIBLE, junk filter included: with the filter on
   // and only junk left, the list came out empty with no message at all.

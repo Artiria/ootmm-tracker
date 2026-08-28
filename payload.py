@@ -912,6 +912,262 @@ def triforce_offset(scan, own):
     return EXTRA_RECORD_0 + EXTRA_RECORD_STRIDE * cand.pop()
 
 
+
+# --------------------------------------------------------------------------
+# Where the player is inside a scene that several places share
+# --------------------------------------------------------------------------
+#
+# GROTTOS is one scene with every grotto of the game in it, FAIRY_FOUNTAIN one
+# scene with the five fairy fountains, so `play->sceneId` and the room do not
+# say which one you are standing in. OoTMM tells them apart with two things of
+# its own, and the tracker reads the same two (En_Elf.c EnElf_Aliases, xflags.c
+# comboXflagInit, oot/play/play.c and mm/play/play.c Play_AfterInit):
+#
+#   - gLastScene: the last scene loaded that was NOT a grotto or a fountain,
+#     i.e. the place you came in from. With entrance shuffle the way in sets
+#     it to the vanilla place (applyCustomEntrance), so it always names the
+#     instance. The fountains, the scrub grottos and MM's cow grotto hang off
+#     it.
+#   - the grotto byte: what the hole writes when it swallows you
+#     (respawn[RESPAWN_MODE_RETURN].data in OoT, respawn[3].data in MM). Its
+#     low five bits are the generic grotto's id and the actors in there get
+#     the room `0x20 | id` -- which is the room checks.json lists them under.
+#
+# Neither sits at a fixed place: gLastScene is a global in the payload's BSS
+# and moves with every build, the grotto byte is an offset into a save context
+# the tracker knows by its base only. Both are found by what the code does.
+
+SCENE_ID_OFF = 0xA4     # PlayState.sceneId, u16 (combo/game_state.h)
+GROTTO_MASK = 0x1F      # the bits of the grotto byte that are the id
+OWN_SPAN = 0x5000       # how far into the save context a field can sit
+
+
+_BRANCH_LIKELY = (0x14, 0x15, 0x16, 0x17)
+_BRANCHES = (4, 5, 6, 7) + _BRANCH_LIKELY
+PATH_STEPS = 24         # how far past the load a store is looked for
+PATH_FORKS = 64         # how many branch alternatives are followed per load
+
+
+def _walk_to_store(words, ram, start, reg):
+    """Addresses of the payload globals that register `reg` is stored to
+    within PATH_STEPS instructions of `start`, following branches.
+
+    Following them is the point: the compiler is free to put the `lui` of the
+    global in the delay slot of a branch-likely and the `sw` sixty
+    instructions further down at the branch target, with calls in between on
+    the path NOT taken -- which is exactly what it does for gLastScene, and a
+    linear pass loses the high half at the first of those calls. Each branch
+    forks the walk: the taken side runs the delay slot and jumps, the other
+    side skips the slot when the branch is a likely one. A call clobbers the
+    caller-saved registers; `jr` ends the path.
+    """
+    n = len(words)
+    found = set()
+    # (index, steps, fresh, hi, full): the value's registers, the high halves
+    # from lui, the full addresses from lui+addiu
+    stack = [(start, 0, frozenset([reg]), (), ())]
+    forks = 0
+    while stack:
+        i, steps, fresh, hi, full = stack.pop()
+        hi, full = dict(hi), dict(full)
+        fresh = set(fresh)
+        while 0 <= i < n and steps < PATH_STEPS and fresh:
+            ins = words[i]
+            op = ins >> 26
+            rs = (ins >> 21) & 31
+            rt = (ins >> 16) & 31
+            rd = (ins >> 11) & 31
+            imm = ins & 0xFFFF
+            fn = ins & 0x3F
+            steps += 1
+            if op == 0x0F:                                  # lui
+                hi[rt] = imm
+                full.pop(rt, None)
+                fresh.discard(rt)
+                i += 1
+                continue
+            if op == 0x2B and rt in fresh:                  # sw value, off(base)
+                if rs in hi:
+                    found.add(((hi[rs] << 16) + _sext16(imm)) & 0xFFFFFFFF)
+                    break
+                if rs in full:
+                    found.add((full[rs] + _sext16(imm)) & 0xFFFFFFFF)
+                    break
+            if op == 0x09 and rs in hi:                     # addiu: the full address
+                full[rt] = ((hi[rs] << 16) + _sext16(imm)) & 0xFFFFFFFF
+                hi.pop(rt, None)
+                fresh.discard(rt)
+                i += 1
+                continue
+            if op in _BRANCHES or (op == 1 and rt in (0, 1, 2, 3)):
+                target = i + 1 + _sext16(imm)
+                likely = op in _BRANCH_LIKELY or (op == 1 and rt in (2, 3))
+                if forks < PATH_FORKS:
+                    forks += 1
+                    # the taken side: delay slot, then the target
+                    stack.append((i + 1, steps, frozenset(fresh), tuple(hi.items()), tuple(full.items())))
+                    stack[-1] = ("taken", stack[-1], target)
+                # fall through: the slot runs unless the branch is likely
+                i += 2 if likely else 1
+                continue
+            if op == 3:                                     # jal: slot, then clobber
+                i += 1
+                if i < n:
+                    _apply_write(words[i], fresh, hi, full)
+                for r in _CALLER_SAVED:
+                    fresh.discard(r)
+                    hi.pop(r, None)
+                    full.pop(r, None)
+                i += 1
+                continue
+            if op == 2:                                     # j: slot, then target
+                if i + 1 < n:
+                    _apply_write(words[i + 1], fresh, hi, full)
+                i = ((i + 1) * 4 + ram) & 0xF0000000 | ((ins & 0x3FFFFFF) << 2)
+                i = (i - ram) // 4
+                continue
+            if op == 0 and fn in (0x08, 0x09):              # jr / jalr: the path ends
+                break
+            _apply_write(ins, fresh, hi, full)
+            i += 1
+        # a fork pushed as ("taken", state, target) is resumed here: run the
+        # delay slot on that state, then continue at the target
+        if stack and isinstance(stack[-1], tuple) and stack[-1] and stack[-1][0] == "taken":
+            _, (j, steps2, fresh2, hi2, full2), target = stack.pop()
+            hi2, full2, fresh2 = dict(hi2), dict(full2), set(fresh2)
+            if 0 <= j < n:
+                _apply_write(words[j], fresh2, hi2, full2, keep_lui=True)
+            stack.append((target, steps2 + 1, frozenset(fresh2), tuple(hi2.items()), tuple(full2.items())))
+    return found
+
+
+def _apply_write(ins, fresh, hi, full, keep_lui=False):
+    """Run one instruction for the walk's bookkeeping only: what it writes
+    stops being the value, and a lui/addiu/move is followed."""
+    op = ins >> 26
+    rs = (ins >> 21) & 31
+    rt = (ins >> 16) & 31
+    rd = (ins >> 11) & 31
+    imm = ins & 0xFFFF
+    if op == 0x0F:                                          # lui
+        hi[rt] = imm
+        full.pop(rt, None)
+        fresh.discard(rt)
+        return
+    if op == 0x09 and rs in hi:                             # addiu off a lui
+        full[rt] = ((hi[rs] << 16) + _sext16(imm)) & 0xFFFFFFFF
+        hi.pop(rt, None)
+        fresh.discard(rt)
+        return
+    if op == 0 and (ins & 0x3F) in (0x21, 0x25, 0x2D) and (rs == 0 or rt == 0):
+        src = rt if rs == 0 else rs                         # move rd, src
+        if src in fresh:
+            fresh.add(rd)
+        else:
+            fresh.discard(rd)
+        if src in hi:
+            hi[rd] = hi[src]
+        else:
+            hi.pop(rd, None)
+        if src in full:
+            full[rd] = full[src]
+        else:
+            full.pop(rd, None)
+        return
+    w = _written(ins)
+    if w is not None:
+        fresh.discard(w)
+        hi.pop(w, None)
+        full.pop(w, None)
+
+
+def _stores_of_field(scan, load_op, load_off, load_from_own=None):
+    """Payload globals a value read off `load_off(reg)` gets stored to.
+
+    Every `<load_op> rt, load_off(rs)` in the payload starts a walk
+    (_walk_to_store) that looks for a `sw` of that value into one of the
+    payload's own globals. `load_from_own` restricts the load to the save
+    context at that address (the field is then `own + load_off`); without it
+    any base register will do.
+
+    Returns {address: how many loads reach it}.
+    """
+    words, ram = scan.words, scan.ram
+    if load_from_own is not None:
+        # the field is reached through whatever register holds the save
+        # context, so the immediate is not the offset: go by the resolved refs
+        sites = sorted((r.pc - ram) // 4 for r in scan.refs
+                       if r.kind == load_op and r.addr == load_from_own + load_off)
+    else:
+        op_code = {v: k for k, v in _LOADSTORE.items()}[load_op]
+        sites = [i for i, ins in enumerate(words)
+                 if (ins >> 26) == op_code and (ins & 0xFFFF) == load_off]
+    hits = collections.Counter()
+    for i in sites:
+        for addr in _walk_to_store(words, ram, i + 1, (words[i] >> 16) & 31):
+            if scan.in_payload(addr):
+                hits[addr] += 1
+    return hits
+
+
+def last_scene(scan, own=None):
+    """{"addr", "entrance"} for gLastScene in this payload, or None.
+
+    Play_AfterInit is the one place that stores `play->sceneId` into a global
+    of the payload's own (`gLastScene = play->sceneId`, skipped inside a
+    grotto or a fountain), so the address is the target of the only `sw` whose
+    value was just loaded with `lhu 0xA4(play)`. Exactly one such global has
+    to come out of the scan; two, or none, and the answer is None.
+
+    `entrance` is the contrast, not the answer: the line before reads
+    `gLastEntrance = gSave.entrance`, a store of the save context's first word
+    into a payload global, and the two are defined side by side in entrance.c
+    so the linker puts them four bytes apart. When `own` is known and that
+    neighbour is found it is reported; a build that moved them apart is not
+    wrong, only worth noticing.
+    """
+    cands = _stores_of_field(scan, "lhu", SCENE_ID_OFF)
+    if len(cands) != 1:
+        return None
+    addr = next(iter(cands))
+    out = {"addr": addr, "entrance": None}
+    if own is not None:
+        # the entrance goes to several globals (g.nextEntrance among them), so
+        # the question is only whether the neighbour is one of them
+        ent = _stores_of_field(scan, "lw", 0, load_from_own=own)
+        if addr + 4 in ent:
+            out["entrance"] = addr + 4
+    return out
+
+
+def grotto_data(scan, own):
+    """Offset of the grotto byte inside the save context at `own`, or None.
+
+    The byte is read with `lbu` off the save context and its low five bits
+    taken (`andi 0x1f`) wherever a generic grotto has to be told apart --
+    which room it is, which entrance it exits to, which xflag its actors carry.
+    The offset those readers agree on is the answer, and only if they agree:
+    one offset with at least two such readers, or None.
+    """
+    words, ram = scan.words, scan.ram
+    sites = collections.Counter()
+    for r in scan.refs:
+        if r.kind != "lbu":
+            continue
+        off = r.addr - own
+        if not 0 <= off < OWN_SPAN:
+            continue
+        i = (r.pc - ram) // 4
+        loaded = (words[i] >> 16) & 31
+        for j in range(i + 1, min(i + 6, len(words))):
+            ins = words[j]
+            if (ins >> 26) == 0x0C and ((ins >> 21) & 31) == loaded and (ins & 0xFFFF) == GROTTO_MASK:
+                sites[off] += 1
+                break
+    cands = [off for off, n in sites.items() if n >= 2]
+    return cands[0] if len(cands) == 1 else None
+
+
 def locate(rom_bytes, verbose=False):
     """Everything the tracker wants, or as much of it as the ROM gives.
 
@@ -955,6 +1211,14 @@ def locate(rom_bytes, verbose=False):
                     d = {"buffer": "oot", "off": off, "width": 4,
                          "how": "the extra-record rule"}
             b["triforce"] = d
+        # Which of a shared scene's instances the player is in: gLastScene in
+        # the payload's BSS and the grotto byte in the save context. Both
+        # games have both; either can be None, and then the panel lists every
+        # instance instead of naming one.
+        ls = last_scene(scans[game], (b.get("own") or (None,))[0])
+        b["last_scene"] = ls["addr"] if ls else None
+        b["last_scene_entrance"] = ls["entrance"] if ls else None
+        b["grotto_data"] = grotto_data(scans[game], b["own"][0]) if "own" in b else None
         out[game] = b
     if "oot" in scans and "mm" in scans and \
             "custom" in out.get("oot", {}) and "custom" in out.get("mm", {}):

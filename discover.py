@@ -443,12 +443,15 @@ def ensure_tables(rom, spoiler, verbose=True):
     # A table built before the `souls` key existed is stale the same way.
     # `scene_layers` (the scenes' alternate headers) and the Triforce record
     # inside `payload` are the same story, one generator later: without them the
-    # panel guesses the loaded setup and the Triforce figure never shows.
+    # panel guesses the loaded setup and the Triforce figure never shows. And
+    # `last_scene` (with it, the grotto byte) is what tells one grotto or
+    # fairy fountain from the others sharing its scene.
     if (not os.path.exists(checks) or not _same(_built_from(checks), rom)
             or not _has_key(checks, "payload")
             or not _has_key(checks, "souls")
             or not _has_key(checks, "scene_layers")
             or not _has_key(checks, "payload", "oot", "triforce")
+            or not _has_key(checks, "payload", "oot", "last_scene")
             or not _has_key(checks, "mq")):
         argv = ["--rom", rom]
         if spoiler:

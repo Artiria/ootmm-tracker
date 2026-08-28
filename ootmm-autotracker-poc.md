@@ -1399,6 +1399,46 @@ without saying so is worse than no filter—:
   `curRoom.num` reads 0. Comparing them, all 311 grotto checks would come out
   as "in another room". They are marked as having no room and that is that.
 
+### Which grotto, which fountain (28 Aug)
+
+The loose end above is closed, and by the game's own two signals rather than
+by guessing. `GROTTOS` is one scene with every grotto in it and
+`FAIRY_FOUNTAIN` one scene with the five fairy fountains, so the live scene and
+room say nothing about which one you are in -- and OoTMM has the same problem
+when it keys a check, so it keeps the answer somewhere:
+
+- **The grotto byte.** `comboXflagInit` gives the actors of a generic grotto
+  the room `0x20 | (gGrottoData & 0x1f)`, and `gGrottoData` is
+  `gSaveContext.respawn[1].data` in OoT (`respawn[3].data` in MM): the byte the
+  hole writes when it swallows you. Read the same byte and you have the same
+  room.
+- **`gLastScene`.** The fairy fountains are not keyed by that byte: their
+  holes are `DoorAna` like any other and the byte holds the hole's own params
+  (230 inside Zora River's fountain), not an instance id. `EnElf_Aliases`
+  (`En_Elf.c`) tells them apart by
+  `gLastScene`, a global of the payload that `Play_AfterInit` sets to the scene
+  loaded unless it is a grotto or a fountain: the place you came in from
+  (with entrance shuffle, `applyCustomEntrance` sets it to the vanilla place).
+  `Obj_Comb.c` uses it the same way for the scrub grottos and for MM's cow
+  grotto.
+
+Neither sits at a fixed address. `gLastScene` moves with every build, so
+`payload.py` finds it by what the code does: the one `sw` into a payload
+global whose value was loaded with `lhu 0xA4(play)`, the PlayState's
+`sceneId`. That took following branches, not a linear pass -- the compiler puts
+the `lui` in the delay slot of a `bnel` and the store sixty instructions
+further on, at the branch target, with calls on the path not taken. The grotto
+byte is the save offset that at least two readers `lbu` and then `andi 0x1f`.
+Against the linker's symbol table over the six versions built with forge, both
+games: **48 of 48**; one candidate on every one of the 42 ROMs of the corpus.
+
+The panel now names the place -- `Remaining in FAIRY_FOUNTAIN · Zora River
+Fairy Fountain`, eight fairies, `32 in other rooms` -- and when it cannot tell
+(a fountain entered from a scene the table does not know) it says so and lists
+them all. Outside a shared scene `gLastScene` has to equal the live scene; six
+polls of disagreement and the address is given up as another build's, quietly
+listing every instance rather than naming the wrong one.
+
 ### Rebasing: why `checks.json` carries an anchor
 
 `checks.json`'s addresses are absolute, and the bases **move** when crossing between OoT and MM: RAM is reorganised entirely, which is exactly why `locate_saves` exists. An overlay that runs for hours has to rebase, so each check also carries `anchor` + `off`:
