@@ -8,7 +8,7 @@ checks.
 **No spoiler log needed.** What item sits in each location is read from the
 seed ROM itself.
 
-> **0.1.6-beta.** Single player is tested and measured; multiworld has had a
+> **0.2.0-beta.** Single player is tested and measured; multiworld has had a
 > few sessions. Expect rough edges, and please report what you find.
 
 ## Install
@@ -80,6 +80,7 @@ anyway. `?spoiler=full` reveals what is in the checks you have not done.
 |---|---|
 | ✅ Single player, OoT and MM, including crossing between them | tested against live saves and four RAM dumps |
 | ✅ 6,043 of 6,043 checks | every location in the pool has an address (stray fairies and pond fish included) |
+| ✅ Which grotto or fairy fountain you are in | read from what the game itself records (the grotto byte and `gLastScene`), found in the ROM's code; "remaining here" lists that one and says so when it cannot tell |
 | ✅ Entrances gone through | read from the ROM, no spoiler; shown as you take them (`/p/entrances`), the whole list only with `?spoiler=full` |
 | ✅ Souls (soul shuffle) | every soul read from the ROM, grouped by kind; a compact per-kind summary by default, the full names on demand (`/p/souls`) |
 | ✅ Item placement and names read from the ROM | no spoiler log, on v32.0 and dev builds |
