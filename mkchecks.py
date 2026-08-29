@@ -4,6 +4,8 @@ mkchecks.py - build checks.json out of OoTMM's own data.
 
 Inputs (in data/, exactly as they come from the OoTMM/OoTMM repo):
   pool_oot.csv, pool_mm.csv   location, type, hint, scene, id, item
+    — or, after v32.3, checks/**/*.xml: same six fields in new clothes
+      (see load_checks_xml); whichever data/ carries is what is read
   scenes.yml                  SCENE_NAME: index
   gi.yml                      the GI table, for item names
 
@@ -467,10 +469,19 @@ class XflagTables:
 TYPE_FIELD = {"chest": "chest", "collectible": "collect"}
 
 
+def _data_file(name):
+    """data/<name>, tolerating the OoTMM repo's own layout (data/defs/,
+    data/pool/): a data/ copied verbatim from the repo works unchanged."""
+    for cand in (DATA / name, DATA / "defs" / name, DATA / "pool" / name):
+        if cand.exists():
+            return cand
+    return DATA / name
+
+
 def load_npcs():
     """npc.yml: NAME -> index, game-prefixed like scenes.yml."""
     out = {}
-    f = DATA / "npc.yml"
+    f = _data_file("npc.yml")
     if not f.exists():
         return out
     for line in f.read_text(encoding="utf-8").splitlines():
@@ -482,7 +493,7 @@ def load_npcs():
 
 def load_scenes():
     scenes = {}
-    for line in (DATA / "scenes.yml").read_text(encoding="utf-8").splitlines():
+    for line in _data_file("scenes.yml").read_text(encoding="utf-8").splitlines():
         m = re.match(r"^([A-Z0-9_]+):\s*(0x[0-9a-fA-F]+|\d+)\s*$", line.strip())
         if m:
             scenes[m.group(1)] = int(m.group(2), 0)
@@ -501,20 +512,117 @@ SCENE_FIXES = {
 }
 
 
+def _fix_scene(game, d):
+    # every reader of the pool goes through here —CSV and XML alike— so the
+    # fixes apply to the placement index, the scene recovery and the rows
+    fix = SCENE_FIXES.get((game, d.get("location")))
+    if fix:
+        d["scene"] = fix
+    return d
+
+
 def load_pool(path):
-    # every reader of the CSV goes through here, so the fixes apply to the
-    # placement index, the scene recovery and the rows alike
     game = "mm" if pathlib.Path(path).name.startswith("pool_mm") else "oot"
     with open(path, newline="", encoding="utf-8") as fh:
         r = csv.reader(fh)
         header = [h.strip() for h in next(r)]
         for row in r:
             if row and any(c.strip() for c in row):
-                d = dict(zip(header, [c.strip() for c in row]))
-                fix = SCENE_FIXES.get((game, d.get("location")))
-                if fix:
-                    d["scene"] = fix
-                yield d
+                yield _fix_scene(game, dict(zip(header, [c.strip() for c in row])))
+
+
+# After v32.3 the pool changed clothes: OoTMM's master dropped the two CSVs
+# ("Remove old pool data", 23 Aug 2026) for XML under data/checks/ — first one
+# file per game, later split into folders (overworld/, dungeons/, boss/...).
+# At the commit that removed the CSVs both formats carried the same 3,235
+# rows, so a row is the same six fields in a new shape and everything past
+# load_rows() stays as it was. Two things did move underneath, and they are
+# data, not format: Master Quest dungeons now have scenes of their own
+# (BOTTOM_OF_THE_WELL_MQ: 0x78 in defs/scenes.yml, where the v32.x twins
+# packed to the same key), and special.xml files its npc rows under the
+# scene NONE (the CSVs said GROTTOS; an npc key carries no scene either way).
+_MENDED = set()
+
+
+def load_checks_xml(game):
+    """data/checks/**/*.xml of one game, yielded as load_pool rows.
+
+    The walk mirrors the generator's own build/checks.ts: every .xml under
+    checks/ in path order, keeping those whose root says game="…" — the
+    monolithic and the split layouts both come out right that way. The row's
+    `id` is rebuilt to the CSV convention: the flag for the bitmap types,
+    the npc symbol for npc rows, and for an xflag the packed key (the exact
+    inverse of unpack_xflag_key). `type` is the element's tag, except an
+    xflag's, which carries the fine type as an attribute.
+    """
+    import xml.etree.ElementTree as ET
+
+    for path in sorted((DATA / "checks").rglob("*.xml")):
+        text = path.read_text(encoding="utf-8")
+        try:
+            root = ET.fromstring(text)
+        except ET.ParseError as ex:
+            # One known disease, mended out loud: lon_lon_ranch.xml closes
+            # with </check> where its root says <checks>. The generator's own
+            # parser is lenient and never noticed (still on master, 29 Aug
+            # 2026), so seeds are built from it and refusing the file would
+            # lose its rows. Only the final closing tag is touched; anything
+            # else still refuses, naming the file.
+            mended = re.sub(r"</\w+>(\s*)$", r"</checks>\1", text)
+            try:
+                root = ET.fromstring(mended)
+            except ET.ParseError:
+                raise SystemExit(f"checks xml: {path.name}: {ex}")
+            if path.name not in _MENDED:    # once, not once per pass over the pool
+                _MENDED.add(path.name)
+                print(f"checks xml: {path.name}: final closing tag mended ({ex})")
+        if root.tag != "checks" or root.get("game") != game:
+            continue
+        for scene_el in root:
+            if scene_el.tag != "scene":
+                continue
+            scene = scene_el.get("id", "NONE")
+            for el in scene_el:
+                try:
+                    if el.tag == "xflag":
+                        packed = ((int(el.get("slice"), 0) << 16)
+                                  | ((int(el.get("setup"), 0) & 3) << 14)
+                                  | (int(el.get("room"), 0) << 8)
+                                  | int(el.get("actor"), 0))
+                        tipo, ident = el.get("type", "xflag"), f"0x{packed:05x}"
+                    elif el.tag == "npc":
+                        tipo, ident = "npc", el.get("npc") or ""
+                    else:
+                        tipo, ident = el.tag, el.get("flag") or ""
+                except (TypeError, ValueError) as ex:
+                    # a refusal with a name beats a bare traceback in the
+                    # middle of an automatic regeneration
+                    raise SystemExit(
+                        f"checks xml: {path.name}: <{el.tag} "
+                        f"location={el.get('location')!r}>: bad attribute ({ex})")
+                yield _fix_scene(game, {
+                    "location": el.get("location") or "",
+                    "type": tipo,
+                    "hint": el.get("hint") or "NONE",
+                    "scene": scene,
+                    "id": ident,
+                    "item": el.get("item") or "",
+                })
+
+
+def load_rows(game):
+    """Every pool row of one game, whichever format data/ carries."""
+    if (DATA / "checks").is_dir():
+        yield from load_checks_xml(game)
+    else:
+        yield from load_pool(_data_file(f"pool_{game}.csv"))
+
+
+def pool_source(game):
+    """What load_rows(game) reads, for messages and checks.json's `source`."""
+    if (DATA / "checks").is_dir():
+        return f"checks/*.xml ({game})"
+    return _data_file(f"pool_{game}.csv").name
 
 
 def load_mq(spoiler):
@@ -569,7 +677,9 @@ def row_parts(game, row, scenes, npcs, unresolved=None):
     """(scene_id, csv_id, xflag) of a pool row: the numbers under its labels."""
     clave = f"{game.upper()}_{row['scene']}"
     scene_id = scenes.get(clave)
-    if scene_id is None and unresolved is not None:
+    # NONE is the pool's way of saying sceneless (checks/special.xml), not a
+    # scene the tables forgot: no warning for it.
+    if scene_id is None and unresolved is not None and row["scene"] != "NONE":
         unresolved.add(clave)
 
     try:
@@ -603,8 +713,8 @@ def name_index(scenes, npcs):
 
     index = {}
     saltadas = 0
-    for game, pool in (("oot", "pool_oot.csv"), ("mm", "pool_mm.csv")):
-        for row in load_pool(DATA / pool):
+    for game in ("oot", "mm"):
+        for row in load_rows(game):
             scene_id, csv_id, xflag = row_parts(game, row, scenes, npcs)
             key = placement.override_key(row["type"], scene_id, csv_id, xflag)
             if key is None:
@@ -784,8 +894,8 @@ def recover_scene_ids(claves_rom, scenes, npcs, verbose=True):
         por_escena.setdefault((game, (key >> 16) & 0xFF), set()).add(key & 0xFF00FFFF)
 
     faltan = {}
-    for game, pool in (("oot", "pool_oot.csv"), ("mm", "pool_mm.csv")):
-        for row in load_pool(DATA / pool):
+    for game in ("oot", "mm"):
+        for row in load_rows(game):
             nombre = f"{game.upper()}_{row['scene']}"
             if nombre in scenes:
                 continue
@@ -1191,9 +1301,9 @@ def main(argv=None):
     vistas = set()
     sin_clave = 0
 
-    for game, pool in (("oot", "pool_oot.csv"), ("mm", "pool_mm.csv")):
+    for game in ("oot", "mm"):
         n = 0
-        for row in load_pool(DATA / pool):
+        for row in load_rows(game):
             n += 1
             scene_id, csv_id, xflag = row_parts(game, row, scenes, npcs,
                                                 unresolved_scenes)
@@ -1220,7 +1330,7 @@ def main(argv=None):
             if claves_rom and (game, key) not in claves_rom:
                 solo_csv.add(id(entry))
             checks.append(entry)
-        print(f"{pool}: {n} locations")
+        print(f"{pool_source(game)}: {n} locations")
     if sin_clave:
         print(f"warning: {sin_clave} rows form no override key; they come out"
               " with no address (scenes.yml or npc.yml does not know them)")
@@ -1385,7 +1495,8 @@ def main(argv=None):
     bytarget = collections.Counter(c["target"] for c in checks)
     out = {
         "version": "v32.0",
-        "source": "OoTMM/OoTMM data/ (pool_*.csv, defs/scenes.yml, defs/gi.yml)",
+        "source": "OoTMM/OoTMM data/ (%s, defs/scenes.yml, defs/gi.yml)"
+                  % ("checks/*.xml" if (DATA / "checks").is_dir() else "pool_*.csv"),
         "rom": args.rom,
         # where each row's item came from; null when generated without a ROM
         "placement": colocacion,
