@@ -89,6 +89,19 @@ OV_XFLAG0 = 0x10
 # attempt in which npc, gs, cow, shop, scrub, sr and fish all failed at once.
 CON_ESCENA = {"chest", "collectible", "sf"}
 
+# The keys that can tell a dungeon's two layouts apart (master_quest_scenes):
+# the ones that carry the scene, any xflag (ov from OV_XFLAG0 up), and the gold
+# skulltulas, whose Master Quest twin has an id of its own since gen 943. A key
+# in a global id space -- an npc, a shop, a scrub -- is filed under the dungeon
+# but placed whichever layout the seed has (Ice Cavern's Sheik song: one row,
+# one key, always in the table), so it is evidence of nothing.
+_LAYOUT_OVS = {OV[t] for t in CON_ESCENA} | {OV["gs"]}
+
+
+def _layout_bound(key):
+    ov = key >> 24
+    return ov >= OV_XFLAG0 or ov in _LAYOUT_OVS
+
 # The override types as they appear in a key's top byte, for telling a
 # placement table from anything else in the extra DMA.
 _TIPOS_OV = set(OV.values())
@@ -528,8 +541,14 @@ def resolve(rom_bytes, checks, gi_path=None, verbose=True, spoiler_worlds=None):
     nombres, alineado = names_from_rom(rom_bytes, gi, verbose)
     resueltos = sin_clave = no_estan = 0
     for c in checks:
-        key = override_key(
-            c["type"], c.get("scene_id"), c.get("csv_id"), c.get("xflag"))
+        # The key mkchecks built the check from, when the check carries it.
+        # Forming it again from the labels would use the scene the row is
+        # filed under, and since gen 943 a Master Quest row is filed under
+        # its vanilla twin's scene while its key keeps the MQ one.
+        key = c.get("ovkey")
+        if key is None:
+            key = override_key(
+                c["type"], c.get("scene_id"), c.get("csv_id"), c.get("xflag"))
         if key is None:
             sin_clave += 1
             continue
@@ -694,12 +713,19 @@ def master_quest_scenes(rom_bytes, checks, verbose=False):
     a word. A scene with nothing shuffled in it has no exclusive keys either
     way and comes back as unknown; the caller keeps the vanilla row there,
     which is what the tracker did for every seed until now.
+
+    Since gen 943 the twins no longer share any key -- each MQ dungeon has a
+    scene of its own -- so every key is exclusive and the same test decides
+    outright. What it must NOT count is a key that carries no scene at all
+    (_layout_bound): Ice Cavern's Sheik song is one npc row, filed under the
+    vanilla file, placed whichever layout the seed has, and it read as "both
+    layouts at once" on a 943 MQ seed.
     """
     tabla = read_tables(rom_bytes)
     vanilla, mq = collections.defaultdict(set), collections.defaultdict(set)
     for c in checks:
         clave = c.get("ovkey")
-        if clave is None:
+        if clave is None or not _layout_bound(clave):
             continue
         (mq if c.get("mq") else vanilla)[(c["game"], c["scene"])].add(clave)
 

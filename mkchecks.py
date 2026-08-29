@@ -199,6 +199,16 @@ CUSTOM_OOT = {
 # eventsMisc = 0xEF8, which does have an ASSERT_OFFSET. No slack left.
 OOT_GS_OFF = 0xE9C
 
+# Gold skulltula ids, two conventions. v32.x numbers them from 8 (bitmap block
+# 0 reserved) and mark.c does BITMAP32_SET(gsFlags, id - 8). Gen 943 numbers
+# them from 0, uses the id as the bit, and files each Master Quest twin at its
+# vanilla id + 0xb0, folded back on the way in: `if (id > 0xb0) id -= 0xb0`
+# -- strictly greater, so the one twin at exactly 0xb0 keeps a bit 0xb0 of its
+# own. Mirrored as written, not as meant. Which convention a seed follows is
+# read off the ROM's own gs keys (gs_id_base): only gen 943 places an id
+# below 8.
+GS_ID_BASE = 8   # v32.x; 0 from gen 943
+
 # OoTMM's "extra records": twenty-odd u32 of its own, tucked INSIDE OoT's
 # per-scene flag table (combo/save.h):
 #
@@ -772,6 +782,52 @@ def index_coverage(rom_bytes, index):
 # id), so for them the scene stays a label too, out of scenes.yml.
 
 
+# Master Quest twins after gen 943. The pool gives each MQ dungeon a scene of
+# its own (DEKU_TREE_MQ: 0x78, ...) so its keys stop colliding with the vanilla
+# twin's, but the game keeps ONE row of flags per dungeon: Mark_SetOot passes
+# the key's scene through Play_MergeMQ (play.c, a twelve-case switch back to
+# the vanilla scene) before touching perm[scene], and Play_ExpandMQ does the
+# reverse when a key is formed. So the xflag tables are indexed by the MQ
+# scene while chest and collectible flags sit under the vanilla one, and the
+# panels file the twin where the player actually stands.
+# {(game, mq scene id): vanilla scene id}, read off the names in scenes.yml
+# (X_MQ -> X); empty on v32.x data, where the twins already share the id.
+MQ_MERGE = {}
+
+
+def mq_merge_map(scenes):
+    out = {}
+    for name, sid in scenes.items():
+        base = name[:-3] if name.endswith("_MQ") else None
+        if base in scenes:
+            out[(name.partition("_")[0].lower(), sid)] = scenes[base]
+    return out
+
+
+def gs_id_base(claves_rom, data_ids):
+    """8 or 0: how this seed numbers its gold skulltulas (see GS_ID_BASE).
+
+    The data's generation says: only gen 943 numbers a gs from 0. The ROM
+    cannot say it alone -- a seed whose low-numbered dungeons are all Master
+    Quest places none of the low ids -- but it can be checked the one way a
+    table can: every gs id it places must be one the pool knows. A stranger
+    means a data/ of another generation, said here and by
+    same_version_as_data.
+    """
+    import placement
+
+    base = 0 if data_ids and min(data_ids) < 8 else 8
+    rom_ids = {k & 0xFF for g, k in claves_rom
+               if g == "oot" and k >> 24 == placement.OV["gs"]}
+    strangers = sorted(rom_ids - set(data_ids))
+    if strangers:
+        print(f"gs ids: the ROM places {len(strangers)} gs ids the pool does not know"
+              f" ({', '.join(hex(s) for s in strangers[:6])}...): data/ is of another generation")
+    if base == 0:
+        print("gs ids: numbered from 0, MQ twins at +0xb0 (gen 943)")
+    return base
+
+
 def scene_names(scenes):
     """{(game, scene id): SCENE_NAME} out of scenes.yml, prefix stripped.
 
@@ -1006,6 +1062,13 @@ def check_from_key(game, key, etiquetas=None, tables=None, xflag_errors=None,
         target, sub = TYPE_TARGET.get(tipo_ov, ("xflags", None))
         field = TYPE_FIELD.get(tipo_ov)
 
+    # An MQ key keeps its own scene -- the xflag tables are indexed by it --
+    # but its flags live in the vanilla twin's row of perm[], and that is
+    # also the scene the player is in. See MQ_MERGE.
+    key_scene = scene_id
+    if scene_id is not None:
+        scene_id = MQ_MERGE.get((game, scene_id), scene_id)
+
     bit = csv_id
     addr = None
     # MM stray fairies live in the scene's own flag table, split by id the way
@@ -1032,11 +1095,17 @@ def check_from_key(game, key, etiquetas=None, tables=None, xflag_errors=None,
         addr = CUSTOM_BASE + custom[sub] + bit // 8
         kind = "u8"
         bit = bit % 8
-    elif target == "gs_flags" and game == "oot" and bit is not None and bit >= 8:
-        i = bit - 8
-        addr = LAYOUT["oot"]["base"] + OOT_GS_OFF + (i >> 5) * 4
-        kind = "u32be"
-        bit = i & 0x1F
+    elif target == "gs_flags" and game == "oot" and bit is not None:
+        # see GS_ID_BASE: v32.x takes 8 off, gen 943 uses the id as the bit
+        # and folds the MQ twins back from +0xb0
+        if GS_ID_BASE == 8:
+            i = bit - 8 if bit >= 8 else None
+        else:
+            i = bit - 0xB0 if bit > 0xB0 else bit
+        if i is not None and 0 <= i < 32 * 6:
+            addr = LAYOUT["oot"]["base"] + OOT_GS_OFF + (i >> 5) * 4
+            kind = "u32be"
+            bit = i & 0x1F
     elif target == "cow_flags" and bit is not None and bit < 32:
         # Both games' cows share gCowFlags, and it lives in OoT's save
         # whichever one is running -- see SAVE_EXTRA_RECORD above.
@@ -1048,6 +1117,9 @@ def check_from_key(game, key, etiquetas=None, tables=None, xflag_errors=None,
     # here, and only ever for a key the CSVs do not have — nought on every
     # seed measured.
     nombre_escena = et.get("scene")
+    if key_scene != scene_id and escenas is not None:
+        # a Master Quest twin is filed under the vanilla scene, as v32.x did
+        nombre_escena = escenas.get((game, scene_id), nombre_escena)
     if nombre_escena is None and escenas is not None and scene_id is not None:
         nombre_escena = escenas.get((game, scene_id))
     if nombre_escena is None and not et:
@@ -1086,7 +1158,7 @@ def check_from_key(game, key, etiquetas=None, tables=None, xflag_errors=None,
         entry["xflag"] = xflag
         if tables and game in tables:
             try:
-                bitpos = tables[game].bitpos(scene_id, csv_id)
+                bitpos = tables[game].bitpos(key_scene, csv_id)
             except (ValueError, IndexError, struct.error) as ex:
                 if xflag_errors is not None:
                     xflag_errors.append((entry["name"], str(ex)))
@@ -1113,6 +1185,11 @@ def check_from_key(game, key, etiquetas=None, tables=None, xflag_errors=None,
         if anchor:
             entry["anchor"] = anchor
             entry["off"] = entry["addr"] - ANCHOR_BASE[anchor]
+    # The key is the identity, and it travels with the check: forming it
+    # again from the labels would use the scene the row is FILED under, and
+    # a Master Quest row is filed under its vanilla twin's (MQ_MERGE) while
+    # its key keeps the MQ scene.
+    entry["ovkey"] = key
     return entry
 
 
@@ -1250,6 +1327,7 @@ def main(argv=None):
     ap.add_argument("--rom", help="the seed's .z64 ROM; without it the xflags stay unresolved")
     ap.add_argument("--spoiler", help="spoiler log, to know which dungeons are Master Quest")
     args = ap.parse_args(argv)
+    global MQ_MERGE, GS_ID_BASE
 
     scenes = load_scenes()
     npcs = load_npcs()
@@ -1297,6 +1375,12 @@ def main(argv=None):
     # a scene scenes.yml does not know can still be pinned down by the ROM
     scenes.update(recover_scene_ids(claves_rom, scenes, npcs))
     escenas = scene_names(scenes)
+    MQ_MERGE = mq_merge_map(scenes)
+    if MQ_MERGE:
+        print(f"master quest: {len(MQ_MERGE)} twin scenes of their own in scenes.yml,"
+              " folded onto the vanilla rows of the save (Play_MergeMQ)")
+    GS_ID_BASE = gs_id_base(claves_rom, [int(r["id"], 0) for r in load_rows("oot")
+                                         if r["type"] == "gs"])
     solo_csv = set()
     vistas = set()
     sin_clave = 0
@@ -1512,6 +1596,11 @@ def main(argv=None):
         # 1 on any single-player seed; null when nothing could say, and then
         # the first world is assumed, as it always was.
         "world": mundo,
+        # How the gold skulltula ids map to bits, and how many Master Quest
+        # scenes were folded onto their vanilla twin: both gen-943 matters,
+        # 8 and 0 on every seed before it.
+        "gs_id_base": GS_ID_BASE,
+        "mq_merged_scenes": len(MQ_MERGE),
         "layout": LAYOUT,
         "custom_save": {
             # gSharedCustomSave with the game running OoT. It is one single
