@@ -1849,6 +1849,11 @@ function render(s) {
     setHTML('alert', `<div class="warn"><b>No connection to the game.</b> ${esc(s.error)}
       <br>If the emulator stopped the script —loading another ROM does that— run
       <b>tracker.lua</b> again: this reconnects on its own, no need to close the tracker.</div>`);
+  } else if (s.game_mode_guard === 'unavailable') {
+    setHTML('alert', `<div class="warn"><b>Title-screen guard unavailable.</b>
+      <code>gameMode</code> could not be read this poll, so the tracker cannot tell
+      the title screen or the file select from play right now; the save base and
+      the block's own bits still gate what counts.</div>`);
   } else if (s.game_mode_guard === 'off') {
     /* The title-screen guard reads gameMode at an offset that is not located
        from the ROM's code; on a build that moved it the value fits no mode for

@@ -767,6 +767,7 @@ class Tracker:
         self._entrance_pending = {}  # game -> (value seen once, scene before it)
         self._game_mode = None       # gSaveContext.gameMode last read (GAME_MODE_OFF)
         self._game_mode_odd = 0       # consecutive polls with an unrecognised gameMode
+        self._game_mode_unread = False  # the field could not be read this poll, bases and all
         # Entrances the run has been seen to go through, and where they persist.
         # This lives only in RAM otherwise, so restarting the tracker mid-run
         # forgets every door already taken -- which is exactly what happened
@@ -1877,6 +1878,10 @@ class Tracker:
         # below. Only when it PERSISTS is the offset actually wrong for this
         # build, and then it is said once.
         self._game_mode = self.game_mode(active, bases)
+        # None with the bases in hand is a read that failed, not a mode: the
+        # guard is not on this poll and the state has to say so (round 2 of
+        # the 29 Aug 2026 review), even though reading goes on as before
+        self._game_mode_unread = self._game_mode is None and active in bases
         if self._game_mode in GAME_MODE_NOT_PLAYING:
             self._game_mode_odd = 0
             return None
@@ -2270,10 +2275,13 @@ class Tracker:
             s["layout_from_rom"] = self.table.get("layout_from_rom")
             # which signal settled the world (config / spoiler / a guess)
             s["world_by"] = self.table.get("world_by")
-            # the title-screen guard is off once gameMode has read values that
-            # fit no mode for GAME_MODE_ODD_PERSIST polls: the offset is not
-            # this build's, and progress reads on regardless (see poll_once)
-            s["game_mode_guard"] = "off" if self._game_mode_odd >= GAME_MODE_ODD_PERSIST else "on"
+            # the title-screen guard: "off" once gameMode has read values that
+            # fit no mode for GAME_MODE_ODD_PERSIST polls (the offset is not
+            # this build's), "unavailable" when the field could not be read at
+            # all this poll; progress reads on regardless (see poll_once)
+            s["game_mode_guard"] = ("unavailable" if self._game_mode_unread
+                                    else "off" if self._game_mode_odd >= GAME_MODE_ODD_PERSIST
+                                    else "on")
             s["custom_base"] = (
                 f"0x{self._custom_addr:08X}" if self._custom_addr else None)
             s["custom_bits"] = self._custom_bits
