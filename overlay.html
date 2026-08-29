@@ -1801,6 +1801,18 @@ function render(s) {
       unaffected.${otra}
       <br>gSharedCustomSave ${esc(s.custom_base || '—')} · ${
         Object.entries(s.bases || {}).map(([g, b]) => `${g} ${b}`).join(' · ') || '—'}</div>`);
+  } else if (s.layout_from_rom === false) {
+    /* mkchecks could not read the custom-save layout out of this ROM's code
+       and refused to assume v32's: the rows that hang off it were built with
+       no address. Saying which ones beats a panel that silently never marks
+       a shop or a scrub. */
+    setHTML('alert', `<div class="warn"><b>Part of this seed cannot be tracked.</b>
+      This ROM's code did not give away the layout of its shared save block, so
+      the checks that live in it — NPCs, shops, scrubs, silver rupees, pond fish,
+      and every Majora's Mask pot, grass and rock — were built <b>without an
+      address</b> and stay pending. Chests, collectibles, skulltulas, cows and
+      Ocarina's pots, grass and rocks still track. This is a build the tracker
+      has not seen; please report it.</div>`);
   } else if (s.same_version_as_data === false) {
     setHTML('alert', `<div class="warn"><b>This seed is from a different OoTMM version.</b>
       The addresses come from the ROM and hold, but every check <i>name</i> comes from
@@ -1837,6 +1849,17 @@ function render(s) {
     setHTML('alert', `<div class="warn"><b>No connection to the game.</b> ${esc(s.error)}
       <br>If the emulator stopped the script —loading another ROM does that— run
       <b>tracker.lua</b> again: this reconnects on its own, no need to close the tracker.</div>`);
+  } else if (s.game_mode_guard === 'off') {
+    /* The title-screen guard reads gameMode at an offset that is not located
+       from the ROM's code; on a build that moved it the value fits no mode for
+       long enough that the guard gives up and reading goes on. Progress is
+       still gated by the save base and the block's own bits, so this is a
+       note, not an alarm — but the console should not be the only place. */
+    setHTML('alert', `<div class="warn"><b>Title-screen guard off.</b>
+      This build keeps <code>gameMode</code> somewhere the tracker does not know,
+      so it cannot tell the title screen or the file select from play and keeps
+      reading; the save base and the block's own bits still gate what counts.
+      Please report the OoTMM version you are on.</div>`);
   } else if (s.spoiler_rejected) {
     /* A spoiler was loaded that is not this seed's — it disagreed with the
        ROM on all but a handful of spots. Harmless (items come from the ROM),

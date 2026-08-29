@@ -817,16 +817,20 @@ def locate_saves(link, verbose=True, hints=()):
                 print(f"[items] {game}: {len(hits)} signatures, {len(buenos)} with plausible contents")
             # Prefer one that pairs up with what we already have: a stale buffer
             # on the wrong side of RDRAM passes every content check there is.
+            # And a signature whose contents fail the checks is not a save: it
+            # is left out, and the caller keeps looking. Handing it over
+            # "in case" would be the one address the tracker knows is wrong.
             otro = {g: b for g, b in out.items() if g != game}
             coherentes = [b for b in buenos if bases_coherentes({**otro, game: b})]
-            elegidos = coherentes or buenos or hits
+            elegidos = coherentes or buenos
             if elegidos:
                 out[game] = elegidos[0]
                 if verbose and len(elegidos) > 1:
                     otras = ", ".join(f"0x{c:08X}" for c in elegidos[1:])
                     print(f"[items] {game}: picking 0x{elegidos[0]:08X}; there are more ({otras})")
-                if verbose and not buenos:
-                    print(f"[items] {game}: none pass the checks; whatever comes out may be garbage")
+            elif verbose and hits:
+                print(f"[items] {game}: none of the {len(hits)} signatures pass the checks;"
+                      " no base for it yet")
     return out
 
 

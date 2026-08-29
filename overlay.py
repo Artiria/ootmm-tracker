@@ -2264,6 +2264,16 @@ class Tracker:
             # whether the running game's save is read where this ROM's code
             # keeps it (None: the payload named no own base, nothing gated)
             s["bases_from_rom"] = self._bases_from_rom
+            # whether this ROM's code proved the custom-save layout the
+            # tables were built with; False means the rows that hang off it
+            # were left without an address (mkchecks.LAYOUT_FROM_ROM)
+            s["layout_from_rom"] = self.table.get("layout_from_rom")
+            # which signal settled the world (config / spoiler / a guess)
+            s["world_by"] = self.table.get("world_by")
+            # the title-screen guard is off once gameMode has read values that
+            # fit no mode for GAME_MODE_ODD_PERSIST polls: the offset is not
+            # this build's, and progress reads on regardless (see poll_once)
+            s["game_mode_guard"] = "off" if self._game_mode_odd >= GAME_MODE_ODD_PERSIST else "on"
             s["custom_base"] = (
                 f"0x{self._custom_addr:08X}" if self._custom_addr else None)
             s["custom_bits"] = self._custom_bits
@@ -3497,6 +3507,13 @@ def serve(tracker, host, port, open_window=True):
     from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
     page = paths.res("overlay.html")
+    if host not in ("127.0.0.1", "localhost", "::1"):
+        # The POST guard in do_POST tells other WEBSITES apart from this
+        # page; it cannot tell other MACHINES apart from this one. Off the
+        # loopback, anyone on that network can load a spoiler, reveal a
+        # check, take a hint or write a note on this tracker.
+        print(f"[overlay] listening on {host}: every machine on that network can drive"
+              " this tracker's page actions (spoiler, hints, notes) -- there is no login.")
 
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, *a):
@@ -3522,12 +3539,15 @@ def serve(tracker, host, port, open_window=True):
             if route not in ("/spoiler", "/hint", "/reveal", "/junk", "/note"):
                 self.send_error(404)
                 return
-            # Only from our own page. Any website you happen to have open can
-            # POST to 127.0.0.1 —nothing stops it— and loading a spoiler turns
-            # `spoiler=full` on, so a stranger's page could reveal what is left
-            # on your stream. Browsers label their own requests and cannot be
-            # made to lie about these two headers; curl and scripts send
-            # neither, so driving it by hand still works.
+            # A guard against OTHER WEBSITES, and only that. Any website you
+            # happen to have open can POST to 127.0.0.1 —nothing stops it— and
+            # loading a spoiler turns `spoiler=full` on, so a stranger's page
+            # could reveal what is left on your stream. Browsers label their
+            # own requests and cannot be made to lie about these two headers.
+            # A program on this machine (curl, a script) sends neither and is
+            # let through: it is yours, and driving the tracker by hand is a
+            # feature. What this does NOT guard is another machine, which is
+            # why serve() says so when --http-host leaves the loopback.
             site = self.headers.get("Sec-Fetch-Site")
             origin = self.headers.get("Origin")
             mine = f"http://{self.headers.get('Host', '')}"

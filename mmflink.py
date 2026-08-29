@@ -100,6 +100,10 @@ class MmfLink:
         n = struct.unpack_from("<I", self.resp, 0)[0]
         if n > RESP_CAP - 4:
             raise MmfDown(f"answer claims {n} bytes, mapping holds {RESP_CAP - 4}")
+        # A block answer has to be the size that was asked: a short one would
+        # read as a number made of fewer bytes, with nothing to show for it.
+        if op == OP_BLOCK and n != length:
+            raise MmfDown(f"asked {length} bytes at 0x{addr:08X}, the answer holds {n}")
         return self.resp[4:4 + n]
 
     def ping(self, timeout=None):

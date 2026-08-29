@@ -376,6 +376,17 @@ def locate_xflag_tables(rom_bytes, scenes, verbose=True):
 # the cross-check and get printed when they disagree, the way
 # locate_xflag_tables() treats custom.h's VROMs.
 
+# Whether the custom-save layout above was proved by this ROM's code. When
+# apply_payload_layout() comes back empty the constants stay v32.0's, and on a
+# build that moved the struct they would put every npc, shop, scrub, silver
+# rupee and fish check -- and every MM xflag, whose half of the block sits
+# behind an offset -- on the wrong byte with nothing to show for it: the
+# runtime confidence only watches the OoT xflags, which start at 0 in every
+# layout. So those rows come out with no address instead (pending, said out
+# loud), and the flag travels in checks.json for the page to say it too.
+LAYOUT_FROM_ROM = True
+
+
 def apply_payload_layout(rom_bytes, verbose=True):
     """Override the custom-save constants with what the ROM's code says.
 
@@ -1090,7 +1101,7 @@ def check_from_key(game, key, etiquetas=None, tables=None, xflag_errors=None,
 
     kind = "u32be" if addr is not None else None
     custom = CUSTOM_OOT if game == "oot" else CUSTOM_MM
-    if target == "custom" and sub in custom and bit is not None:
+    if target == "custom" and sub in custom and bit is not None and LAYOUT_FROM_ROM:
         # BITMAP8_SET: bit i lives in byte i/8, at position i%8
         addr = CUSTOM_BASE + custom[sub] + bit // 8
         kind = "u8"
@@ -1156,7 +1167,10 @@ def check_from_key(game, key, etiquetas=None, tables=None, xflag_errors=None,
 
     if xflag is not None:
         entry["xflag"] = xflag
-        if tables and game in tables:
+        # OoT's xflags start the block, so their anchor is the block itself
+        # and the runtime relocates it; MM's sit behind CUSTOM_MM_OFF, which
+        # only the payload can vouch for (LAYOUT_FROM_ROM)
+        if tables and game in tables and (LAYOUT_FROM_ROM or game == "oot"):
             try:
                 bitpos = tables[game].bitpos(key_scene, csv_id)
             except (ValueError, IndexError, struct.error) as ex:
@@ -1327,7 +1341,8 @@ def main(argv=None):
     ap.add_argument("--rom", help="the seed's .z64 ROM; without it the xflags stay unresolved")
     ap.add_argument("--spoiler", help="spoiler log, to know which dungeons are Master Quest")
     args = ap.parse_args(argv)
-    global MQ_MERGE, GS_ID_BASE
+    global MQ_MERGE, GS_ID_BASE, LAYOUT_FROM_ROM
+    LAYOUT_FROM_ROM = True
 
     scenes = load_scenes()
     npcs = load_npcs()
@@ -1346,6 +1361,12 @@ def main(argv=None):
         # before anything reads XFLAGS_COUNT / CUSTOM_*: XflagTables takes its
         # bit limit from it at construction
         located = apply_payload_layout(rom_bytes)
+        LAYOUT_FROM_ROM = located is not None
+        if not LAYOUT_FROM_ROM:
+            print("payload: the custom-save layout is not proved for this build."
+                  " Its checks -- npc, shops, scrubs, silver rupees, fish, and MM's"
+                  " xflags -- come out with NO address rather than v32.0's;"
+                  " chests, collectibles, skulltulas and cows still resolve.")
         vroms = locate_xflag_tables(rom_bytes, scenes) or {}
         for g in XFLAG_TABLES:
             tables[g] = XflagTables(rom_bytes, g, vroms.get(g))
@@ -1596,6 +1617,14 @@ def main(argv=None):
         # 1 on any single-player seed; null when nothing could say, and then
         # the first world is assumed, as it always was.
         "world": mundo,
+        # which signal settled the world (placement.world_of_rom): the ROM's
+        # config, the spoiler's world sections, or a guess from ownership --
+        # so the page can say so instead of the console
+        "world_by": placement.WORLD_BY if rom_bytes is not None else None,
+        # False when this ROM's code did not prove the custom-save layout and
+        # the rows that hang off it were left without an address (see
+        # LAYOUT_FROM_ROM); null when built without a ROM
+        "layout_from_rom": LAYOUT_FROM_ROM if rom_bytes is not None else None,
         # How the gold skulltula ids map to bits, and how many Master Quest
         # scenes were folded onto their vanilla twin: both gen-943 matters,
         # 8 and 0 on every seed before it.

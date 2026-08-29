@@ -70,6 +70,12 @@ Add `?chroma=none` for a transparent background. The main page has a menu that
 builds these URLs for you with your options already in them, and a **Hide
 spoilers** switch that is always within reach.
 
+The tracker listens on your own machine only (`127.0.0.1`). The page's actions
+—loading a spoiler, revealing a check, taking a hint, writing a note— are
+guarded against *other websites* you may have open, not against other
+machines: if you start it with `--http-host` on a network address so OBS on
+another PC can reach it, anyone on that network can do those things too.
+
 By default the overlay shows what you have already picked up and stays quiet
 about what is still out there — someone watching saw you pick the first up
 anyway. `?spoiler=full` reveals what is in the checks you have not done.

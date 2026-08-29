@@ -561,9 +561,13 @@ def load_cache():
 
 
 def save_cache(cache):
+    # written beside and swapped in, so a crash or a second tracker writing at
+    # the same moment leaves the old cache rather than half a file
     try:
-        with open(CACHE, "w", encoding="utf-8") as fh:
+        tmp = CACHE + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as fh:
             json.dump(cache, fh, indent=1)
+        os.replace(tmp, CACHE)
     except OSError:
         pass
 

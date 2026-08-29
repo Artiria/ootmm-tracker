@@ -183,7 +183,9 @@ def locate_tables(rom_bytes, verbose=False):
     for vs, _ve, blob in rom.extra_entries(rom_bytes):
         forma = _shape(blob)
         if forma:
-            hallados.append((vs, blob, forma))
+            # the table ends at KEY_END; whatever the file carries after it
+            # (padding, or another object a build packed behind) is not a row
+            hallados.append((vs, blob[:(forma[0] + 1) * 16], forma))
     hallados.sort(key=lambda h: h[0])
 
     tablas = []
@@ -281,7 +283,7 @@ def read_tables(rom_bytes, verbose=False):
         for i in range(len(blob) // 16):
             key, player, value, _cloak = struct.unpack_from(">IhHh", blob, i * 16)
             if key >> 24 == 0xFF:
-                continue          # end-of-table sentinel
+                break             # end-of-table sentinel: nothing past it is a row
             g = juego or ("mm" if key & KEY_MM else "oot")
             out[(g, key & ~KEY_MM)] = (value, player)
     return out
@@ -524,6 +526,12 @@ def world_of_rom(rom_bytes, tabla=None, por_mundo=None, verbose=False):
     return elegido, como
 
 
+# Which signal settled the world the last time resolve() ran (the `how` of
+# world_of_rom), for checks.json to carry: a decision the ROM could not make
+# alone must say so where the page can see it, not only on the console.
+WORLD_BY = None
+
+
 def resolve(rom_bytes, checks, gi_path=None, verbose=True, spoiler_worlds=None):
     """Fill in `item` and `item_id` on every check that shows up in the table.
 
@@ -571,7 +579,8 @@ def resolve(rom_bytes, checks, gi_path=None, verbose=True, spoiler_worlds=None):
     # somebody else's, so the labels go on in a second pass. The spoiler's
     # worlds are scored here because this is where a location name and an
     # override key are both in hand.
-    mundo, _como = world_of_rom(
+    global WORLD_BY
+    mundo, WORLD_BY = world_of_rom(
         rom_bytes, tabla, _score_worlds(checks, spoiler_worlds), verbose)
     for c in checks:
         hit = tabla.get((c["game"], c["ovkey"])) if "ovkey" in c else None
