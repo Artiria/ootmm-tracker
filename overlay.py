@@ -2218,8 +2218,26 @@ class Tracker:
                     "junk": self.junk.get((c["game"], c["name"]), False),
                     "room": croom,
                     "here": croom is not None and croom == cmp_room,
-                    # in a shared scene a room is a place with a name
-                    "place": self.instance_labels.get((active, scene, croom)) if shared and croom is not None else None,
+                    # In a shared scene a room is a place with a name -- and a
+                    # row with NO room is not in the one you are standing in,
+                    # it is in a grotto nothing in its data names. Under a
+                    # heading that names your grotto it read as belonging
+                    # there: his report, 30 Aug 2026, "Deku Theater Nuts
+                    # Upgrade" listed under "Remaining in Lake Hylia Grotto",
+                    # and again from a second grotto -- "es fallo general de
+                    # todos los agujeros", which it was. So it is tagged AND
+                    # taken out of the default list (`unplaced`, below): the
+                    # panel answers "what is left HERE", and "it could be any
+                    # of them" is not an answer to that. Only once the
+                    # instance is known -- when it is not, the title already
+                    # says everything is listed.
+                    "place": (self.instance_labels.get((active, scene, croom))
+                              if shared and croom is not None
+                              else UNPLACED_IN_SHARED if sitio_sabido
+                              else None),
+                    # Carried, counted and said out loud, never dropped: they
+                    # are real checks with real items, just not here.
+                    "unplaced": sitio_sabido and croom is None,
                     # the item shows regardless of the spoiler level once the
                     # streamer asked for it, or a level-3 hint named this check
                     "revealed": (f"{c['game']}:{c['name']}" in self.revealed
@@ -2229,7 +2247,8 @@ class Tracker:
                 # The room FILTERS the default panel: GROTTOS is one scene with
                 # every grotto in it, so standing in one you would get 440
                 # pending from all of them. Checks with no room of their own
-                # --chests, NPCs, shops-- are never filtered. But the ones that
+                # are never filtered -- a shop's, and the grotto rows no name
+                # placed. But the ones that
                 # belong to another room are now carried in `otras` too, so the
                 # "whole scene" toggle shows them with no second request -- and a
                 # room whose number does not line up with where you stand
@@ -2251,6 +2270,9 @@ class Tracker:
             # How many of the other-room checks actually travelled (the rest are
             # over the cap): the page needs it to say what it is still hiding.
             here["other_room_listed"] = len(otras)
+            # ...and how many are in a grotto nothing names, so the page can
+            # say that too instead of listing them as if they were here.
+            here["unplaced"] = sum(1 for e in lista if e.get("unplaced"))
             here["whole"] = whole
             if shared and how is not None:
                 # standing where the instances are told apart: what the page

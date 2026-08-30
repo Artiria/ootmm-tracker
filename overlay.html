@@ -1632,9 +1632,14 @@ function renderHints(h) {
 function pendVisible(here) {
   let list = (here.list || []).filter(p => !(SOLO_CLAVE && p.junk));
   /* Default: only what is in this room, plus the checks that belong to no room
-     of their own (chests, NPCs, shops). "whole scene" keeps the other rooms
-     too -- the server sends them either way, so this is a pure view switch. */
-  if (!ROOMS_ALL && !here.whole) list = list.filter(p => p.here || p.room == null);
+     of their own -- a shop's, say. NOT the rows of a shared scene that nothing
+     could place (`unplaced`): in a grotto the panel names, "it could be any of
+     the grottos" is not what is left HERE, and listing it under the name of
+     the one you are in reads as a claim. They are still sent, still one click
+     away with "whole scene", and counted in the line below. "whole scene"
+     keeps the other rooms too -- the server sends them either way, so this is
+     a pure view switch. */
+  if (!ROOMS_ALL && !here.whole) list = list.filter(p => p.here || (p.room == null && !p.unplaced));
   return list;
 }
 
