@@ -1664,6 +1664,10 @@ function renderPend(here) {
     const left = here.other_room - (here.other_room_listed || 0);
     if (left > 0) notes.push(`${left} more in other rooms`);
   }
+  /* The ones no xflag and no name could put in a grotto. Hidden by default,
+     never dropped: say how many, and that nothing knows where they are. */
+  if (here.unplaced && !ROOMS_ALL && !here.whole)
+    notes.push(`${here.unplaced} in a grotto nothing names`);
   if (here.other_setup) notes.push(`${here.other_setup} in another setup of this scene`);
   if (notes.length) html += `<div class="more">and ${notes.join(' · ')}</div>`;
   return html;

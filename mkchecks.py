@@ -1336,12 +1336,113 @@ def _payload_json(pl):
     return out or None
 
 
+# The scenes that are many places at once. Their instances have no existence of
+# their own in the save: GROTTOS holds every grotto of its game and
+# FAIRY_FOUNTAIN the five fountains, and what separates them is the room the
+# xflag rows are filed under (`comboXflagInit` renumbers the generic grottos to
+# `0x20 | grottoData`). A row without an xflag -- a chest, a scrub, an npc, a
+# cow, a skulltula -- carries no room at all, so standing in one grotto the
+# panel had to list every grotto's chests and could mark none of them as being
+# here. See assign_virtual_rooms.
+SHARED_SCENE_NAMES = {("oot", "GROTTOS"), ("oot", "FAIRY_FOUNTAIN"),
+                      ("mm", "GROTTOS"), ("mm", "FAIRY_FOUNTAIN")}
+
+
+def place_of(name, tipo):
+    """The place a row's name says it is in, without the thing it names.
+
+    "Hyrule Field Grotto Near Gerudo Grass 1" -> "Hyrule Field Grotto Near
+    Gerudo".  Only the trailing number and the type word it belongs to come
+    off: whatever is left is what the pool calls the place, whether or not it
+    is the whole of its name.
+    """
+    words = name.split()
+    t = (tipo or "").lower()
+    while words and words[-1].isdigit():
+        words.pop()
+    while words and words[-1].lower().rstrip("s") == t.rstrip("s") and t:
+        words.pop()
+    return " ".join(words)
+
+
+def assign_virtual_rooms(checks):
+    """Give the roomless rows of a shared scene the room their name names.
+
+    The places of GROTTOS / FAIRY_FOUNTAIN exist only as rows, so the only
+    thing that can say which grotto a chest is in is what its own name says --
+    and OoTMM's pool names an actor after its grotto ("Road to Southern Swamp
+    Grotto Chest" beside "Road to Southern Swamp Grotto Grass 3").  So each
+    room is asked for the names it answers to: the place each of its xflag
+    rows names, plus the words all of them share, which is what the panel
+    already shows as the title.
+
+    Two guards keep this from inventing a room, because a wrong "you are
+    standing on it" is worse than the honest list of candidates it replaces:
+
+    * a name that is a prefix of another room's name is dropped -- it cannot
+      tell the two apart.  OoT's room 4 is the case that demands it: it holds
+      "Hyrule Field Grotto Near Gerudo Grass 1" and "Hyrule Field Cow Grotto
+      Pot 1", which are one grotto under two spellings (entrances.yml:
+      OOT_GROTTO_FIELD_COW is the area "OOT Hyrule Field Grotto Near GV"), so
+      the words they share collapse to "Hyrule Field" -- which also starts
+      four other grottos' names, "Near Kakariko" and "Tektite" among them.
+    * a row two rooms claim is left alone.
+
+    What no name places keeps behaving exactly as before: no room, never
+    filtered, listed as a candidate everywhere. Sets `vroom` on the rest.
+    """
+    import collections
+
+    # (game, scene) -> name -> {room}
+    llamadas = collections.defaultdict(lambda: collections.defaultdict(set))
+    por_sala = collections.defaultdict(list)
+    for c in checks:
+        clave = (c["game"], c["scene"])
+        if clave not in SHARED_SCENE_NAMES:
+            continue
+        xf = c.get("xflag") or {}
+        if xf.get("room") is None:
+            continue
+        sitio = place_of(c["name"], c.get("type"))
+        if sitio:
+            llamadas[clave][sitio].add(xf["room"])
+        por_sala[clave, xf["room"]].append(c["name"])
+    # the words every row of a room shares name it too ("Lone Peak Shrine",
+    # whose rows are Grass Pack 1..2 and Large Boulder 1..3)
+    for (clave, sala), nombres in por_sala.items():
+        comun = nombres[0].split()
+        for n in nombres[1:]:
+            palabras = n.split()
+            k = 0
+            while k < len(comun) and k < len(palabras) and comun[k] == palabras[k]:
+                k += 1
+            comun = comun[:k]
+        if comun:
+            llamadas[clave][" ".join(comun)].add(sala)
+
+    n = 0
+    for clave, sitios in llamadas.items():
+        # a name that starts another room's name cannot separate the two
+        ambiguos = {a for a in sitios for b in sitios
+                    if a != b and b.startswith(a + " ") and sitios[a] != sitios[b]}
+        utiles = {a: r for a, r in sitios.items() if a not in ambiguos and len(r) == 1}
+        for c in checks:
+            if (c["game"], c["scene"]) != clave or (c.get("xflag") or {}).get("room") is not None:
+                continue
+            salas = {next(iter(r)) for a, r in utiles.items()
+                     if c["name"] == a or c["name"].startswith(a + " ")}
+            if len(salas) == 1:
+                c["vroom"] = salas.pop()
+                n += 1
+    return n
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--rom", help="the seed's .z64 ROM; without it the xflags stay unresolved")
     ap.add_argument("--spoiler", help="spoiler log, to know which dungeons are Master Quest")
     args = ap.parse_args(argv)
-    global MQ_MERGE, GS_ID_BASE, LAYOUT_FROM_ROM
+    global MQ_MERGE, MM_MERGE, GS_ID_BASE, LAYOUT_FROM_ROM
     LAYOUT_FROM_ROM = True
 
     scenes = load_scenes()
@@ -1495,6 +1596,17 @@ def main(argv=None):
         for a, b in choques[:3]:
             print(f"   example: {a} / {b}")
         return 1
+
+    # Which grotto or fountain the rows that carry no xflag belong to, taken
+    # from what their own names say (assign_virtual_rooms). Without this the
+    # "what is left here" panel lists every grotto's chests in every grotto.
+    sin_sala = sum(1 for c in checks
+                   if (c["game"], c["scene"]) in SHARED_SCENE_NAMES
+                   and (c.get("xflag") or {}).get("room") is None)
+    con_vroom = assign_virtual_rooms(checks)
+    if sin_sala:
+        print(f"shared scenes   {con_vroom} of {sin_sala} rows with no xflag placed"
+              f" by name; {sin_sala - con_vroom} stay candidates everywhere")
 
     # What item sits in each spot, from the ROM itself. This is what the
     # spoiler log used to be needed for, and here it comes out of nowhere but

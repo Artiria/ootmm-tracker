@@ -128,6 +128,11 @@ SHARED_SCENES = {
     ("mm", "GROTTOS"): {4: ("grotto", None), 0xA: ("last_scene", COW_ROOMS)},
 }
 GROTTO_ID_MASK = 0x1F
+# What the panel tags a check with, in a scene that is many places at once,
+# when nothing in its data says which of them it is in -- neither an xflag nor
+# its own name (mkchecks.assign_virtual_rooms). It is listed wherever you
+# stand, as it always was, but no longer with the silence that reads as "here".
+UNPLACED_IN_SHARED = "which one is not known"
 # Outside a shared scene gLastScene IS the live scene; polls in a row where it
 # is not before the address is given up as another build's. One poll can
 # straddle a scene load (the PlayState is written before the hook that copies
@@ -2190,7 +2195,16 @@ class Tracker:
                 if setup is not None and setup not in (xf.get("setups") or (xf.get("setup", setup),)):
                     otros += 1
                     continue
+                # A chest, a scrub, an npc, a cow or a skulltula carries no
+                # xflag, so in a scene that is many places at once it had no
+                # room and every grotto's chests were listed in every grotto.
+                # mkchecks.assign_virtual_rooms gives it the room its own name
+                # names, when exactly one room answers to that name; `vroom` is
+                # a room like any other from here on, and rows it could not
+                # place still have none.
                 croom = xf.get("room")
+                if croom is None:
+                    croom = c.get("vroom")
                 if croom is not None and croom >= 0x20:
                     if sala_propia:
                         fuera += 1
