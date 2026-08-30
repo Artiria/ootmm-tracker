@@ -237,6 +237,20 @@ def bombers_code(save):
     return "".join(str(d) for d in digs) if sorted(digs) == [1, 2, 3, 4, 5] else None
 
 # MmQuestItems, bit indices taken from combo/mm/save.h.
+#
+# Bits 11 (Saria's Song) and 17 (Sun's Song) are NOT here, and that is the
+# point. MM's quest word carries those two slots because it inherited OoT's
+# layout, but OoTMM has no item that fills them: data/ref/items.h gives MM
+# eleven song items -- AWAKENING, GORON, ZORA, EMPTINESS, ORDER, TIME,
+# HEALING, EPONA, SOARING, STORMS, GORON_HALF -- and neither Saria's nor the
+# Sun's is among them. An OoT song is an OoT item and lives in OoT's quest
+# word, whichever game is running.
+#
+# Listed, they were two boxes that could never light, and the panel showed
+# them the same way it shows something you have not found yet. He picked up
+# Saria's Song out of a chest in MM on 30 Aug 2026, saw OoT's box come on and
+# MM's stay dark, and asked what was wrong -- then checked the ocarina: "no me
+# deja tocarla". Nothing was wrong with the reading; the box was the lie.
 MM_QUEST_BITS = {
     0: "Odolwa's Remains",
     1: "Goht's Remains",
@@ -247,13 +261,11 @@ MM_QUEST_BITS = {
     8: "New Wave Bossa Nova",
     9: "Elegy of Emptiness",
     10: "Oath to Order",
-    11: "Saria's Song",
     12: "Song of Time",
     13: "Song of Healing",
     14: "Epona's Song",
     15: "Song of Soaring",
     16: "Song of Storms",
-    17: "Sun's Song",
     18: "Bombers' Notebook",
     24: "Goron Lullaby (half)",
 }
