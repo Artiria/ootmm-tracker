@@ -805,6 +805,46 @@ def index_coverage(rom_bytes, index):
 # (X_MQ -> X); empty on v32.x data, where the twins already share the id.
 MQ_MERGE = {}
 
+# MM does the same thing for a scene and its seasonal or inverted twin, and it
+# is not a Master Quest matter: mmSceneId() in mark.c (data/ref/mark.c) folds
+# these six before every read and every write of a scene flag, so what you
+# open in inverted Stone Tower is saved in upright Stone Tower's row of perm[].
+# The pairs are OoTMM's own; they are not derivable from the names the way
+# `X_MQ -> X` is (SPRING answers to WINTER), so they are written out and
+# looked up in scenes.yml, which fails loudly if a name ever goes.
+#
+# Unlike the MQ twins these two scenes EXIST AT THE SAME TIME, so only the
+# address folds: the row keeps its own scene, its own name and its own place
+# in the panel, and only perm[] is read from the twin. overlay.py uses this
+# same table to fold the live scene (with_live_flags) -- one table, because
+# the two halves disagreeing is exactly what made the inverted Stone Tower
+# chests impossible to mark: the live flags were folded and the rows were not.
+MM_SCENE_ALIASES = {
+    "MM_TEMPLE_STONE_TOWER_INVERTED": "MM_TEMPLE_STONE_TOWER",
+    "MM_SOUTHERN_SWAMP_CLEAR": "MM_SOUTHERN_SWAMP",
+    "MM_MOUNTAIN_VILLAGE_SPRING": "MM_MOUNTAIN_VILLAGE_WINTER",
+    "MM_GORON_VILLAGE_SPRING": "MM_GORON_VILLAGE_WINTER",
+    "MM_TWIN_ISLANDS_SPRING": "MM_TWIN_ISLANDS_WINTER",
+    "MM_STONE_TOWER_INVERTED": "MM_STONE_TOWER",
+}
+# {(game, twin scene id): the scene whose perm[] row holds its flags}
+MM_MERGE = {}
+
+
+def mm_merge_map(scenes):
+    """MM_SCENE_ALIASES resolved to ids through scenes.yml, and it says what
+    it could not resolve rather than silently folding nothing."""
+    out, missing = {}, []
+    for a, b in MM_SCENE_ALIASES.items():
+        if a in scenes and b in scenes:
+            out[("mm", scenes[a])] = scenes[b]
+        else:
+            missing.append(a if a not in scenes else b)
+    if missing:
+        print(f"warning: scenes.yml does not name {', '.join(missing)}; the flags of"
+              " those scenes will be read from their own row, which the game does not use")
+    return out
+
 
 def mq_merge_map(scenes):
     out = {}
@@ -1079,6 +1119,10 @@ def check_from_key(game, key, etiquetas=None, tables=None, xflag_errors=None,
     key_scene = scene_id
     if scene_id is not None:
         scene_id = MQ_MERGE.get((game, scene_id), scene_id)
+    # MM's seasonal and inverted twins fold too (MM_MERGE), but only for the
+    # flags: both scenes are in the same seed, so the row stays filed where the
+    # player actually stands and only perm[] is read from the twin's row.
+    flag_scene = MM_MERGE.get((game, scene_id), scene_id) if scene_id is not None else None
 
     bit = csv_id
     addr = None
@@ -1090,14 +1134,14 @@ def check_from_key(game, key, etiquetas=None, tables=None, xflag_errors=None,
         bit = bit & 0x1F
     if (
         field
-        and scene_id is not None
+        and flag_scene is not None
         and bit is not None
         and 0 <= bit < 32
         and lay["scene_flags"] is not None
-        and scene_id < lay["scene_count"]
+        and flag_scene < lay["scene_count"]
     ):
         addr = (lay["base"] + lay["scene_flags"]
-                + scene_id * lay["scene_size"] + lay["fields"][field])
+                + flag_scene * lay["scene_size"] + lay["fields"][field])
 
     kind = "u32be" if addr is not None else None
     custom = CUSTOM_OOT if game == "oot" else CUSTOM_MM
@@ -1501,6 +1545,9 @@ def main(argv=None):
     if MQ_MERGE:
         print(f"master quest: {len(MQ_MERGE)} twin scenes of their own in scenes.yml,"
               " folded onto the vanilla rows of the save (Play_MergeMQ)")
+    MM_MERGE = mm_merge_map(scenes)
+    print(f"mm twins: {len(MM_MERGE)} seasonal/inverted scenes read their flags from"
+          " their twin's row of perm[] (mmSceneId)")
     GS_ID_BASE = gs_id_base(claves_rom, [int(r["id"], 0) for r in load_rows("oot")
                                          if r["type"] == "gs"])
     solo_csv = set()
@@ -1742,6 +1789,19 @@ def main(argv=None):
         # 8 and 0 on every seed before it.
         "gs_id_base": GS_ID_BASE,
         "mq_merged_scenes": len(MQ_MERGE),
+        # How many MM scenes read their flags from a twin's row of perm[]
+        # (MM_MERGE, mmSceneId in mark.c). Six on every seed; it is here so a
+        # table built before the fold existed can be told apart from one built
+        # with it, because those rows point at a row of perm[] the game never
+        # writes and no amount of playing marks them.
+        "mm_merged_scenes": len(MM_MERGE),
+        # How many rows of a shared scene (GROTTOS, FAIRY_FOUNTAIN) got the
+        # room their own name names, of how many carry no xflag and so had
+        # none (assign_virtual_rooms). It is here so a table built before this
+        # existed can be told apart from one where it ran: without the key the
+        # tracker would go on listing every grotto's chests in every grotto and
+        # say nothing about why (discover.ensure_tables rebuilds on it).
+        "shared_scene_rooms": [con_vroom, sin_sala],
         "layout": LAYOUT,
         "custom_save": {
             # gSharedCustomSave with the game running OoT. It is one single

@@ -171,14 +171,11 @@ LIVE_FIELDS = {
 }
 # MM keeps one flag table for a scene and its seasonal / inverted twin
 # (mmSceneId() in mark.c); the twin's live flags belong to the base scene.
-MM_SCENE_ALIASES = {
-    "MM_TEMPLE_STONE_TOWER_INVERTED": "MM_TEMPLE_STONE_TOWER",
-    "MM_SOUTHERN_SWAMP_CLEAR": "MM_SOUTHERN_SWAMP",
-    "MM_MOUNTAIN_VILLAGE_SPRING": "MM_MOUNTAIN_VILLAGE_WINTER",
-    "MM_GORON_VILLAGE_SPRING": "MM_GORON_VILLAGE_WINTER",
-    "MM_TWIN_ISLANDS_SPRING": "MM_TWIN_ISLANDS_WINTER",
-    "MM_STONE_TOWER_INVERTED": "MM_STONE_TOWER",
-}
+# The pairs live in mkchecks (MM_SCENE_ALIASES) because the same fold has to
+# reach the rows' addresses when the table is built. Holding the list here as
+# well is what broke the inverted Stone Tower chests for a whole release: this
+# half folded the live scene, the table half did not exist, and three chests
+# -- one of them a song -- could not be marked by opening them.
 
 # How many polls in a row a big drop in the done count has to hold before it
 # is believed. A poll that lands mid-crossing between OoT and MM reads the old
@@ -755,7 +752,7 @@ class Tracker:
         try:
             import mkchecks
             ids = mkchecks.load_scenes()
-            for a, b in MM_SCENE_ALIASES.items():
+            for a, b in mkchecks.MM_SCENE_ALIASES.items():
                 if a in ids and b in ids:
                     self.scene_alias[("mm", ids[a])] = ids[b]
         except Exception:
