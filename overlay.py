@@ -2182,6 +2182,16 @@ class Tracker:
             shared = (active, here["scene"]) in SHARED_SCENES
             vroom, how = self.instance_room(active, here["scene"], room)
             cmp_room = vroom if vroom is not None else room
+            # Whether the panel knows WHICH of the scene's many places you are
+            # standing in. Two ways, and they are worth the same: the game's
+            # own signals name the instance (vroom), or the scene gave the
+            # place a room of its own and you are in it (sala_propia) -- room 3
+            # of OoT's GROTTOS is the Death Mountain Trail cow grotto and
+            # nothing else. Only the first was counted, so in a real room the
+            # rows nothing could place went on being listed as if they were
+            # here: his report from room 3, after the same thing was fixed for
+            # the generic ones.
+            sitio_sabido = shared and (vroom is not None or sala_propia)
 
             lista, otras, otros, fuera = [], [], 0, 0
             for c in pend:
@@ -2283,6 +2293,18 @@ class Tracker:
                     "room": vroom,
                     "label": self.instance_labels.get((active, scene, vroom)) if vroom is not None else None,
                     "how": how,
+                }
+            elif shared and sala_propia:
+                # A room the scene owns needs no telling apart -- and it still
+                # has a name, which its own rows give it. The title used to
+                # read "Grottos - room 3" while the panel knew perfectly well
+                # that room 3 is the Death Mountain Trail cow grotto (his
+                # screenshot, 30 Aug 2026). Same shape as above, and `how`
+                # says why there was nothing to work out.
+                here["instance"] = {
+                    "room": room,
+                    "label": self.instance_labels.get((active, scene, room)),
+                    "how": "a room of its own",
                 }
 
         with self.lock:
