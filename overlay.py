@@ -138,6 +138,12 @@ UNPLACED_IN_SHARED = "which one is not known"
 # straddle a scene load (the PlayState is written before the hook that copies
 # the scene), so a single disagreement means nothing.
 LAST_SCENE_ODD_PERSIST = 6
+# Polls between full relocations while a game is MISSING from the bases and
+# nothing in the ROM's code names its buffer (see missing_save_appeared). It
+# is not zero because relocating scans 8 MB and this runs twice a second, and
+# it is not never because a missing base cannot stop validating on its own:
+# that is how a whole session went by with no Majora's Mask save.
+MISSING_BASE_RESCAN = 20
 # A spoiler is refused when, over at least this many spots both it and the
 # ROM name, it agrees on fewer than this fraction (see Tracker._vet_spoiler).
 SPOILER_MIN_COMPARABLE = 100
@@ -948,6 +954,7 @@ class Tracker:
         self._drop_polls = 0
         self._bases = None
         self._bases_from_rom = None   # running game's base == the ROM's own (None: payload gave none)
+        self._sin_base = 0       # polls since the last relocate while a game is missing
         self._play = {}          # game -> PlayState address, cached like the bases
         self._play_retry = {}    # game -> when the next full scan is allowed
         self._play_misses = {}   # game -> polls in a row it failed to validate
@@ -1313,7 +1320,8 @@ class Tracker:
             if (ootmm.bases_coherentes(self._bases)
                     and all(ootmm.save_looks_sane(self.link, g, b)
                             for g, b in self._bases.items())
-                    and not self.own_save_appeared(self._bases)):
+                    and not self.own_save_appeared(self._bases)
+                    and not self.missing_save_appeared(self._bases)):
                 return self._bases
             # crossing between games moves both: they have to be found again
             self._bases = None
@@ -1347,25 +1355,79 @@ class Tracker:
         address is looked at on every poll, and the moment it carries a sane
         save the bases are found again (the own one is first in line there).
         """
-        import ootmm
-
         if not bases:
             return False
         running = min(bases, key=lambda g: bases[g])
         own = self.own_base(running)
         if own is None or bases[running] == own:
             return False
-        try:
-            sig = ootmm.SIG_OOT if running == "oot" else ootmm.SIG_MM
-            if self.link.read_block(own + ootmm.SIG_OFFSET, 8)[:6] != sig:
-                return False
-        except (ConnectionError, OSError):
-            return False
-        if not ootmm.save_looks_sane(self.link, running, own):
+        if not self.save_at(running, own):
             return False
         print(f"[overlay] {running}'s save has appeared at {own:#x}, where this ROM's code keeps it;"
               f" until now a copy at {bases[running]:#x} was answering. Locating the bases again.")
         return True
+
+    def save_at(self, game, addr):
+        """Whether a save context of `game` can be read at `addr`: the
+        signature where it belongs, and contents that pass.
+
+        These are the same two tests locate_saves applies to a candidate, in
+        one place on purpose -- an address accepted here and refused there
+        would send locate_cached round the loop, relocating on every poll and
+        never settling.
+        """
+        import ootmm
+
+        try:
+            sig = ootmm.SIG_OOT if game == "oot" else ootmm.SIG_MM
+            if self.link.read_block(addr + ootmm.SIG_OFFSET, 8)[:6] != sig:
+                return False
+        except (ConnectionError, OSError):
+            return False
+        return ootmm.save_looks_sane(self.link, game, addr)
+
+    def missing_save_appeared(self, bases):
+        """Whether a game that is ABSENT from the cached bases can be read now.
+
+        The hole own_save_appeared does not cover, and the same lesson one step
+        further on: it watches the game that is running, and **a base that is
+        not there cannot stop validating**. An incomplete cache therefore
+        passes every test the cache has -- `bases_coherentes` returns True for
+        a single game by its own `len < 2` rule, `save_looks_sane` only asks
+        about what IS in the dict, and own_save_appeared looks at the running
+        game only. So locate_cached returns it for the rest of the session and
+        the 8 MB scan that would find the other one never runs again.
+
+        That is not hypothetical: on 31 Aug 2026 a session ran 5.323 polls with
+        `bases` holding only OoT, so the items panel had no Majora's Mask grid
+        at all -- while the ROM's own code was naming the buffer (`MM buffer
+        0x8044bfc8`) and locate_saves, run against a dump taken at that very
+        moment, found a valid save there on the first try. His report: he asked
+        why the panel only showed Ocarina's items.
+
+        The cheap half settles it almost always without a scan: payload_hints()
+        is the list the ROM's code names AND the list locate_saves is handed,
+        so one 8-byte read per candidate says whether a save is there now, and
+        the two cannot disagree about it. When nothing names the buffer, the
+        full search is retried every MISSING_BASE_RESCAN polls instead -- an
+        8 MB sweep twice a second is exactly what the cache exists to avoid.
+        """
+        faltan = {g for g in ("oot", "mm") if g not in bases}
+        if not faltan:
+            self._sin_base = 0
+            return False
+        for base, game in self.payload_hints():
+            if game in faltan and self.save_at(game, base):
+                print(f"[overlay] {game}'s save can be read at {base:#x}, where this ROM's"
+                      f" code keeps it, and it was missing from the bases."
+                      f" Locating them again.")
+                self._sin_base = 0
+                return True
+        self._sin_base += 1
+        if self._sin_base >= MISSING_BASE_RESCAN:
+            self._sin_base = 0
+            return True
+        return False
 
     def payload_hints(self):
         """(base, game) pairs the ROM's code names, for locate_saves to try
