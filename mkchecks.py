@@ -646,18 +646,28 @@ def pool_source(game):
     return _data_file(f"pool_{game}.csv").name
 
 
+# What the spoiler writes on the header line when EVERY twinned dungeon is
+# Master Quest. It is not a dungeon name and it cannot be counted like one:
+# how many dungeons it means is a property of the seed, not of the spoiler,
+# so load_mq hands the word back and the caller resolves it against the twins
+# the ROM found. Splitting it on commas, which is what happened before, made
+# a seed with all twelve read as "the spoiler names 1".
+MQ_ALL = "all"
+
+
 def load_mq(spoiler):
-    """The seed's Master Quest dungeons, as the spoiler names them.
+    """The seed's Master Quest dungeons, as the spoiler names them: a set of
+    names, MQ_ALL for "all", or None when there is no spoiler or no line.
 
     Only to check against: which scenes are Master Quest comes out of the ROM
     now (placement.master_quest_scenes), and the tracker no longer needs a
     spoiler to know.
 
     OoTMM writes them as a list under the header, one `- Name` per line, and
-    only "none" goes on the header line itself. Reading just the header, which
-    is what this did, made **every** MQ seed come back as "none" -- so the
-    warning about not being able to map them never even fired, and the seed
-    quietly kept every vanilla twin.
+    only "none" and "all" go on the header line itself. Reading just the
+    header, which is what this did, made **every** MQ seed come back as
+    "none" -- so the warning about not being able to map them never even
+    fired, and the seed quietly kept every vanilla twin.
     """
     if spoiler is None:
         return None
@@ -666,6 +676,8 @@ def load_mq(spoiler):
         if not line.strip().startswith("Master Quest Dungeons:"):
             continue
         val = line.split(":", 1)[1].strip()
+        if val == MQ_ALL:
+            return MQ_ALL
         if val and val != "none":
             return {d.strip() for d in val.split(",")}     # older one-line form
         fuera = set()
@@ -1522,7 +1534,8 @@ def main(argv=None):
     # the placement is read (placement.master_quest_scenes), below.
     mq = load_mq(args.spoiler)
     if mq is not None:
-        print(f"spoiler: Master Quest = {sorted(mq) or 'none'}")
+        print("spoiler: Master Quest = "
+              + ("all" if mq == MQ_ALL else (str(sorted(mq)) if mq else "none")))
 
     checks = []
     unresolved_scenes = set()
@@ -1696,10 +1709,15 @@ def main(argv=None):
             # Which dungeons this seed lays out as Master Quest. It needs the
             # keys resolve() just wrote, so it happens here and not with the
             # rest of the settings.
-            son_mq, dudosas = placement.master_quest_scenes(rom_bytes, checks, True)
+            son_mq, dudosas, gemelas = placement.master_quest_scenes(rom_bytes, checks, True)
             mq_scenes = sorted(son_mq)
-            if mq is not None and len(mq) != len(son_mq):
-                print(f"  NOTE: the spoiler names {len(mq)} Master Quest dungeons"
+            # "all" means every twinned dungeon there is, which only the ROM
+            # can count -- and it is every twin, not just the ones settled
+            # either way, or a seed with one undecided twin would compare as
+            # if the spoiler and the ROM agreed.
+            dice = len(gemelas) if mq == MQ_ALL else (len(mq) if mq is not None else None)
+            if dice is not None and dice != len(son_mq):
+                print(f"  NOTE: the spoiler names {dice} Master Quest dungeons"
                       f" and the ROM's placement says {len(son_mq)}; going with the ROM")
             if ok < activos * 0.9:
                 print("  warning: under 90% of the checks with an address have an item;")
