@@ -723,6 +723,13 @@ class Tracker:
         # out, and then every vanilla twin stands, which is what the tracker
         # did before it could tell.
         self.mq_scenes = set((table.get("mq") or {}).get("scenes") or [])
+        # The twins the keys could not settle either way. `_active_version`
+        # keeps the VANILLA row for these, which is a guess, not a reading --
+        # on a seed where that dungeon is Master Quest its checks then carry
+        # the other layout's names and items. mkchecks says so on the console
+        # and nothing said it here, so a whole dungeon read as ordinary while
+        # you played it: the silence that reads as an assertion, again.
+        self.mq_unknown = sorted((table.get("mq") or {}).get("unknown") or [])
         # what item sits in each spot. Normally it comes from the ROM, inside
         # checks.json; a hand-loaded spoiler is only needed when that ROM's
         # placement table could not be read.
@@ -849,6 +856,10 @@ class Tracker:
             # panel leaves out: on a seed with grass and rocks vanilla it is
             # thousands, and a total that silently shrank would look wrong.
             "not_in_seed": self.not_in_seed,
+            # twinned dungeons shown as vanilla because the ROM's keys could
+            # not settle their layout; present from the first paint, so the
+            # caveat does not wait for the first poll to be said
+            "mq_unknown": self.mq_unknown,
             "regions": [],
             "items": {"oot": [], "mm": []},
             "feed": [],
@@ -2328,6 +2339,14 @@ class Tracker:
             # tables were built with; False means the rows that hang off it
             # were left without an address (mkchecks.LAYOUT_FROM_ROM)
             s["layout_from_rom"] = self.table.get("layout_from_rom")
+            # The twinned dungeons whose layout the ROM's keys could not settle,
+            # and which are therefore being shown as vanilla. His call, 31 Aug
+            # 2026, asked outright: the PAGE says nothing about this -- fewer
+            # notices on screen is worth more to him than covering a case that
+            # is one dungeon on a seed. It stays here because /state.json is
+            # not the page: the capture records it, the tools can read it, and
+            # mkchecks still says it on the console when the tables are built.
+            s["mq_unknown"] = self.mq_unknown
             # which signal settled the world (config / spoiler / a guess)
             s["world_by"] = self.table.get("world_by")
             # the title-screen guard: "off" once gameMode has read values that
