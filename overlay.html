@@ -1440,7 +1440,27 @@ function cell(it, short) {
     it.badge ? `<span class="val">${esc(it.badge)}</span>` : ''}</span>`;
 }
 
-function renderItems(items) {
+/* A game whose save context was never located has no grid at all, and with one
+   game the per-game heading is dropped as noise -- so the panel shows Ocarina's
+   sections and nothing says Majora's are missing rather than empty. Read as
+   "you have nothing from Majora", which is not what the tracker knows: it
+   knows it never found where to look. His report, 31 Aug 2026, on a new file.
+   The checks are unaffected either way; they hang off the shared block, which
+   is found separately. */
+function missingItemsNote(items, s) {
+  if (!s || !s.in_game) return '';   // before a save is being read there is nothing to claim
+  const falta = ['oot', 'mm'].filter(g => keepGame(g)
+    && !(items[g] && items[g].length) && !((s.bases || {})[g]));
+  if (!falta.length) return '';
+  const nombres = falta.map(g => GAME[g] || g).join(' and ');
+  return `<div class="warn" style="margin-top:10px"><b>No items shown for ${esc(nombres)}.</b>
+    The tracker has not found ${falta.length > 1 ? 'those games’' : 'that game’s'} save
+    context in memory, so the grid is <b>missing, not empty</b> — this is not "you have
+    nothing there". Checks still count normally, since they hang off the shared save
+    block, and the grid appears on its own if the context turns up.</div>`;
+}
+
+function renderItems(items, s) {
   const games = Object.keys(items).filter(g => items[g] && items[g].length && keepGame(g));
   if (!games.length) return '<div class="empty">no data yet</div>';
   // with a single game the panel title already says so; repeating it is noise
@@ -1454,7 +1474,7 @@ function renderItems(items) {
         (l => grp.items.map((it, i) => cell(it, l[i])).join(''))(labelsFor(grp.items))
       }</div>
     </div>`).join('')}
-  </div>`).join('');
+  </div>`).join('') + missingItemsNote(items, s);
 }
 
 /* Multiworld: a spot can hold someone else's item. The ROM's placement table
@@ -1944,7 +1964,7 @@ function render(s) {
     `<div class="stat"><div class="k">${esc(x.label)}</div><div class="v">${esc(x.value)}</div></div>`).join(''));
 
   setHTML('regions', renderRegions(s.regions || [], s.regions_n));
-  const itemsHTML = renderItems(s.items || {});
+  const itemsHTML = renderItems(s.items || {}, s);
   if (itemsHTML !== lastItemsHTML) { setHTML('items', itemsHTML); lastItemsHTML = itemsHTML; fitItems(); }
 
   /* Souls (soul shuffle). The server sends `souls` only with the feature switch
