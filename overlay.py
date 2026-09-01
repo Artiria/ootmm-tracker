@@ -1120,6 +1120,29 @@ class Tracker:
         self.tokens_n = self._counted(fichas)
         self.fairies_n = self._counted(hadas)
         self.hay_spoiler = bool(items)
+        # The rows this seed actually has, keyed the way `done` is keyed.
+        #
+        # read_flags cannot apply is_active itself: it works off a block and a
+        # list of rows, and a vanilla row and its Master Quest twin SHARE the
+        # flag by design -- same `off`, same `bit`, two names -- so one bit set
+        # hands back both. 353 such pairs, always of exactly two rows, in every
+        # table this build makes -- the count is a property of the twinned
+        # scenes, not of what the seed did with them, so it is the same whether
+        # the seed has twelve MQ dungeons or none. The denominator has always
+        # been filtered (build_plan, just below), so leaving the numerator
+        # unfiltered made the fraction wrong from the top: one icicle broken in
+        # Ice Cavern, done_total +2.
+        #
+        # Worked out once, because is_active cannot change its mind inside a
+        # session -- and that is what makes filtering `done` safe rather than a
+        # second way to trip the transient guard, which freezes the tracker
+        # when a check that WAS done stops being done. mq_scenes and
+        # placement_known are fixed when the tables are read; self.items is
+        # rebuilt here, but is_active only consults it when placement IS known,
+        # and then it is rom_items with the spoiler ignored. A new ROM builds a
+        # new Tracker, so that is a new session too.
+        self.active_keys = frozenset(
+            (c["game"], c["name"]) for c in self.table["checks"] if self.is_active(c))
         self.plan, self.regions = build_plan(
             self.table, self.is_active,
             (lambda g, n: self.junk.get((g, n), False)) if items else None)
@@ -2033,10 +2056,17 @@ class Tracker:
         self._xflag_peak = max(self._xflag_peak, bits)
         self._custom_bits = bits
 
+        # Only the rows this seed has. Filtered HERE, once, and not in each
+        # consumer: `done` reaches six of them and only two ever filtered
+        # (the region bars and "what is left here"), which is how done_total
+        # and the feed came to count a Master Quest check twice while the
+        # panel beside them was right. Filtering the plan instead would shrink
+        # the span read from each anchor, and confidence() measures over the
+        # block that span produces -- a different thing entirely.
         for anchor, hechos in por_ancla.items():
             if anchor == "custom" and conf < CONFIDENCE_MIN:
                 continue
-            done |= hechos
+            done |= hechos & self.active_keys
 
         items = {}
         oot_blk = self.link.read_block(bases["oot"], 0x1500) if "oot" in bases else None
