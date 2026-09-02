@@ -46,7 +46,7 @@ import struct
 import paths
 import rom
 
-DATA = pathlib.Path(paths.res("data"))
+DATA = pathlib.Path(paths.data_dir())
 
 # combo/defs.h. Where the generator wrote these two files up to v32.3. They are
 # the CONTRAST for what locate_tables() finds and the net under it, not the way
@@ -411,7 +411,9 @@ def load_gi(path=None):
     `index = i + 1` comes from packages/generator/lib/combo/data.ts, and 0 is
     GI_NONE.
     """
-    p = pathlib.Path(path) if path else DATA / "gi.yml"
+    # paths.data_file, not DATA / name: OoTMM's own repo keeps this under
+    # defs/, and a downloaded data/ is that repo verbatim.
+    p = pathlib.Path(path) if path else pathlib.Path(paths.data_file("gi.yml", DATA))
     tabla = {0: ("NONE", None)}
     i = 0
     for line in p.read_text(encoding="utf-8").splitlines():
@@ -422,6 +424,21 @@ def load_gi(path=None):
         n = _NOMBRE.search(line)
         tabla[i] = (m.group(1), limpia_nombre(n.group(1)) if n else None)
     return tabla
+
+
+def names_agreement(por_indice, gi):
+    """(matching, comparable): how much of the ROM's kItemNames a gi.yml says
+    word for word.
+
+    The count, not the verdict. `names_from_rom` turns it into a yes/no at
+    90%, which answers "can the symbolic ids be trusted" and is deliberately
+    forgiving; deciding between two candidate data/ folders needs the number
+    itself, because the drift between two releases of the same series is a
+    couple of per cent and both sides of it are "yes" (v32.0 reads 901/927 of
+    a v32.3 ROM, v32.3 reads 927/927, and only the number tells them apart).
+    """
+    comunes = [i for i in por_indice if i in gi and gi[i][1]]
+    return sum(1 for i in comunes if gi[i][1] == por_indice[i]), len(comunes)
 
 
 def names_from_rom(rom_bytes, gi, verbose=True):
@@ -443,12 +460,11 @@ def names_from_rom(rom_bytes, gi, verbose=True):
         return None, False
 
     por_indice = {i + 1: n for i, n in enumerate(tabla)}
-    comunes = [i for i in por_indice if i in gi and gi[i][1]]
-    casan = sum(1 for i in comunes if gi[i][1] == por_indice[i])
-    alineado = bool(comunes) and casan / len(comunes) >= 0.90
+    casan, comparables = names_agreement(por_indice, gi)
+    alineado = bool(comparables) and casan / comparables >= 0.90
     if verbose:
         print(f"names: {len(por_indice)} read from the ROM's kItemNames; "
-              f"gi.yml agrees on {casan}/{len(comunes)}")
+              f"gi.yml agrees on {casan}/{comparables}")
         if not alineado:
             print("  WARNING: data/gi.yml does not line up with this ROM.")
             print("  The names are the ROM's and are right; the symbolic ids")

@@ -46,7 +46,7 @@ import rom
 
 # `data/` ships with the program; `checks.json` is generated, and inside the
 # .exe those two are no longer the same folder. See paths.py.
-DATA = pathlib.Path(paths.res("data"))
+DATA = pathlib.Path(paths.data_dir())
 OUT = pathlib.Path(paths.USER_DIR)
 
 # Verified against RAM on OoTMM v32.0. MM's flags have not been located yet,
@@ -492,11 +492,13 @@ TYPE_FIELD = {"chest": "chest", "collectible": "collect"}
 
 def _data_file(name):
     """data/<name>, tolerating the OoTMM repo's own layout (data/defs/,
-    data/pool/): a data/ copied verbatim from the repo works unchanged."""
-    for cand in (DATA / name, DATA / "defs" / name, DATA / "pool" / name):
-        if cand.exists():
-            return cand
-    return DATA / name
+    data/pool/): a data/ copied verbatim from the repo works unchanged.
+
+    The rule lives in paths now, because it has to be the same one everywhere:
+    placement.py had its own flat lookup and could not find a downloaded
+    gi.yml (1 sep 2026).
+    """
+    return pathlib.Path(paths.data_file(name, DATA))
 
 
 def load_npcs():
@@ -1776,7 +1778,11 @@ def main(argv=None):
     import collections
     bytarget = collections.Counter(c["target"] for c in checks)
     out = {
-        "version": "v32.0",
+        # Which OoTMM version the NAMES in here are from: the bundled data is
+        # v32.0's, and an adopted download says its own tag (paths.data_dir).
+        # The addresses and the bits do not come from here at all -- they are
+        # read from the ROM -- so this dates the labels and nothing else.
+        "version": paths.data_version(),
         "source": "OoTMM/OoTMM data/ (%s, defs/scenes.yml, defs/gi.yml)"
                   % ("checks/*.xml" if (DATA / "checks").is_dir() else "pool_*.csv"),
         "rom": args.rom,

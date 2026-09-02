@@ -50,3 +50,8 @@ dist/
 forge/roms/
 forge/out/
 forge/.jobs/
+
+# A downloaded OoTMM data/ (dataupdate.py). It is somebody else's repository
+# at a tag, fetched on demand and adopted only after being measured; the copy
+# that ships is the one in data/.
+data-updates/

@@ -1479,6 +1479,93 @@ def cmd_install_lua(args):
               " and run tracker.lua")
 
 
+def cmd_data(args):
+    """Which OoTMM data/ names the checks, and swapping it for a newer one.
+
+    The only command that goes near the network, and only on `update`. See
+    dataupdate.py for why a newer data/ is not automatically a better one.
+    """
+    import dataupdate
+    import paths
+
+    activo = paths.active_data_tag()
+    if args.what == "status":
+        print(f"names in force : {activo or 'v32.0 (the copy that ships)'}")
+        print(f"read from      : {paths.data_dir()}")
+        bajados = dataupdate.downloaded()
+        print(f"downloaded     : {', '.join(bajados) if bajados else '(none)'}")
+        return
+
+    if args.what == "revert":
+        if not activo:
+            print("already using the copy that ships; nothing to revert")
+            return
+        dataupdate.set_active(None)
+        print(f"back to the copy that ships (v32.0); {activo} is still downloaded")
+        return
+
+    # update. The measure is against a ROM, so without one there is nothing
+    # to decide with and this refuses rather than adopting on faith.
+    rom = args.rom
+    if not rom:
+        import discover
+        rom = discover.find_rom(None, verbose=False)
+    if not rom or not os.path.isfile(rom):
+        sys.exit("this needs the seed's ROM to measure against: pass --rom"
+                 " (the emulator's open ROM is used when there is one)")
+    tag = args.tag
+    if not tag:
+        print("asking OoTMM for its latest tag...")
+        tag = dataupdate.latest_tag()
+        if not tag:
+            sys.exit("could not work out the latest tag; pass --tag")
+    print(f"tag: {tag}\nrom: {rom}\n")
+    if tag in dataupdate.downloaded() and not args.refetch:
+        print(f"{tag} is already downloaded; --refetch to fetch it again")
+    else:
+        dataupdate.download(tag)
+    cand = paths.updates_dir(tag)
+
+    print("\nbuilding checks.json twice, in a sandbox, to compare them"
+          " (a couple of minutes)...")
+    ahora = dataupdate.build_with(None, rom)
+    nuevo = dataupdate.build_with(cand, rom)
+    filas = ("version", "total", "resolved", "named", "item_names",
+             "same_version_as_data", "placement")
+    ancho = max(len(k) for k in filas)
+    print(f"\n{'':<{ancho}}   {'in force':>12}   {tag:>12}")
+    for k in filas:
+        print(f"{k:<{ancho}}   {str(ahora[k]):>12}   {str(nuevo[k]):>12}")
+
+    adoptar, razones, contra = dataupdate.verdict(ahora, nuevo)
+    print()
+    for r in razones:
+        print(f"  for     : {r}")
+    for c in contra:
+        print(f"  against : {c}")
+    if not razones and not contra:
+        print("  the two explain this ROM exactly the same")
+
+    if args.dry_run:
+        print(f"\n--dry-run: nothing adopted. It {'would' if adoptar else 'would not'} have been.")
+        return
+    # There is no override here on purpose. A flag that adopts data the
+    # measurement has just called worse produces exactly the wrong check names
+    # this command exists to prevent, and it would be used on the day someone
+    # wants the newest of something -- which is the day the measurement is
+    # most worth listening to. If a real seed ever needs data this refuses,
+    # that is a defect in the measure and belongs in the measure.
+    if not adoptar:
+        print(f"\nnot adopted: {tag} does not explain this ROM better than what is in force."
+              "\nIt stays downloaded; nothing else changed. If you believe it should have"
+              "\nbeen adopted, the numbers above are the argument -- say which one is wrong.")
+        return
+    dataupdate.set_active(tag)
+    print(f"\nadopted: {tag}."
+          "\nRebuild the tables for your seed so the names take effect"
+          " (delete checks.json, or start the tracker with --rom).")
+
+
 def cmd_find(args):
     """Search a dump for a pattern. Used to locate the save context by signature
     rather than by fixed offset, which survives version changes."""
@@ -1887,6 +1974,14 @@ def main():
     lu.add_argument("--emu", help="emulator folder; found on its own by default")
     lu.add_argument("--force", action="store_true", help="replace it even if one is already there")
     lu.set_defaults(func=cmd_install_lua)
+
+    da = sub.add_parser("data", help="which OoTMM version names the checks, and updating it")
+    da.add_argument("what", choices=("status", "update", "revert"), nargs="?", default="status")
+    da.add_argument("--tag", help="the OoTMM tag to fetch (default: its latest)")
+    da.add_argument("--rom", help="the seed to measure against; the emulator's open one by default")
+    da.add_argument("--dry-run", action="store_true", help="measure and report, adopt nothing")
+    da.add_argument("--refetch", action="store_true", help="download again even if it is there")
+    da.set_defaults(func=cmd_data)
 
     x = sub.add_parser("proxy", help="capture the MultiClient traffic")
     x.add_argument("--host", default="127.0.0.1")

@@ -91,6 +91,7 @@ anyway. `?spoiler=full` reveals what is in the checks you have not done.
 | ✅ Souls (soul shuffle) | every soul read from the ROM, grouped by kind; a compact per-kind summary by default, the full names on demand (`/p/souls`) |
 | ✅ Notes | a memorandum: press the note key (F9; `note_key` in `options.json`) — in the emulator too, on Windows — type a line, Enter; it is kept with the game, area and room you were in, per seed (`/p/notes`). The Bombers' code is read off the save and listed on its own, no hide-and-seek needed |
 | ✅ Item placement and names read from the ROM | no spoiler log, on v32.0 and dev builds |
+| ✅ Check names kept up to date | the names are OoTMM's own and the copy that ships is v32.0's; `ootmm.py data update` fetches a newer tag and adopts it **only if it explains your ROM better**, because v32.3 moved two Great Bay pot names onto different pots and newer is not the same as right |
 | ✅ Addresses read from the ROM's own code | `gSharedCustomSave` and the other game's save buffer are found in the payload's code, so a build that moves them needs no update; measured over 42 seeds, six builds |
 | ✅ OBS overlay, one URL per panel | transparent background, a standalone panel each |
 | ⚠️ Multiworld | tracks your own world; see below |

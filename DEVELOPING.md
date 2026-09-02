@@ -80,6 +80,7 @@ read from the ROM.
 | `payload.py` | where OoTMM's own globals live (`gSharedCustomSave`, the other game's save buffer, the layout inside), read from the payload's MIPS code |
 | `souls.py` | the soul shuffle's catalogue and bitmaps, read from the ROM |
 | `entrances.py` | the seed's shuffled entrances, read from the ROM (`COMBO_VROM_ENTRANCES`) and labelled with `data/entrances.yml` |
+| `dataupdate.py` | downloads OoTMM's `data/` at a tag and adopts it only if it explains your ROM better — `ootmm.py data` |
 | `mkicons.py` | extracts the icons from the ROM |
 | `discover.py` | finds the ROM and spoiler, regenerates whatever is stale |
 | `overlay.py` / `overlay.html` | the tracker you actually look at |
@@ -139,13 +140,21 @@ Whenever the `.exe` is rebuilt:
 - Check the panels still serve, including the Spanish 301 slugs.
 - **Kill any running `ootmm-tracker.exe` before rebuilding**, or PyInstaller
   fails with `PermissionError` on `dist\`. The one-file build spawns a child
-  process, so killing the one you started is not enough — kill them by name.
+  process, so killing the one you started is not enough — kill the tree.
 - If `Scripts/tracker.lua` was touched, check the hard link survived
   (`fsutil hardlink list`): an editor that rewrites the file breaks it, and the
   emulator then keeps an old copy without saying so.
-- **Kill by name after the guard too** (`taskkill /IM ootmm-tracker.exe /F`):
-  killing the process you started leaves the one-file child serving on the
-  same ports, and the next comparison may be talking to the orphan. And read
+- **Kill the tree after the guard too, by PID and not by name**
+  (`taskkill /PID <the pid you launched> /T /F`): killing the process you
+  started leaves the one-file child serving on the same ports, and the next
+  comparison may be talking to the orphan; `/T` takes the child with it.
+  **`/IM ootmm-tracker.exe` is the last resort, and it is not free**: it kills
+  *every* copy on the machine, the one you have open for your own run
+  included, and a guard that ends by killing something it did not start can
+  destroy work — the same way an audit round rebuilt a `checks.json` that was
+  not its own (1 sep 2026). If you have no PID, look before you fire:
+  `tasklist /FI "IMAGENAME eq ootmm-tracker.exe"`, and know what each one is.
+  And read
   the `[auto] ROM:` line the console prints: once, on the very first launch of
   a fresh build, the tables came out as another seed's despite `--rom`; not
   reproduced since, but that line is what would show it.
@@ -169,6 +178,35 @@ Do this before a release, and whenever `payload.py`, `placement.py` or
 `mkchecks.py` change. Details, options and what it does not cover are in
 [`forge/README.md`](forge/README.md). It needs Docker; nothing it produces is
 committed.
+
+### The names, which do not come from the ROM
+
+Everything above follows the seed's build because it is read out of the ROM.
+The check **names** cannot be: they are OoTMM's own labels, they live in its
+repository, and the copy in `data/` is v32.0's. Measured on 1 sep 2026,
+v32.3 renamed eighteen Great Bay Coast locations and moved two of the names
+onto different pots — `Great Bay Coast Pot Ledge 1` exists in both and means
+a different pot in each, which is worse than a name going missing.
+
+```
+python ootmm.py data status                     which names are in force
+python ootmm.py data update --rom <your .z64>   fetch the latest tag and measure it
+python ootmm.py data update --tag v32.3 --dry-run --rom <...>
+python ootmm.py data revert                     back to the copy that ships
+```
+
+`update` downloads that tag's `data/`, builds a `checks.json` with it in a
+sandbox and adopts it **only if it explains your ROM better** — more of the
+ROM's own `kItemNames` reproduced word for word, more keys named, nothing
+regressed. Offering v32.3's names to a v32.0 seed is refused, and that is the
+point: newer is not the same as right. It is the only command that touches the
+network, it never writes over `data/`, and reverting is deleting a file.
+
+Two environment variables come with it, and the guards live on them:
+`OOTMM_TRACKER_HOME` moves everything the tracker *generates* (so a guard
+cannot overwrite a real run's `checks.json`, which happened), and
+`OOTMM_TRACKER_DATA` forces which `data/` the names come from. Neither ever
+falls back quietly: if it cannot be honoured, the run stops.
 
 ## Releasing
 

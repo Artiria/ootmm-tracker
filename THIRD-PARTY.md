@@ -41,6 +41,14 @@ from the ROM and only uses `gi.yml` for the symbolic id.
 kept because they document the format this tracker decodes, and it helps to
 have them pinned to a specific version.
 
+Those 26 lines are the same drift that `ootmm.py data update` exists for. On
+request, and only then, it downloads the same files from a **tag** of that
+repository into the user's own folder and can read the names from there
+instead. Nothing of that is redistributed — it is fetched by whoever runs it,
+from OoTMM's repository, under the same MIT license printed below — and the
+copies in `data/`, which are what this program ships, stay exactly as they
+are.
+
 ### OoTMM's license, in full
 
 ```

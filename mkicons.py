@@ -32,6 +32,9 @@ import zlib
 import paths
 import rom
 
+# `ref/` is OUR copy of OoTMM's headers, kept for humans to read; it is not
+# part of what an update replaces, so it comes from the bundled data even
+# when a downloaded data/ is in force (paths.data_dir).
 DATA = pathlib.Path(paths.res("data"))
 OUT = pathlib.Path(paths.USER_DIR)
 

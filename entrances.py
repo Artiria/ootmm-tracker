@@ -41,6 +41,8 @@ import sys
 import paths
 import rom as romlib
 
+DATA = pathlib.Path(paths.data_dir())
+
 VROM = {"oot": 0xF0800000, "mm": 0xF0900000}   # combo/defs.h
 FOREIGN = 0x80000000                          # MASK_FOREIGN_ENTRANCE
 
@@ -51,7 +53,12 @@ def load_defs(path=None):
     """{(game, id): {"name", "type", "areas": [from, to], "maps": [from, to],
     "reverse"}} out of entrances.yml. Parsed by hand: it is one flow-mapping per
     line and nothing else, and it keeps the tracker free of a YAML dependency."""
-    p = pathlib.Path(path) if path else pathlib.Path(paths.res("data", "entrances.yml"))
+    # entrances.yml is one of OoTMM's label dictionaries, like the pools and
+    # gi.yml, so it follows the data/ in force -- an adopted download brings
+    # its own. It used to be read from the bundled folder alone, which made
+    # the override true for check names and false for entrance names, in the
+    # same run. (Round 1 of the audit, 1 sep 2026.)
+    p = pathlib.Path(path) if path else pathlib.Path(paths.data_file("entrances.yml", DATA))
     out = {}
     for m in _ROW.finditer(p.read_text(encoding="utf-8")):
         name, body = m.group(1), m.group(2)
