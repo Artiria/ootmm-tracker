@@ -40,8 +40,10 @@ import re
 import struct
 import sys
 import threading
+import tempfile
 import time
 import urllib.parse
+import uuid
 import webbrowser
 
 import paths
@@ -451,6 +453,10 @@ def xflag_ranges(table):
     nothing, so they would sink the measure with nothing actually wrong.
     """
     cs = table.get("custom_save", {})
+    if table.get("xflag_format") == "indexed":
+        start = (cs.get("oot") or {}).get("xflags")
+        length = cs.get("xflag_bytes")
+        return [(start, start + length)] if start is not None and length is not None else []
     out = []
     for game, nxt in (("oot", "npc"), ("mm", "npc")):
         blk = cs.get(game) or {}
@@ -704,6 +710,13 @@ def save_options(opts):
         os.replace(tmp, ruta)
     except OSError as ex:
         print(f"[overlay] could not save the options: {ex}")
+
+
+def check_positions(check, scene=None):
+    """All places sharing this check's bit; older tables carry just one."""
+    positions = check.get("xflag_matches") or [
+        dict(check.get("xflag") or {}, scene_id=check["scene_id"])]
+    return [p for p in positions if scene is None or p["scene_id"] == scene]
 
 
 class Tracker:
@@ -1016,13 +1029,14 @@ class Tracker:
         # refresh().
         self.scene_rooms = collections.defaultdict(set)
         for c in table["checks"]:
-            xf = c.get("xflag")
-            if xf is not None and c["scene_id"] is not None:
-                # a row that is the same actor in several setups counts for each
+            for xf in check_positions(c):
+                if "setup" not in xf or xf["scene_id"] is None:
+                    continue
+                # One v33 flag may belong to actors in several scenes/rooms.
                 for s in xf.get("setups") or (xf["setup"],):
-                    self.scene_setups[c["game"], c["scene_id"]].add(s)
+                    self.scene_setups[c["game"], xf["scene_id"]].add(s)
                 if xf["room"] < 0x20:
-                    self.scene_rooms[c["game"], c["scene_id"]].add(xf["room"])
+                    self.scene_rooms[c["game"], xf["scene_id"]].add(xf["room"])
         # per-game totals, so an overlay filtered with ?game= shows its own
         # percentage and not the two together
         self.state["totals"] = collections.Counter()
@@ -1150,6 +1164,11 @@ class Tracker:
         # seeds (no pond fish placed, say): read that far.
         if self.souls is not None and self.souls.ok and "custom" in self.plan:
             need = (self.souls.end + BLOCK_PAD + 3) // 4 * 4
+            self.plan["custom"]["span"] = max(self.plan["custom"]["span"], need)
+        # Inventory-only flags can lie after every placed check and soul.
+        fields = (self.table.get("payload") or {}).get("save_flag_items") or []
+        if fields and "custom" in self.plan:
+            need = (max(f["off"] for f in fields) + 1 + BLOCK_PAD + 3) // 4 * 4
             self.plan["custom"]["span"] = max(self.plan["custom"]["span"], need)
         self.not_in_seed = sum(
             1 for c in self.table["checks"]
@@ -2113,10 +2132,16 @@ class Tracker:
                     and cs["halfDays"] < len(custom_blob) and self._custom_ok:
                 half_days = custom_blob[cs["halfDays"]]
             mm_blk = self.link.read_block(bases["mm"], 0x1500)
-            items["mm"] = inventory.mm_snapshot(mm_blk, oot_blk, half_days)
+            items["mm"] = inventory.mm_snapshot(
+                mm_blk, oot_blk, half_days, indexed=self.table.get("xflag_format") == "indexed")
             # the Bombers' code lives in the same block, whichever game runs
             # (the other game's copy carries it too)
             self._bombers_code = inventory.bombers_code(mm_blk)
+
+        if custom_blob is not None and self._custom_ok:
+            for field in (self.table.get("payload") or {}).get("save_flag_items") or []:
+                if field["game"] in items and field["off"] < len(custom_blob):
+                    items[field["game"]][field["key"]] = int(bool(custom_blob[field["off"]] & (1 << field["bit"])))
 
         # A scene transition rewrites the PlayState, so for a poll or two it
         # stops validating. Falling straight through to the save context there
@@ -2251,7 +2276,7 @@ class Tracker:
                 c
                 for c in self.table["checks"]
                 if c["game"] == active
-                and c["scene_id"] == scene
+                and check_positions(c, scene)
                 and c["addr"] is not None
                 and self.is_active(c)
                 and (c["game"], c["name"]) not in done
@@ -2298,13 +2323,16 @@ class Tracker:
 
             lista, otras, otros, fuera = [], [], 0, 0
             for c in pend:
-                xf = c.get("xflag") or {}
-                # A twin -- the same actor in several headers -- is one row
-                # filed under one setup and collectable in all of `setups`
-                # (setups.py); a row without it lives in its own setup only.
-                if setup is not None and setup not in (xf.get("setups") or (xf.get("setup", setup),)):
+                positions = [p for p in check_positions(c, scene)
+                             if setup is None or setup in
+                             (p.get("setups") or (p.get("setup", setup),))]
+                if not positions:
                     otros += 1
                     continue
+                # Prefer the alias in this room, while keeping one row/bit.
+                xf = next((p for p in positions if p.get("room") == cmp_room),
+                          next((p for p in positions if sala_propia and p.get("room", 0x20) < 0x20),
+                               positions[0]))
                 # A chest, a scrub, an npc, a cow or a skulltula carries no
                 # xflag, so in a scene that is many places at once it had no
                 # room and every grotto's chests were listed in every grotto.
@@ -2465,7 +2493,7 @@ class Tracker:
             by_key = {(e["game"], e["src"]): e for e in self.entrances}
             s["entrances"] = {
                 "total": len(self.entrances),
-                "found": [dict(by_key[k], **v) for k, v in found if k in by_key][:FEED_MAX],
+                "found": [dict(by_key[k], **v) for k, v in found if k in by_key],
                 "all": self.entrances,
             }
             s["done_total"] = len(done)
@@ -2544,24 +2572,34 @@ class Tracker:
         if time.time() < self._rom_check_at:
             return
         self._rom_check_at = time.time() + ROM_CHECK_SECONDS
+        abierta = dentro = None
         try:
             import discover
             emu = discover.find_emulator()
             recent = discover.recent_roms(emu) if emu else []
+            abierta = recent[0] if recent else None
+            # The ROM behind it: the emulator may have opened a zip, and the
+            # tables name the file that came out of it (discover.rom_file).
+            # Only named from here, never extracted -- this runs every few
+            # seconds; the follower does the extracting when it rebuilds. An
+            # archive nothing can read keeps its own name, so that the page
+            # still says the tables are not the open seed's.
+            if abierta:
+                dentro = discover.rom_file(abierta, extract=False, verbose=False) or abierta
         except Exception:
-            recent = []
-        abierta = recent[0] if recent else None
+            abierta = dentro = None
         de_tabla = self.table.get("rom")
-        mismatch = bool(abierta and de_tabla and not discover._same(abierta, de_tabla))
+        mismatch = bool(dentro and de_tabla and not discover._same(dentro, de_tabla))
         with self.lock:
-            self.state["rom_open"] = abierta
+            self.state["rom_open"] = dentro
             self.state["rom_mismatch"] = mismatch
-        if mismatch and self._rom_open != abierta:
+        if mismatch and self._rom_open != dentro:
             que_toca = ("Rebuilding them for it." if self.follows_rom
                         else "Restart the tracker to rebuild them.")
-            print(f"[overlay] the emulator has another ROM open: {abierta}; the tables are "
+            cual = abierta if dentro == abierta else f"{abierta} (its ROM: {dentro})"
+            print(f"[overlay] the emulator has another ROM open: {cual}; the tables are "
                   f"{de_tabla}'s. {que_toca}")
-        self._rom_open = abierta
+        self._rom_open = dentro
 
     def rom_open_elsewhere(self):
         """The ROM the emulator has open when it is not the tables', else None.
@@ -2723,52 +2761,97 @@ class Tracker:
     # -- notes ---------------------------------------------------------------
 
     def _notes_key(self):
-        return os.path.basename(self.table.get("rom") or "") or "no-rom"
+        if not hasattr(self, "_notes_storage_key"):
+            import provenance
+            rom_path = self.table.get("rom")
+            digest = self.table.get("rom_sha256")
+            if not digest and rom_path:
+                try:
+                    digest = provenance.file_digest(rom_path)
+                except OSError:
+                    pass
+            if digest:
+                self._notes_storage_key = "sha256:" + digest
+            elif rom_path:
+                normalized = os.path.normcase(os.path.realpath(rom_path))
+                self._notes_storage_key = "path:" + hashlib.sha256(normalized.encode()).hexdigest()
+            else:
+                self._notes_storage_key = "no-rom"
+        return self._notes_storage_key
 
     def _read_notes_file(self):
         try:
-            d = json.loads(open(paths.user(NOTES_FILE), encoding="utf-8").read())
+            with open(paths.user(NOTES_FILE), encoding="utf-8") as stream:
+                d = json.load(stream)
         except (OSError, ValueError):
             return {}
         return d if isinstance(d, dict) else {}
 
     def _load_notes(self):
-        lst = self._read_notes_file().get(self._notes_key()) or []
+        store = self._read_notes_file()
+        old_key = os.path.basename(self.table.get("rom") or "")
+        self.legacy_notes = [n for n in (store.get(old_key) or [])
+                             if isinstance(n, dict) and n.get("text")]
+        lst = store.get(self._notes_key()) or []
         return [n for n in lst if isinstance(n, dict) and n.get("text")]
 
-    def _save_notes(self):
+    def _save_notes(self, notes, drop_legacy=False):
+        """Commit under self.lock. A failed write never changes the in-memory list."""
         d = self._read_notes_file()
-        d[self._notes_key()] = self.notes
+        d[self._notes_key()] = notes
+        if drop_legacy:
+            d.pop(os.path.basename(self.table.get("rom") or ""), None)
         ruta = paths.user(NOTES_FILE)
+        tmp = None
         try:
-            tmp = ruta + ".tmp"
-            with open(tmp, "w", encoding="utf-8") as f:
+            with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", delete=False,
+                                             dir=os.path.dirname(ruta), prefix="notes-", suffix=".tmp") as f:
+                tmp = f.name
                 json.dump(d, f, ensure_ascii=False, indent=1)
+                f.flush()
+                os.fsync(f.fileno())
             os.replace(tmp, ruta)
         except OSError as ex:
             print(f"[overlay] notes not saved: {ex}")
+            raise OSError("The note could not be saved. Please try again.") from ex
+        finally:
+            if tmp and os.path.exists(tmp):
+                os.unlink(tmp)
+
+    def import_legacy_notes(self):
+        """The player explicitly assigns old filename-only notes to this seed."""
+        with self.lock:
+            key = os.path.basename(self.table.get("rom") or "")
+            legacy = self._read_notes_file().get(key) or []
+            merged = self.notes + [dict(n, id=uuid.uuid4().hex) for n in legacy
+                                   if isinstance(n, dict) and n.get("text")]
+            self._save_notes(merged, drop_legacy=True)
+            self.notes = merged
+            self.legacy_notes = []
+        return True
 
     def add_note(self, text, game=None, scene=None, room=None):
         """One line, stamped with where it was written. Empty text is no note."""
         text = " ".join(str(text or "").split())[:400]
         if not text:
             return None
-        n = {"id": f"{int(time.time() * 1000):x}", "t": time.time(), "text": text,
+        n = {"id": uuid.uuid4().hex, "t": time.time(), "text": text,
              "game": game if game in ("oot", "mm") else None,
              "scene": str(scene) if scene else None,
              "room": room if isinstance(room, int) else None}
         with self.lock:
-            self.notes.append(n)
-        self._save_notes()
+            notes = self.notes + [n]
+            self._save_notes(notes)
+            self.notes = notes
         return n
 
     def delete_note(self, nid):
         with self.lock:
-            before = len(self.notes)
-            self.notes = [n for n in self.notes if n.get("id") != nid]
-            changed = len(self.notes) != before
-        if changed:
-            self._save_notes()
+            notes = [n for n in self.notes if n.get("id") != nid]
+            changed = len(notes) != len(self.notes)
+            if changed:
+                self._save_notes(notes)
+                self.notes = notes
         return changed
 
     def notes_state(self):
@@ -2825,6 +2908,7 @@ class Tracker:
             # what the page needs beyond the poll: the memorandum, whether a
             # note is being asked for, the key, and the code
             d["notes"] = self.notes_state()
+            d["notes_legacy_n"] = len(self.legacy_notes)
             d["note_prompt"] = self.note_prompt
             d["note_key"] = self.note_key
             d["bombers_code"] = self._bombers_code
@@ -3074,6 +3158,7 @@ GLYPH_BY_KEY = {
 # The five MM shares with OoT (Keaton, Bunny Hood, Goron, Zora, Truth) are not
 # here: those have a real icon of their own.
 GLYPH_BY_KEY.update({
+    "eq:Clock": ("clock", "#9ad0ff"),
     "item:Postman's Hat": ("mask-postman", "#4a7fd0"),
     "item:All-Night Mask": ("mask-allnight", "#8a6ab5"),
     "item:Blast Mask": ("mask-blast", "#8f949b"),
@@ -3095,13 +3180,13 @@ GLYPH_BY_KEY.update({
     "item:Fierce Deity's Mask": ("mask-fierce", "#e8e4d8"),
 })
 
-# What does not get shown. The stick and nut upgrades are noise in the grid,
-# and **strength and scale do not exist in MM** —the fields are in the struct
+# Stick/nut capacities remain visible: v33 can shuffle the initial capacity.
+# **Strength and scale do not exist in MM** —the fields are in the struct
 # because MmUpgrades copies OoT's, but the game does not use them—; in their
 # place go sword and shield progression, which are MM's own.
 HIDE_KEYS = {
-    "oot": {"up:deku sticks", "up:deku nuts"},
-    "mm": {"up:deku sticks", "up:deku nuts", "up:strength", "up:scale"},
+    "oot": set(),
+    "mm": {"up:strength", "up:scale"},
 }
 
 # Order of MM's progress screen. Without this it comes out in bit order, which
@@ -3420,6 +3505,8 @@ def item_grid(game, snap, icons=None, user_icons=None, fairy=None):
         if key in HIDE_KEYS.get(game, ()):
             continue
         on = is_on(prefix, value)
+        if game == "mm" and key == "eq:Adult Mask":
+            group = "Masks"
         if prefix == "item":
             # the grid reproduces the game's screen, so empty slots stay:
             # they are part of the drawing, not noise. In MM the second half is
@@ -3758,7 +3845,9 @@ def serve(tracker, host, port, open_window=True):
                     # add (text + where), delete (by id), or cancel the box the
                     # note key opened; add and cancel both hand the focus back
                     req = json.loads(raw.decode("utf-8"))
-                    if req.get("cancel"):
+                    if req.get("import_legacy"):
+                        self._json({"ok": tracker.import_legacy_notes()})
+                    elif req.get("cancel"):
                         tracker.note_done()
                         self._json({"ok": True})
                     elif "delete" in req:

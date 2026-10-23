@@ -109,21 +109,23 @@ drowning in it:
 - positional collectibles (pots, grass, rocks…) and souls, which the spoiler
   and the ROM number or name differently, so they cannot be lined up by name
   (`soft` in the log);
-- on a non-Player-1 multiworld ROM every owner reads backwards, because the
-  tracker assumes it is Player 1 (a real, already-tracked limitation);
+- when a world cannot be identified from the ROM's code or older config,
+  the tracker reports whether a spoiler or an item-owner majority answered;
 - MM's `kItemNames` is not located on v30 and older;
 - a seed from another version than the tracker's bundled `data/` (v32.0): the
   tracker reads placement and names from the ROM but the pool CSVs and `gi.yml`
   no longer line up, so a few items come out wrong — the tracker flags this
   itself (`same_version_as_data`), so the guard treats those as expected;
-- a Master Quest or ultra-shuffled (Allsanity) seed, where MQ locations carry
-  an `MQ ` prefix the tracker's names lack and `mkchecks` cannot map MQ to
-  scenes — placement verification there is best-effort.
+- positional names in heavily shuffled seeds that cannot be matched reliably;
+  Master Quest layouts themselves are identified from the ROM and covered by
+  the CSV/XML regression guards.
 
-So on the versions the tracker targets (v31–v32.3) a clean run is all `WARN`,
-and a `FAIL` means a real placement bug or a version the tracker cannot handle
-at all (the first run flagged the unreleased 943-generation on `master`, whose
-check table moved and crashes `placement.read_tables`). The exit code is 1 when
+The corpus covers v29–v32.3 and gen-943 builds, including unified placement
+tables and XML pools. A run can contain known `WARN`s; those do not mean every
+check is resolved. A `FAIL` means a demonstrated disagreement or a generation
+failure. Entrance validation compares source/destination symbols, including
+cross-game pairs and duplicates, rather than just their count. Unknown labels
+remain explicitly unverified. The exit code is 1 when
 any seed fails. Every seed's details go to `guard-<rom>.log` next to it (or
 `forge/out/_guard/` for seeds elsewhere): the `mkchecks` output in full and
 every placement disagreement, `HARD`/`soft`-tagged.
@@ -136,11 +138,27 @@ way to test what happens in a running game. And versions before v29.0 have
 not been built with this: the layout of the repository changed more than
 once before that, and `build-one.sh` knows the two layouts since v29.
 
+The collector preserves the source tree's `defs/`, `pool/` and `checks/`
+hierarchy, including XML files with identical basenames in different scenes,
+and `names.ts` when present. Legacy flat CSV trees remain supported. Missing
+or ambiguous data trees fail the build. A replacement is collected separately
+before the previous tree is moved to a `data.previous-*` backup under that
+build's output. Backups are local evidence and can be removed when no longer
+needed.
+
+The public guards need no game data:
+
+```
+python -B -m unittest discover -s tests -v
+node tests/forge-data.cjs
+```
+
 ## Files
 
 | | |
 |---|---|
 | `forge.py` | the driver: `roms`, `make`, `guard`, `list` |
 | `build-one.sh` | what runs inside the container: clone, install, build, generate, symbols |
+| `collect-data.cjs` | preserve the selected upstream CSV/XML data tree without flattening it |
 | `guard_roms.py` | the checks; also runs on its own |
 | `roms/`, `out/`, `.jobs/` | produced; in `.gitignore` |

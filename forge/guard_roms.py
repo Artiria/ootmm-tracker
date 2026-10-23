@@ -30,6 +30,7 @@ when anything FAILs; WARNs are for what is known and worth a look.
 """
 
 import contextlib
+import collections
 import copy
 import io
 import json
@@ -320,10 +321,17 @@ def check_placement(rep, data, spoiler, world, logp):
     # says so (same_version_as_data False); those mismatches are that documented
     # consequence, not a regression, so they warn rather than fail.
     disclaimed = data.get("same_version_as_data") is False
+    expected_mq = len(mq_dungeons)
+    if mq_dungeons == {"all"}:
+        vanilla = {c.get("scene") for c in data["checks"] if not c.get("mq")}
+        twins = {c.get("scene") for c in data["checks"] if c.get("mq")}
+        expected_mq = len(vanilla & twins)
+        if not expected_mq:
+            notes.append("all-MQ spoiler but no twinned dungeons in the tracker data")
     if mq_scenes is None and mq_dungeons:
         notes.append(f"MQ seed ({len(mq_dungeons)} dungeons): the tracker could not work out which, MQ rows ignored")
-    elif mq_scenes is not None and len(mq_scenes) != len(mq_dungeons):
-        notes.append(f"the spoiler names {len(mq_dungeons)} MQ dungeons and the tracker found "
+    elif mq_scenes is not None and len(mq_scenes) != expected_mq:
+        notes.append(f"the spoiler names {expected_mq} MQ dungeons and the tracker found "
                      f"{len(mq_scenes)}: {sorted(mq_scenes)}")
     mq_scenes = set(mq_scenes or [])
     # every location the tracker knows, and the item it resolved for the ones
@@ -425,15 +433,57 @@ def check_placement(rep, data, spoiler, world, logp):
 
 def check_entrances(rep, data, spoiler, world):
     if spoiler is None:
+        rep.add("entrances", "skip", "no spoiler next to the ROM")
         return
     _, ents, _ = parse_spoiler(spoiler)
-    want = len(ents.get(world, []))
-    got = len(data.get("entrances") or [])
-    if want and not got:
-        rep.add("entrances", "FAIL", f"spoiler lists {want} shuffled entrances, the ROM read 0")
-    elif want or got:
-        status = "ok" if got == want else "WARN"
-        rep.add("entrances", status, f"rom {got}, spoiler {want}")
+    expected = ents.get(world, [])
+    actual = data.get("entrances") or []
+    # Display labels change across releases; the parenthesised entrance
+    # symbols identify both ends, including the game (OOT_/MM_).
+    def symbol(label):
+        m = re.search(r"\(((?:OOT|MM)_[A-Z0-9_]+)\)\s*$", label)
+        return m.group(1) if m else None
+
+    want, got = collections.Counter(), collections.Counter()
+    unknown_expected = unknown_actual = 0
+    for src, dst in expected:
+        pair = symbol(src), symbol(dst)
+        if all(pair):
+            want[pair] += 1
+        else:
+            unknown_expected += 1
+    for entry in actual:
+        pair = entry.get("src_name"), entry.get("dst_name")
+        if all(isinstance(s, str) and re.fullmatch(r"(?:OOT|MM)_[A-Z0-9_]+", s) for s in pair):
+            got[pair] += 1
+        else:
+            unknown_actual += 1
+    missing, extra = want - got, got - want
+    wrong = []
+    # Even partial coverage can prove a wrong destination for a known source.
+    for src in {a for a, _ in want} & {a for a, _ in got}:
+        a = collections.Counter({dst: n for (s, dst), n in want.items() if s == src})
+        b = collections.Counter({dst: n for (s, dst), n in got.items() if s == src})
+        if a != b:
+            wrong.append(src)
+    if not expected and not actual:
+        rep.add("entrances", "skip", "no entrance pairs to verify")
+        return
+    unknown = unknown_expected + unknown_actual
+    # Unknown pairs can account for only that many unmatched pairs on the
+    # opposite side. They cannot hide a proven extra in a complete spoiler.
+    failed = (len(expected) != len(actual) or wrong
+              or sum(missing.values()) > unknown_actual
+              or sum(extra.values()) > unknown_expected)
+    status = "FAIL" if failed else "WARN" if unknown else "ok"
+    detail = (f"rom {len(actual)}, spoiler {len(expected)}; "
+              f"{sum((want & got).values())} pairs agree; "
+              f"{sum(missing.values())} missing, {sum(extra.values())} extra, {unknown} unverified")
+    if wrong:
+        detail += "; wrong destination: " + ", ".join(sorted(wrong)[:6])
+    elif missing or extra:
+        detail += "; " + "; ".join(f"{a} -> {b}" for a, b in list(missing or extra)[:4])
+    rep.add("entrances", status, detail)
 
 
 # --------------------------------------------------------------------------

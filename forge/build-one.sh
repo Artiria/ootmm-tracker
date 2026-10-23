@@ -8,7 +8,7 @@
 #          the spoiler log and job.json
 #   oot.sym, mm.sym   the linker's symbol table of each payload (nm -n -S):
 #                     the truth the tracker's heuristics are checked against
-#   data/             that version's own gi.yml, pool CSVs, scenes/npc/entrances
+#   data/             that version's own definitions, CSV/XML checks and names
 #   build.json, setup.log, build.log
 #
 # Environment: REF (tag, branch or full sha), LABEL (the out folder), and
@@ -76,10 +76,12 @@ done
 
 # That version's own data, kept next to the seed for reference and for
 # comparing with the tracker's own copies of the same files.
-mkdir -p "$OUT/data"
-find . -path '*/node_modules' -prune -o \
-  \( -name gi.yml -o -name pool_oot.csv -o -name pool_mm.csv -o -name scenes.yml -o -name npc.yml -o -name entrances.yml \) -print 2>/dev/null \
-  | while read -r f; do cp "$f" "$OUT/data/"; done
+# Each run stages a fresh tree. A previous run is kept until collection has
+# succeeded, so a missing or ambiguous upstream tree cannot replace it.
+data_stage=$(mktemp -d "$OUT/.data-XXXXXX")
+node /jobs/collect-data.cjs /work "$data_stage" || { rmdir "$data_stage" 2>/dev/null || true; fail "collecting data failed"; }
+if [ -e "$OUT/data" ]; then mv "$OUT/data" "$OUT/data.previous-$(date +%s)-$$"; fi
+mv "$data_stage" "$OUT/data"
 
 # --- generate ---------------------------------------------------------------
 cd "$GEN"

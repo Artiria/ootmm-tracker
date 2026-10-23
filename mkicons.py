@@ -30,6 +30,7 @@ import struct
 import zlib
 
 import paths
+import provenance
 import rom
 
 # `ref/` is OUR copy of OoTMM's headers, kept for humans to read; it is not
@@ -293,6 +294,7 @@ def main(argv=None):
     out = {
         # which ROM they came from, so discover.py knows whether they are current
         "rom": args.rom,
+        "rom_sha256": provenance.rom_digest(rom_bytes),
         "sheet": "icons.png",
         "side": ICON_SIDE,
         "cols": COLS,

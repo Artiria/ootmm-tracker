@@ -23,6 +23,11 @@ If nothing matches, it falls back to `Recent Rom 0`, the last one opened.
 
 The spoiler is looked for next to the ROM: for `OoTMM-<id>.z64` it prefers
 `OoTMM-Spoiler-<id>.txt`, and failing that, any spoiler in that folder.
+
+Project64 also opens a seed straight from its `.zip`, and then `Recent Rom 0`
+names the zip. The ROM inside is taken out once, into the tracker's own
+folder (`archive-roms/`), and from there on it is a `.z64` like any other;
+the spoiler is looked for beside the zip as well as beside the ROM.
 """
 
 import contextlib
@@ -31,7 +36,10 @@ import hashlib
 import io
 import json
 import os
+import pathlib
 import re
+import shutil
+import zipfile
 
 import paths
 
@@ -231,13 +239,163 @@ def _newest_mtime(d):
 
 
 # --------------------------------------------------------------------------
+# Archives
+# --------------------------------------------------------------------------
+#
+# Project64 opens a seed straight from its .zip and writes THAT path to
+# `Recent Rom 0`. On 22 oct 2026 that was the seed being played: a 54 MB zip
+# went down the chain as if it were the ROM, rom_hash() tripped on a length
+# that was no multiple of four, auto-detection apologised in one line and the
+# overlay came up on the previous seed's tables, confidently. So an archive is
+# opened here, once: the ROM inside goes to a folder of the tracker's own and
+# from then on it is a .z64 like any other. The folder is keyed by the
+# archive's path, size and mtime, so a re-download is a new ROM and an
+# unchanged zip costs nothing after the first time.
+
+ROM_EXTENSIONS = (".z64", ".n64", ".v64")
+ARCHIVE_EXTENSIONS = (".zip",)
+ARCHIVES_DIRNAME = "archive-roms"
+ARCHIVES_KEEP = 3                 # extracted seeds kept, newest first
+ORIGIN_FILE = "origin.json"       # which archive a folder came out of
+_SPOILER_NAME = re.compile(r"OoTMM-Spoiler-[A-Za-z0-9]+\.txt$")
+
+
+def archives_dir(*parts):
+    """Where ROMs taken out of archives live: one folder per archive."""
+    return paths.user(ARCHIVES_DIRNAME, *parts)
+
+
+def is_archive(path):
+    return bool(path) and os.path.splitext(path)[1].lower() in ARCHIVE_EXTENSIONS
+
+
+def _archive_slot(archive):
+    st = os.stat(archive)
+    key = f"{os.path.normcase(os.path.abspath(archive))}|{st.st_size}|{st.st_mtime_ns}"
+    return archives_dir(hashlib.sha1(key.encode("utf-8", "surrogatepass")).hexdigest()[:16])
+
+
+def _rom_members(names):
+    """The ROM entries of an archive, .z64 first, else in the archive's order."""
+    roms = [n for n in names if not n.endswith("/") and n.lower().endswith(ROM_EXTENSIONS)]
+    return sorted(roms, key=lambda n: (not n.lower().endswith(".z64"), names.index(n)))
+
+
+def archive_origin(rom):
+    """The archive `rom` was taken out of, or None for a loose ROM."""
+    try:
+        with open(os.path.join(os.path.dirname(rom), ORIGIN_FILE), encoding="utf-8") as fh:
+            origin = json.load(fh).get("archive")
+    except (OSError, ValueError, AttributeError):
+        return None
+    return origin if isinstance(origin, str) and origin else None
+
+
+def _prune_archives(keep):
+    """Drop the oldest extracted seeds past ARCHIVES_KEEP. Never `keep`, and
+    never a folder without an origin.json: that one is not ours to delete."""
+    try:
+        slots = [os.path.join(archives_dir(), d) for d in os.listdir(archives_dir())]
+    except OSError:
+        return
+    ours = [s for s in slots if os.path.isfile(os.path.join(s, ORIGIN_FILE))
+            and not _same(s, keep)]
+    ours.sort(key=os.path.getmtime, reverse=True)
+    for stale in ours[ARCHIVES_KEEP - 1:]:
+        shutil.rmtree(stale, ignore_errors=True)
+
+
+def rom_file(path, extract=True, verbose=True):
+    """The ROM file behind a path from the emulator's list, or None.
+
+    A .z64 (.n64, .v64) is its own answer. For a .zip it is the ROM inside,
+    extracted into archives_dir() -- with any spoiler that travels in the same
+    zip -- the first time, and found there afterwards. With extract=False the
+    path it would have is returned without touching the archive, for a caller
+    that only wants to compare (check_rom_open asks every few seconds).
+
+    None, and a line saying why, for a file no reader here can open: another
+    archive format, a zip with no ROM in it, a zip that is not one.
+    """
+    if not path:
+        return None
+    ext = os.path.splitext(path)[1].lower()
+    if ext in ROM_EXTENSIONS:
+        return path
+    if ext not in ARCHIVE_EXTENSIONS:
+        if verbose:
+            print(f"[auto] the emulator has {path} open, and the tracker cannot read a ROM")
+            print("[auto] out of that: it wants a .z64, or a .zip with one inside.")
+        return None
+    try:
+        with zipfile.ZipFile(path) as z:
+            names = z.namelist()
+            members = _rom_members(names)
+            if not members:
+                if verbose:
+                    print(f"[auto] {path} holds no ROM (.z64/.n64/.v64); nothing to track in it")
+                return None
+            member = members[0]
+            slot = _archive_slot(path)
+            target = os.path.join(slot, os.path.basename(member))
+            info = z.getinfo(member)
+            if os.path.isfile(target) and os.path.getsize(target) == info.file_size:
+                return target
+            if not extract:
+                return target
+            if verbose:
+                print(f"[auto] the emulator opened an archive: {path}")
+                if len(members) > 1:
+                    print(f"[auto] it holds {len(members)} ROMs; using the first, {member}")
+                print(f"[auto] taking {member} out of it ({info.file_size:,} bytes)...")
+            os.makedirs(slot, exist_ok=True)
+            wanted = [member] + [n for n in names if _SPOILER_NAME.search(n)]
+            for name in wanted:
+                dst = os.path.join(slot, os.path.basename(name))
+                tmp = dst + ".tmp"
+                with z.open(name) as src, open(tmp, "wb") as out:
+                    shutil.copyfileobj(src, out, 1 << 20)
+                os.replace(tmp, dst)
+            with open(os.path.join(slot, ORIGIN_FILE), "w", encoding="utf-8") as fh:
+                json.dump({"archive": os.path.abspath(path), "member": member}, fh, indent=1)
+    except (OSError, zipfile.BadZipFile) as ex:
+        if verbose:
+            print(f"[auto] {path} could not be opened as a zip ({type(ex).__name__}: {ex})")
+        return None
+    _prune_archives(slot)
+    return target
+
+
+def _rom_bytes(path):
+    """The ROM's bytes, out of the file or out of the archive it is in; None
+    when there is no ROM there. Reads, never writes: hashing the recent list
+    must not extract every zip in it."""
+    try:
+        if is_archive(path):
+            with zipfile.ZipFile(path) as z:
+                members = _rom_members(z.namelist())
+                return z.read(members[0]) if members else None
+        with open(path, "rb") as fh:
+            return fh.read()
+    except (OSError, zipfile.BadZipFile):
+        return None
+
+
+# --------------------------------------------------------------------------
 # ROM
 # --------------------------------------------------------------------------
 
 
 def rom_hash(path):
-    """MD5 of the ROM in the emulator's internal order (words byte-swapped)."""
-    raw = open(path, "rb").read()
+    """MD5 of the ROM in the emulator's internal order (words byte-swapped).
+
+    None when there is no ROM to hash: a file no reader can open, or one whose
+    length is not a multiple of four -- which is not a ROM, whatever its name,
+    and used to come back as a ValueError that took auto-detection down with it.
+    """
+    raw = _rom_bytes(path)
+    if raw is None or len(raw) % 4:
+        return None
     swapped = bytearray(raw)
     swapped[0::4], swapped[1::4], swapped[2::4], swapped[3::4] = (
         raw[3::4], raw[2::4], raw[1::4], raw[0::4],
@@ -285,15 +443,17 @@ def find_rom(emu, verbose=True):
     different items, so no barrier downstream can tell (see check_spoiler in
     overlay.py).
     """
-    roms = [p for p in recent_roms(emu) if os.path.isfile(p)]
-    if not roms:
+    recent = [p for p in recent_roms(emu) if os.path.isfile(p)]
+    if not recent:
         return None
-    abierta = roms[0]
+    abierta = recent[0]
 
     want = active_save_hash(emu)
     guardada = None
     if want:
-        for p in roms:
+        for p in recent:
+            # an archive is hashed by the ROM inside it, read in memory:
+            # nothing in this loop writes
             if rom_hash_cached(p) == want:
                 guardada = p
                 break
@@ -312,7 +472,12 @@ def find_rom(emu, verbose=True):
     elif verbose:
         como = "open, and its save agrees" if guardada else "open"
         print(f"[auto] ROM ({como}): {abierta}")
-    return abierta
+    # What the readers get: the ROM itself, out of its archive when the
+    # emulator opened one. None, said out loud, when there is no reading it.
+    usable = rom_file(abierta, verbose=verbose)
+    if verbose and usable and not _same(usable, abierta):
+        print(f"[auto] tracking the ROM inside it: {usable}")
+    return usable
 
 
 def find_spoiler(rom, verbose=True):
@@ -332,14 +497,30 @@ def find_spoiler(rom, verbose=True):
     """
     if not rom:
         return None
-    d = os.path.dirname(rom)
-    stem = os.path.splitext(os.path.basename(rom))[0]
-    m = re.match(r"OoTMM-([A-Za-z0-9]+)", stem)
-    if m:
-        sid = m.group(1)
+    # A ROM taken out of an archive has two homes: the folder it was put in
+    # (where a spoiler packed in the same zip went too) and the archive's own,
+    # which is where the unpacked `OoTMM-<id>` folder sits. The seed id comes
+    # from whichever name carries one; the zip's "(2)" copy suffix does not
+    # get in the way of that.
+    origin = archive_origin(rom)
+    places = [rom] + ([origin] if origin else [])
+    dirs = []
+    for p in places:
+        d = os.path.dirname(p)
+        if not any(_same(d, x) or d == x for x in dirs):
+            dirs.append(d)
+    sid = None
+    for p in places:
+        m = re.match(r"OoTMM-([A-Za-z0-9]+)", os.path.splitext(os.path.basename(p))[0])
+        if m:
+            sid = m.group(1)
+            break
+    if sid:
         name = f"OoTMM-Spoiler-{sid}.txt"
-        cands = [os.path.join(d, name), os.path.join(d, f"OoTMM-{sid}", name)]
-        cands += sorted(glob.glob(os.path.join(glob.escape(d), "*", name)))
+        cands = []
+        for d in dirs:
+            cands += [os.path.join(d, name), os.path.join(d, f"OoTMM-{sid}", name)]
+            cands += sorted(glob.glob(os.path.join(glob.escape(d), "*", name)))
         for cand in cands:
             if os.path.isfile(cand):
                 if verbose:
@@ -348,7 +529,9 @@ def find_spoiler(rom, verbose=True):
         if verbose:
             print(f"[auto] no spoiler for seed {sid} near the ROM (not needed: items come from it)")
         return None
-    hits = sorted(glob.glob(os.path.join(glob.escape(d), "*Spoiler*.txt")))
+    hits = []
+    for d in dirs:
+        hits += sorted(glob.glob(os.path.join(glob.escape(d), "*Spoiler*.txt")))
     if len(hits) == 1:
         if verbose:
             print(f"[auto] spoiler: {hits[0]} (the only one next to a ROM with no seed id in its name)")
@@ -416,6 +599,10 @@ def _generate(module, argv, verbose):
 
     try:
         mod = importlib.import_module(module)
+        if module == "mkchecks":
+            # This module may already be loaded when an adopted data tree changes.
+            for reader in (mod, importlib.import_module("placement"), importlib.import_module("entrances")):
+                reader.DATA = pathlib.Path(paths.data_dir())
         quiet = contextlib.redirect_stdout(io.StringIO())
         with contextlib.nullcontext() if verbose else quiet:
             return mod.main(argv) or 0
@@ -436,6 +623,13 @@ def ensure_tables(rom, spoiler, verbose=True):
     if not rom:
         return hecho
 
+    import provenance
+    with open(rom, "rb") as source:
+        rom_bytes = source.read()
+    paths.select_rom_data(rom_bytes)
+    digest = provenance.rom_digest(rom_bytes)
+    data_digest = provenance.data_digest(paths.data_dir())
+
     checks = paths.user("checks.json")
     # `payload` is what mkchecks reads out of the ROM's code (payload.py):
     # a checks.json without the key was built before that existed, and the
@@ -451,6 +645,10 @@ def ensure_tables(rom, spoiler, verbose=True):
     # older table has them in none, so every grotto's chest would go on being
     # listed in every grotto with nothing said about why.
     if (not os.path.exists(checks) or not _same(_built_from(checks), rom)
+            or _built_from(checks, "rom_sha256") != digest
+            or _built_from(checks, "generator_revision") != provenance.CHECKS_REVISION
+            or _built_from(checks, "data_sha256") != data_digest
+            or _built_from(checks, "version") != paths.data_version()
             or not _has_key(checks, "payload")
             or not _has_key(checks, "souls")
             or not _has_key(checks, "scene_layers")
@@ -482,7 +680,9 @@ def ensure_tables(rom, spoiler, verbose=True):
             hecho.append("checks.json")
 
     icons = paths.user("icons.json")
-    if not os.path.exists(icons) or not _same(_built_from(icons), rom):
+    if (not os.path.exists(icons) or not _same(_built_from(icons), rom)
+            or _built_from(icons, "rom_sha256") != digest
+            or not os.path.isfile(paths.user("icons.png"))):
         if verbose:
             print("[auto] extracting icons from the ROM...")
         if _generate("mkicons", ["--rom", rom], verbose):

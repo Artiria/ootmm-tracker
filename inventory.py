@@ -337,13 +337,14 @@ def mm_slot_name(i):
     return f"slot {i}"
 
 
-def mm_snapshot(save, oot_save=None, half_days=None):
+def mm_snapshot(save, oot_save=None, half_days=None, indexed=False):
     """`oot_save` is OoT's block, where OoTMM keeps the owl flags of both
     games; `half_days` is the byte of gSharedCustomSave.mm.halfDays. Either
     may be None, and then those rows are simply not produced."""
     st = {}
     if oot_save is not None:
-        owls = read(oot_save, None, MM_OWL_FLAGS_ADDR, 4)
+        owl_off = 0xD4 + 0x10 + 9 * 0x1C if indexed else MM_OWL_FLAGS_ADDR
+        owls = read(oot_save, None, owl_off, 4)
         for i, name in enumerate(MM_OWLS):
             st[f"owl:{name}"] = 1 if owls & (1 << i) else 0
     if half_days is not None:
@@ -359,6 +360,12 @@ def mm_snapshot(save, oot_save=None, half_days=None):
 
     for i in range(MM_ITEMS_LEN):
         st[f"item:{mm_slot_name(i)}"] = save[MM_ITEMS_ADDR + i]
+    if indexed and oot_save is not None:
+        # v33 keeps both masks in one selectable slot; ownership is in the
+        # stable MmExtraItems record (save.h record 4), bits 15..14.
+        masks = (read(oot_save, None, 0xD4 + 0x10 + 4 * 0x1C, 4) >> 14) & 3
+        st["item:Fierce Deity's Mask"] = 0x35 if masks & 1 else 0xFF
+        st["eq:Adult Mask"] = int(bool(masks & 2))
     for i in range(MM_AMMO_LEN):
         st[f"ammo:{i}"] = save[MM_AMMO_ADDR + i]
     for i in range(MM_DUNG_LEN):

@@ -8,7 +8,7 @@ checks.
 **No spoiler log needed.** What item sits in each location is read from the
 seed ROM itself.
 
-> **0.2.1-beta.** Single player is tested and measured; multiworld has had a
+> **0.2.2-beta (v33 test build).** Single player is tested and measured; multiworld has had a
 > few sessions. Expect rough edges, and please report what you find.
 
 ## Install
@@ -37,7 +37,9 @@ That is all. There is nothing to configure and no paths to type in.
 > the page says so while it works, and it takes a moment — and carries on with
 > the new one. If the emulator stopped `tracker.lua` on the way (loading a ROM
 > can), run it again: the tracker is still listening and picks it up. Nothing
-> to close and reopen.
+> to close and reopen. Opening the seed straight from its `.zip` works too:
+> the tracker takes the ROM out of the archive into its own folder
+> (`archive-roms`, the three most recent seeds) and tracks that one.
 
 > **Windows may still warn you.** The `.exe` is signed as *Open Source
 > Developer Juan Ramos Ruiz* (a Certum certificate), so Windows names the
@@ -85,19 +87,33 @@ anyway. `?spoiler=full` reveals what is in the checks you have not done.
 | | |
 |---|---|
 | ✅ Single player, OoT and MM, including crossing between them | tested against live saves and four RAM dumps |
-| ✅ 6,043 of 6,043 checks | every location in the pool has an address (stray fairies and pond fish included) |
+| ✅ v32 and v33 check formats | 6,043 v32 locations; all 6,242 v33 locations resolve, including the new gossip fairies |
 | ✅ Which grotto or fairy fountain you are in | read from what the game itself records (the grotto byte and `gLastScene`), found in the ROM's code; "remaining here" lists that one and says so when it cannot tell |
 | ✅ Entrances gone through | read from the ROM, no spoiler; shown as you take them (`/p/entrances`), the whole list only with `?spoiler=full` |
 | ✅ Souls (soul shuffle) | every soul read from the ROM, grouped by kind; a compact per-kind summary by default, the full names on demand (`/p/souls`) |
 | ✅ Notes | a memorandum: press the note key (F9; `note_key` in `options.json`) — in the emulator too, on Windows — type a line, Enter; it is kept with the game, area and room you were in, per seed (`/p/notes`). The Bombers' code is read off the save and listed on its own, no hide-and-seek needed |
-| ✅ Item placement and names read from the ROM | no spoiler log, on v32.0 and dev builds |
-| ✅ Check names kept up to date | the names are OoTMM's own and the copy that ships is v32.0's; `ootmm.py data update` fetches a newer tag and adopts it **only if it explains your ROM better**, because v32.3 moved two Great Bay pot names onto different pots and newer is not the same as right |
+| ✅ Item placement and names read from the ROM | no spoiler log, on v32.0, v33.0 and tested dev builds |
+| ✅ Check names kept up to date | OoTMM's own v32.0 and v33.0 labels ship together; the ROM selects the format automatically. `ootmm.py data update` can still measure and adopt another tag |
 | ✅ Addresses read from the ROM's own code | `gSharedCustomSave` and the other game's save buffer are found in the payload's code, so a build that moves them needs no update; measured over 42 seeds, six builds |
 | ✅ OBS overlay, one URL per panel | transparent background, a standalone panel each |
 | ⚠️ Multiworld | tracks your own world; see below |
 | ✅ Project64-EM and BizHawk | P64-EM over its Lua socket, BizHawk over shared memory; both tested live |
 | ❓ Other emulators (RetroArch, Ares) | not tried yet |
 | ❌ Logic and maps | not attempted — that is what The Last Tracker does |
+
+### OoTMM v33.0
+
+The tracker recognises v33 automatically, including its shared check bitmap,
+actor aliases, gossip fairies, changed stray-fairy and cow flags, and multiworld
+identity. The inventory reads the new OoT clock and both shovels, keeps Adult
+Mask ownership separate from Fierce Deity, and shows stick/nut capacity levels.
+Extra OoT bottles continue to appear in the inventory slots they occupy.
+Older seeds retain the previous reader and bundled labels.
+
+Compatibility has been checked against generated ROMs and their spoilers,
+including Allsanity, Master Quest and both players of a multiworld. This is
+static and simulated-memory validation; a live v33 emulator/OBS session has
+not yet been verified.
 
 ### Multiworld
 

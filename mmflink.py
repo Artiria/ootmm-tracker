@@ -31,8 +31,12 @@ data.
 """
 
 import mmap
+import ctypes
+from ctypes import wintypes
+import hashlib
 import os
 import struct
+import threading
 import time
 
 MAGIC = b"BIZ1"
@@ -61,27 +65,63 @@ class MmfDown(Exception):
     """The script is not answering (not loaded yet, or gone)."""
 
 
+class MmfBusy(MmfDown):
+    """Another tracker owns this channel; do not touch any of its mappings."""
+
+
 class MmfLink:
     """Tracker side. Same read()/read_block() as the socket links."""
 
     def __init__(self, name, timeout=2.0):
         self.name = name
         self.timeout = timeout
+        self._lock = threading.Lock()
+        self.req = self.resp = self.seq = None
+        self._owner = None
+        kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel.CreateMutexW.argtypes = [ctypes.c_void_p, wintypes.BOOL, wintypes.LPCWSTR]
+        kernel.CreateMutexW.restype = wintypes.HANDLE
+        kernel.CloseHandle.argtypes = [wintypes.HANDLE]
+        kernel.CloseHandle.restype = wintypes.BOOL
+        self._kernel = kernel
+        mutex_name = "Local\\OoTMMTracker-" + hashlib.sha256(name.encode()).hexdigest()
+        owner = kernel.CreateMutexW(None, False, mutex_name)
+        error = ctypes.get_last_error()
+        if not owner:
+            raise ctypes.WinError(error)
+        if error == 183:  # ERROR_ALREADY_EXISTS: lifetime of the handle is ownership.
+            kernel.CloseHandle(owner)
+            raise MmfBusy(f"another tracker already owns BizHawk channel {name}")
+        self._owner = owner
         self._seq = 0
-        self.req = mmap.mmap(-1, REQ_SIZE, tagname=name + ".req")
-        self.resp = mmap.mmap(-1, RESP_CAP, tagname=name + ".resp")
-        self.seq = mmap.mmap(-1, SEQ_SIZE, tagname=name + ".seq")
-        # Start the answer seq at 0 so the first real request (seq 1) is new.
-        self.seq[0:4] = struct.pack("<I", 0)
+        try:
+            self.req = mmap.mmap(-1, REQ_SIZE, tagname=name + ".req")
+            self.resp = mmap.mmap(-1, RESP_CAP, tagname=name + ".resp")
+            self.seq = mmap.mmap(-1, SEQ_SIZE, tagname=name + ".seq")
+            # A Lua script can outlive the tracker. Continue after its last request.
+            self._seq = struct.unpack_from("<I", self.req, 0)[0]
+            self.seq[0:4] = struct.pack("<I", 0)
+        except BaseException:
+            self.close()
+            raise
 
     def close(self):
-        for m in (self.req, self.resp, self.seq):
-            try:
-                m.close()
-            except Exception:
-                pass
+        with self._lock:
+            for m in (self.req, self.resp, self.seq):
+                if m is not None:
+                    m.close()
+            self.req = self.resp = self.seq = None
+            if self._owner is not None:
+                self._kernel.CloseHandle(self._owner)
+                self._owner = None
 
     def _exchange(self, op, addr, length, timeout=None):
+        with self._lock:
+            if self._owner is None:
+                raise MmfDown(f"BizHawk channel {self.name} is closed")
+            return self._exchange_locked(op, addr, length, timeout)
+
+    def _exchange_locked(self, op, addr, length, timeout):
         self._seq = (self._seq % 0xFFFFFFFF) + 1
         s = self._seq
         # payload first, seq last: see the module docstring

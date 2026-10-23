@@ -9,6 +9,8 @@ entrances-seen.json
 bizhawk.json
 options.json
 notes.json
+# ROMs taken out of a .zip the emulator opened (discover.rom_file)
+archive-roms/
 
 # Iconos que cada uno ponga a mano (ver icons/README.md), menos el propio README
 icons/*
@@ -30,6 +32,7 @@ capture*-*
 capture*.out
 capture*.stop
 capture*.jsonl
+summary.txt
 
 __pycache__/
 *.pyc
@@ -55,3 +58,6 @@ forge/.jobs/
 # at a tag, fetched on demand and adopted only after being measured; the copy
 # that ships is the one in data/.
 data-updates/
+
+# Local audit evidence and isolated builds; may contain private machine paths.
+audit-review-*/

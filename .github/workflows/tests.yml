@@ -1,0 +1,33 @@
+name: Regression tests
+on: [push, pull_request, workflow_dispatch]
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+        python: ['3.11', '3.14']
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ matrix.python }}
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+          package-manager-cache: false
+      - name: Python regressions
+        run: python -B -m unittest discover -s tests -v
+      - name: Frontend regressions and syntax
+        run: node tests/frontend.cjs
+      - name: Forge data collection
+        run: node tests/forge-data.cjs
+      - name: Bash syntax
+        if: runner.os == 'Linux'
+        run: bash -n forge/build-one.sh

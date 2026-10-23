@@ -482,11 +482,29 @@ def wait_for_emulator(host, port, label, forced="auto", on_link=None):
 
     found = {}
     ev = threading.Event()
+    winner_lock = threading.Lock()
+    errors = []
+    remaining = 2 if forced == "auto" else 1
+
+    def worker(target):
+        nonlocal remaining
+        try:
+            target()
+        except (Exception, SystemExit) as ex:
+            message = f"{type(ex).__name__}: {ex}"
+            print(f"[{label}] emulator listener stopped: {message}")
+            with winner_lock:
+                errors.append(message)
+        finally:
+            with winner_lock:
+                remaining -= 1
+                if remaining == 0:
+                    ev.set()
 
     def via_socket():
         ls = listen_for_script(host, port, label)
         if ls is None:
-            return
+            raise ConnectionError(f"cannot listen for Project64 on {host}:{port}")
         ls.listen(1)
         ls.settimeout(0.5)
         # `mio` once a script of ours has connected: from then on this thread
@@ -499,18 +517,29 @@ def wait_for_emulator(host, port, label, forced="auto", on_link=None):
                 sock, _ = ls.accept()
             except socket.timeout:
                 continue
-            except OSError:
+            except OSError as ex:
+                with winner_lock:
+                    errors.append(str(ex))
                 break
             sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
             try:
+                sock.settimeout(5.0)
                 link = p64_handshake(sock, label)
-            except SystemExit:
+                # The deadline belongs to the handshake. Timing out a later
+                # read could leave its response queued for the next address.
+                sock.settimeout(None)
+            except (SystemExit, OSError) as ex:
+                print(f"[{label}] handshake interrupted ({ex}); waiting for the script again")
                 sock.close()
                 continue
-            if not ev.is_set():
-                found["link"] = link
-                mio = True
-                ev.set()
+            with winner_lock:
+                if not ev.is_set():
+                    found["link"] = link
+                    mio = True
+                    ev.set()
+            if not mio:
+                sock.close()  # BizHawk won while this peer was handshaking.
+                break
             if on_link is None:
                 break
             mio = True
@@ -522,32 +551,38 @@ def wait_for_emulator(host, port, label, forced="auto", on_link=None):
 
     def via_mmf():
         link = mmflink.MmfLink(mmflink.DEFAULT_NAME)
-        while not ev.is_set():
-            try:
-                if link.ping(timeout=0.5):
-                    size = link.read(mmflink.OSMEMSIZE_ADDR, 4)
-                    if size in mmflink.OSMEMSIZE_OK:
-                        print(f"[{label}] BizHawk (shared memory), RDRAM "
-                              f"{size // (1024 * 1024)} MB - memory reads OK\n")
-                    else:
-                        print(f"[{label}] BizHawk (shared memory), osMemSize = "
-                              f"0x{size:08X} (the ROM may still be booting)\n")
-                    if not ev.is_set():
-                        found["link"] = link
-                        ev.set()
-                        if on_link:
+        adopted = False
+        try:
+            while not ev.is_set():
+                try:
+                    if link.ping(timeout=0.5):
+                        size = link.read(mmflink.OSMEMSIZE_ADDR, 4)
+                        if size in mmflink.OSMEMSIZE_OK:
+                            print(f"[{label}] BizHawk (shared memory), RDRAM "
+                                  f"{size // (1024 * 1024)} MB - memory reads OK\n")
+                        else:
+                            print(f"[{label}] BizHawk (shared memory), osMemSize = "
+                                  f"0x{size:08X} (the ROM may still be booting)\n")
+                        with winner_lock:
+                            if not ev.is_set():
+                                found["link"] = link
+                                adopted = True
+                                ev.set()
+                        if adopted and on_link:
                             on_link(link)
-                    return
-            except mmflink.MmfDown:
-                pass
-            time.sleep(0.2)
-        link.close()
+                        return
+                except mmflink.MmfDown:
+                    pass
+                time.sleep(0.2)
+        finally:
+            if not adopted:
+                link.close()
 
     threads = []
     if forced in ("auto", "p64em"):
-        threads.append(threading.Thread(target=via_socket, daemon=True))
+        threads.append(threading.Thread(target=worker, args=(via_socket,), daemon=True))
     if forced in ("auto", "bizhawk"):
-        threads.append(threading.Thread(target=via_mmf, daemon=True))
+        threads.append(threading.Thread(target=worker, args=(via_mmf,), daemon=True))
     for t in threads:
         t.start()
 
@@ -560,6 +595,8 @@ def wait_for_emulator(host, port, label, forced="auto", on_link=None):
     print()
 
     ev.wait()
+    if "link" not in found:
+        raise ConnectionError("; ".join(errors) or "no emulator listener is available")
     return found["link"]
 
 
@@ -1490,7 +1527,7 @@ def cmd_data(args):
 
     activo = paths.active_data_tag()
     if args.what == "status":
-        print(f"names in force : {activo or 'v32.0 (the copy that ships)'}")
+        print(f"names in force : {activo or 'bundled v32.0 / v33.0 (selected per ROM)'}")
         print(f"read from      : {paths.data_dir()}")
         bajados = dataupdate.downloaded()
         print(f"downloaded     : {', '.join(bajados) if bajados else '(none)'}")
@@ -1501,7 +1538,7 @@ def cmd_data(args):
             print("already using the copy that ships; nothing to revert")
             return
         dataupdate.set_active(None)
-        print(f"back to the copy that ships (v32.0); {activo} is still downloaded")
+        print(f"back to bundled labels selected per ROM; {activo} is still downloaded")
         return
 
     # update. The measure is against a ROM, so without one there is nothing
@@ -1509,10 +1546,13 @@ def cmd_data(args):
     rom = args.rom
     if not rom:
         import discover
-        rom = discover.find_rom(None, verbose=False)
+        emu = discover.find_emulator()
+        rom = discover.find_rom(emu, verbose=False) if emu else None
     if not rom or not os.path.isfile(rom):
         sys.exit("this needs the seed's ROM to measure against: pass --rom"
                  " (the emulator's open ROM is used when there is one)")
+    with open(rom, "rb") as source:
+        paths.select_rom_data(source.read())
     tag = args.tag
     if not tag:
         print("asking OoTMM for its latest tag...")
@@ -1562,8 +1602,7 @@ def cmd_data(args):
         return
     dataupdate.set_active(tag)
     print(f"\nadopted: {tag}."
-          "\nRebuild the tables for your seed so the names take effect"
-          " (delete checks.json, or start the tracker with --rom).")
+          "\nRestart the tracker for your seed; its tables will rebuild automatically.")
 
 
 def cmd_find(args):
@@ -1841,6 +1880,11 @@ def finish(cap, args):
 
 
 def main():
+    # A worker entry point usable by both Python and the frozen executable.
+    # Its caller supplies isolated HOME/DATA before the process imports anything.
+    if sys.argv[1:2] == ["--generate-checks"]:
+        import mkchecks
+        raise SystemExit(mkchecks.main(sys.argv[2:]) or 0)
     p = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
@@ -2029,6 +2073,8 @@ def _run():
             pass
 
     def hold(code):
+        if sys.argv[1:2] == ["--generate-checks"]:
+            return False
         if not paths.FROZEN:
             return False
         if sys.argv[1:] and not code:

@@ -294,7 +294,11 @@ def build_with(data_dir, rom, say=print):
     the tables of whatever seed was being played. OOTMM_TRACKER_HOME exists
     because that actually happened (1 sep 2026).
     """
-    home = Path(tempfile.mkdtemp(prefix="ootmm-data-measure-"))
+    with tempfile.TemporaryDirectory(prefix="ootmm-data-measure-") as home:
+        return _build_with(Path(home), data_dir, rom, say)
+
+
+def _build_with(home, data_dir, rom, say):
     env = dict(os.environ, OOTMM_TRACKER_HOME=str(home))
     # `None` means "what is in force", and it has to be NAMED, not left to the
     # child to work out. The sandbox moves USER_DIR, and `data-updates/` --
@@ -306,8 +310,13 @@ def build_with(data_dir, rom, say=print):
     resuelto = str(data_dir if data_dir is not None else paths.data_dir())
     env[paths.DATA_ENV] = resuelto
     here = Path(__file__).resolve().parent
-    r = subprocess.run([sys.executable, str(here / "mkchecks.py"), "--rom", str(rom)],
-                       cwd=str(here), env=env, capture_output=True, text=True)
+    command = [sys.executable]
+    if not paths.FROZEN:
+        command.append(str(here / "ootmm.py"))
+    command += ["--generate-checks", "--rom", str(rom)]
+    r = subprocess.run(command, cwd=str(here), env=env, capture_output=True, text=True,
+                       stdin=subprocess.DEVNULL,
+                       creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0)
     out = home / "checks.json"
     if r.returncode != 0 or not out.is_file():
         say((r.stdout or "")[-800:])
@@ -339,7 +348,6 @@ def build_with(data_dir, rom, say=print):
         "version": d.get("version"),
         "source": d.get("source"),
     }
-    shutil.rmtree(home, ignore_errors=True)
     return m
 
 

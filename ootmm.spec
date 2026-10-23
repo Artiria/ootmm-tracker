@@ -26,6 +26,7 @@ a = Analysis(
     binaries=[],
     datas=[
         ("data", "data"),                  # pool CSVs, scenes/npc/gi, ref/
+        ("data-v33", "data-v33"),          # v33 indexed checks, selected from the ROM
         ("overlay.html", "."),             # the page the server serves
         ("Scripts/tracker.lua", "Scripts"),  # Project64-EM, installed on first run
         ("Scripts/tracker-bizhawk.lua", "Scripts"),  # BizHawk, loaded by hand in the Lua Console

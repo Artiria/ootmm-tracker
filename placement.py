@@ -69,8 +69,8 @@ MIN_RECORDS = 64
 
 # The generator writes one file per world with that world's settings, and up
 # to v32.3 its first byte is the world number. Gen 943 moved it (the payload
-# carries an `sWorldId` byte instead), so like every other address here it is
-# checked before it is believed. See world_of_rom().
+# carries an `sWorldId` byte instead, located by payload.world_id). The old
+# config remains the fallback for releases without that code signature.
 VROM_CONFIG = 0xF0200000
 
 # A world number above this is not one; it is whatever else got read. OoTMM
@@ -233,7 +233,14 @@ def locate_tables(rom_bytes, verbose=False):
     # here is how a build that moved them would go unnoticed.
     for juego, vrom in VROM_CHECKS.items():
         try:
-            tablas.append((juego, rom.read_extra_vrom(rom_bytes, vrom)))
+            blob = rom.read_extra_vrom(rom_bytes, vrom)
+            shape = _shape(blob)
+            if shape:
+                blob = blob[:(shape[0] + 1) * 16]
+                if shape[1]:
+                    # KEY_MM is authoritative even when this VROM used to be OoT's.
+                    juego = None
+            tablas.append((juego, blob))
         except (KeyError, ValueError, IndexError, struct.error):
             continue
     if verbose:
@@ -484,6 +491,9 @@ def world_of_rom(rom_bytes, tabla=None, por_mundo=None, verbose=False):
 
     Three signals, and the answer says which one spoke:
 
+      * **world-id code** — Multi_WorldID and its adjacent packet sender in
+        both payloads. One candidate each and matching bytes establish the
+        modern world's identity without a spoiler or item-owner majority.
       * **config** — the ROM's own word for it, `VROM_CONFIG`'s first byte.
         Exact up to v32.3, and gen 943 moved it, so it counts only if it is a
         plausible world AND one that actually owns items in this ROM.
@@ -504,6 +514,13 @@ def world_of_rom(rom_bytes, tabla=None, por_mundo=None, verbose=False):
     duenos = collections.Counter(p for _, p in (tabla or {}).values() if p)
     presentes = set(duenos)
     mayoria = duenos.most_common(1)[0][0] if duenos else None
+
+    import payload
+    exact = payload.world_id(rom_bytes, MAX_WORLD)
+    if exact is not None:
+        if verbose:
+            print(f"world: this ROM plays world {exact}, by the ROM's world-id code")
+        return exact, "the ROM's world-id code"
 
     config = None
     try:
@@ -668,6 +685,16 @@ def same_item(spoiler_name, rom_name):
     a = re.sub(r"\s*\((?:oot|mm)\)$", "", a)
     b = re.sub(r"\s*\((?:oot|mm)\)$", "", b)
     if a == b:
+        return True
+    # v33 kept the spoiler's generic first-upgrade names while the ROM now
+    # calls that item Capacity. Do not collapse the later upgrade tiers.
+    if (a, b) in {
+        ("deku nut upgrade", "deku nut capacity"),
+        ("deku stick upgrade", "deku stick capacity"),
+        ("ocarina", "fairy ocarina"),
+        ("soul of eenoes", "soul of eenos"),
+        ("soul of tourist center owner", "soul of boat cruise man"),
+    }:
         return True
     # Souls (soul shuffle): the spoiler and the ROM name the same soul by
     # different NPCs, often a "/"-list ("Soul of Malon/Romani/Cremia" vs

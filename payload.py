@@ -539,6 +539,65 @@ def layout_complete(lay):
     return all(o.get(k) is not None for k in ("npc", "shops", "scrubs", "sr", "xflags_count"))         and all(m.get(k) is not None for k in ("base", "npc", "shops", "halfDays", "xflags_count"))
 
 
+def indexed_layout(scans, located, index):
+    """v33's shared xflags, anchored by Xflag_Get in both payloads.
+
+    Recognise the getter's sentinel check and bitmap operations, then read
+    its resolved array reference. Neither symbols nor build addresses enter
+    this recognition. The remaining arrays must fit their referenced shapes.
+    """
+    offsets = []
+    for game in ("oot", "mm"):
+        sc = scans[game]
+        base, size = located[game]["custom"]
+        candidates = []
+        for i in range(len(sc.words) - 12):
+            w = sc.words[i:i + 13]
+            if (w[:3] != (0x3403ffff, 0x10830009, 0x24020001)
+                    or w[3] >> 16 != 0x3c03 or w[4] != 0x000410c2
+                    or w[5] >> 16 != 0x2463 or w[6] != 0x00431021
+                    or w[7] >> 16 != 0x9042
+                    or w[8:] != (0x30840007, 0x00821007, 0x30420001, JR_RA, 0)):
+                continue
+            refs = [r.addr - base for r in sc.refs
+                    if r.pc == sc.ram + (i + 7) * 4 and r.indexed and r.kind == "lbu"]
+            candidates.extend(o for o in refs if 0 <= o < size)
+        if len(candidates) != 1:
+            return None
+        offsets.append(candidates[0])
+    if offsets[0] != offsets[1]:
+        return None
+    start = offsets[0]
+    length = (index.count + 7) // 8
+    size = min(located[g]["custom"][1] for g in ("oot", "mm"))
+    cows = (start + length + 3) & ~3
+    if cows + 4 > size:
+        return None
+    idx, any_ = _pooled_refs(scans, located, size)
+    if not all(idx.get(d, 0) for d in (0, 0x20, 0x28, 0x30)):
+        return None
+    mm = [b for b in range(0x40, start - 0x24, 16)
+          if idx.get(b, 0) and idx.get(b + 0x20, 0) and any_.get(b + 0x24, 0)]
+    if len(mm) != 1:
+        return None
+    # cows follows the shared bitmap with u32 alignment; both games read it.
+    for game in ("oot", "mm"):
+        addr = located[game]["custom"][0] + cows
+        if not any(r.addr == addr and r.kind == "lw" for r in scans[game].refs):
+            return None
+    fish = [f for f in range(cows + 4, size - 5)
+            if idx.get(f, 0) >= 2 and idx.get(f - 0x14, 0) >= 1 and any_.get(f - 0x28, 0)]
+    b = mm[0]
+    return {
+        "format": "indexed", "cows": cows,
+        "oot": dict(xflags=start, xflags_count=length, npc=0, shops=0x20,
+                    scrubs=0x28, sr=0x30,
+                    caughtFishFlags=fish[0] if len(fish) == 1 else None),
+        "mm": dict(base=b, xflags=start, xflags_count=length,
+                   npc=b, shops=b + 0x20, halfDays=b + 0x24),
+    }
+
+
 # --------------------------------------------------------------------------
 # The soul bitmaps (souls.py)
 # --------------------------------------------------------------------------
@@ -1168,6 +1227,82 @@ def grotto_data(scan, own):
     return cands[0] if len(cands) == 1 else None
 
 
+def save_flag_items(rom_bytes, scan, bases):
+    """Clock and shovels: follow their item handler and parameters in the ROM."""
+    import placement
+    import souls
+    names = placement.find_item_names(rom_bytes, "oot") or []
+    selected = [i for i, n in enumerate(names) if n in ("Clock", "Shovel")]
+    if len(selected) != 3:
+        return []
+    tables = souls.find_tables(rom_bytes, "oot") or {}
+    if "funcs_off" not in tables or "params_off" not in tables:
+        return []
+    funcs = scan.blob[tables["funcs_off"]:tables["funcs_off"] + tables["n"]]
+    handlers = _handler_table(scan.blob, scan.ram, funcs)
+    ids = {funcs[i] for i in selected}
+    if handlers is None or len(ids) != 1 or max(ids) >= len(handlers):
+        return []
+    fn = handlers[ids.pop()]
+    i = (fn - scan.ram) // 4
+    w = scan.words[i:i + 12]
+    if (len(w) != 12 or w[0] >> 16 != 0x3c02 or w[1] != 0x000718c3
+            or w[2] >> 16 != 0x2442 or w[3] != 0x00431021
+            or w[4] >> 16 != 0x9044 or w[5:9] != (0x30e70007, 0x24030001, 0x00e31804, 0x00641825)
+            or w[9] >> 16 != 0xa043 or w[10:] != (JR_RA, 0x00001025)
+            or (w[4] & 0xffff) != (w[9] & 0xffff)):
+        return []
+    bumped = _bumped_by(scan, fn)
+    if bumped is None or bumped[1] != 1:
+        return []
+    base, size = bases["custom"]
+    offset = bumped[0] - base
+    params = [struct.unpack_from(">H", scan.blob, tables["params_off"] + 2 * i)[0] for i in selected]
+    if sorted(params) != [0, 1, 2] or not 0 <= offset < size:
+        return []
+    labels = {0: ("oot", "eq:Clock"), 1: ("oot", "eq:Shovel"), 2: ("mm", "eq:Shovel")}
+    if any(names[i] != ("Clock" if param == 0 else "Shovel") for i, param in zip(selected, params)):
+        return []
+    return [dict(game=labels[p][0], key=labels[p][1], off=offset + p // 8, bit=p % 8)
+            for p in params]
+
+
+def world_id(rom_bytes, max_world=64):
+    """Read modern Multi_WorldID from its code in BOTH payloads.
+
+    A three-instruction byte getter alone is not distinctive. Require the
+    adjacent Multi_SendPacket sequence too: increment its packet counter,
+    write the old counter unaligned at packet+0 and tail-call the sender.
+    Only one matching getter per game, in-bounds data, and agreement between
+    the independent payload copies can establish a world. No symbol file or
+    fixed sWorldId address is used. Measured on three gen-943 builds.
+    """
+    worlds = []
+    for game in ("oot", "mm"):
+        p = PAYLOAD[game]
+        try:
+            blob = romlib.read_extra_vrom(rom_bytes, p["vrom"])
+        except (KeyError, ValueError, IndexError, struct.error):
+            return None
+        candidates = []
+        words = struct.unpack_from(f">{len(blob) // 4}I", blob)
+        for i in range(len(words) - 10):
+            w = words[i:i+11]
+            if (w[0] >> 16 != 0x3C02 or w[1] != 0x03E00008 or w[2] >> 16 != 0x9042
+                    or w[3] >> 16 != 0x3C02 or w[4] >> 16 != 0x2442
+                    or w[5:9] != (0x8C430014, 0x24660001, 0xAC460014, 0xA8830000)
+                    or w[9] >> 26 != 2 or w[10] != 0xB8830003):
+                continue
+            address = ((w[0] & 0xFFFF) << 16) + _sext16(w[2] & 0xFFFF)
+            offset = address - p["ram"]
+            if 0 <= offset < len(blob):
+                candidates.append(blob[offset])
+        if len(candidates) != 1 or not 1 <= candidates[0] <= max_world:
+            return None
+        worlds.append(candidates[0])
+    return worlds[0] if worlds[0] == worlds[1] else None
+
+
 def locate(rom_bytes, verbose=False):
     """Everything the tracker wants, or as much of it as the ROM gives.
 
@@ -1223,8 +1358,14 @@ def locate(rom_bytes, verbose=False):
     if "oot" in scans and "mm" in scans and \
             "custom" in out.get("oot", {}) and "custom" in out.get("mm", {}):
         size = max(out["oot"]["custom"][1], out["mm"]["custom"][1])
-        out["layout"] = layout(scans["oot"], scans["mm"],
-                               out["oot"]["custom"][0], out["mm"]["custom"][0], size)
+        import xflags
+        index = xflags.read(rom_bytes)
+        if index is not None:
+            out["layout"] = indexed_layout(scans, out, index) or {}
+            out["save_flag_items"] = save_flag_items(rom_bytes, scans["oot"], out["oot"])
+        else:
+            out["layout"] = layout(scans["oot"], scans["mm"],
+                                   out["oot"]["custom"][0], out["mm"]["custom"][0], size)
     # kept for whoever wants more out of the same scan (souls_block); private,
     # and mkchecks' _payload_json only copies what it names
     out["_scans"] = scans

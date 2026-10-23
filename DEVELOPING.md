@@ -7,6 +7,36 @@ changing anything.
 
 ## Running from source
 
+The public regressions run on every push and pull request through
+`.github/workflows/tests.yml`, using Windows and Linux with Python 3.11 and
+3.14 and Node 24. Run them locally with:
+
+```
+python -B -m unittest discover -s tests -v
+node tests/frontend.cjs
+node tests/forge-data.cjs
+```
+
+These use synthetic inputs and private temporary state; ROMs and RAM dumps
+never enter CI. The Windows job also exercises real private MMF channels.
+The corpus and real emulator/OBS checks remain separate local validation.
+
+For a real-session check, use a disposable save/profile and verify an item
+pickup, an OoT/MM transition, stopping/restarting Lua, and a note saved across
+a tracker restart. In OBS, check a Browser Source with `?chroma=none`, panel
+layout and reconnection. A successful fake-Lua or HTTP check does not replace
+this visual and live-memory validation.
+
+Cached checks include `provenance.CHECKS_REVISION`. Bump it whenever generator
+logic changes the meaning of its output without changing the ROM/data bytes.
+That invalidates prior tables on the next normal tracker startup.
+
+Modern multiworld identification recognises `Multi_WorldID` and its adjacent
+packet-sending code in both payloads, then requires a unique match and equal
+world bytes. Old config, spoiler comparison and the explicitly labelled
+majority estimate remain fallbacks for other code layouts. Symbols and ROM
+filenames are validation oracles, never runtime inputs to that recognition.
+
 1. Copy `Scripts\tracker.lua` into Project64-EM's `Scripts\` folder — it has to
    be in there for the emulator to list it — or run `python ootmm.py
    install-lua`, which finds the folder on its own. With the ROM loaded:
@@ -77,12 +107,13 @@ read from the ROM.
 | `inventory.py` | both games' inventory map and the id table |
 | `mkchecks.py` | generates `checks.json` from `data/` and the ROM |
 | `placement.py` | what item is in each location and what it is called, read from the ROM |
+| `xflags.py` | v33 actor/sibling dictionary, decoded from the ROM into shared bit IDs |
 | `payload.py` | where OoTMM's own globals live (`gSharedCustomSave`, the other game's save buffer, the layout inside), read from the payload's MIPS code |
 | `souls.py` | the soul shuffle's catalogue and bitmaps, read from the ROM |
 | `entrances.py` | the seed's shuffled entrances, read from the ROM (`COMBO_VROM_ENTRANCES`) and labelled with `data/entrances.yml` |
 | `dataupdate.py` | downloads OoTMM's `data/` at a tag and adopts it only if it explains your ROM better — `ootmm.py data` |
 | `mkicons.py` | extracts the icons from the ROM |
-| `discover.py` | finds the ROM and spoiler, regenerates whatever is stale |
+| `discover.py` | finds the ROM and spoiler (out of the `.zip` the emulator opened, if that is what it opened), regenerates whatever is stale |
 | `overlay.py` / `overlay.html` | the tracker you actually look at |
 | `rom.py` | reading the ROM: Yaz0, dmadata, extra DMA |
 | `fakelua.py` | a fake `tracker.lua` that serves a dump: testing without an emulator |
@@ -93,6 +124,25 @@ read from the ROM.
 | `forge/` | seeds of any OoTMM version built from source, and the guard that checks the tracker against them — see [`forge/README.md`](forge/README.md) |
 
 ## Testing without an emulator
+
+The small public regression suite needs no ROM, emulator or network:
+
+```
+python -B -m unittest discover -s tests -v
+node tests/frontend.cjs
+```
+
+It covers table-cache invalidation, the updater's worker command, notes and
+failed writes, entrance history, MMF ownership on Windows, handshake recovery,
+unified placement tables and the forge exit status. Generated tables carry
+`rom_sha256` and `data_sha256`; tables from older builds are regenerated once.
+The updater measures candidates in a separate process with
+`--generate-checks --rom ...`, including when running from the executable.
+
+Notes are keyed by the ROM's SHA-256, with a full-path fallback when the ROM
+cannot be read. Older filename-only notes are preserved and offered for explicit
+import in the director view: their original format cannot distinguish two seeds
+with the same filename. A failed save leaves the text available for retry.
 
 `fakelua.py` stands in for `tracker.lua`: it connects to the daemon's port and
 serves a RAM dump over the same protocol. That runs the whole overlay end to
@@ -208,6 +258,32 @@ cannot overwrite a real run's `checks.json`, which happened), and
 `OOTMM_TRACKER_DATA` forces which `data/` the names come from. Neither ever
 falls back quietly: if it cannot be honoured, the run stops.
 
+### v33 indexed checks
+
+`data-v33/` pins the labels from v33.0 (`961751062b35296ff27789214bd924206c9c8466`).
+`paths.select_rom_data()` recognises the new dictionary in the ROM and selects
+these labels for generation and cache validation. `data/` remains the legacy
+v32.0 dictionary. Explicit `OOTMM_TRACKER_DATA` and adopted downloads take
+precedence. Neither selection writes an `active.json` or needs the network.
+
+All actor aliases are retained in `xflag_matches`: a check can appear in
+several rooms or scenes in the remaining panel while still counting once.
+
+v33 uses one xflag bitmap for both games. `xflags.py` reads its actor matches
+and sibling drops from `COMBO_VROM_XFLAGS`; XML order never assigns a bit.
+`payload.indexed_layout()` recognises the bitmap getter in both payloads and
+requires matching offsets and referenced NPC/shop/half-day array shapes.
+Cow flags follow the shared bitmap; stray-fairy flags now use collectible
+bits below 0x20 and switch1 bits above it. The Clock/Shovel item handler and
+its parameters supply the inventory flags. Tables record `xflag_format`, the
+shared bitmap length and those inventory descriptors.
+
+The v33 regression suite uses synthetic dictionaries and saves. The local
+forge matrix also compares real generated ROMs against symbols and spoilers:
+Default, Allsanity (including MQ and entrance shuffle), multiworld players 1
+and 2, and all-MQ with gossip fairies, shovels, clock, Adult Mask and initial
+stick/nut capacities enabled. Live emulator/OBS validation remains separate.
+
 ## Releasing
 
 ```
@@ -259,7 +335,7 @@ These are produced on each machine and are in `.gitignore`:
 | File | What it is | Where it comes from |
 |---|---|---|
 | `icons.png` / `icons.json` | the item icons | `mkicons.py`, extracted from **your** ROM |
-| `checks.json` | the 6,043 locations | `mkchecks.py`, from **your** ROM |
+| `checks.json` | the seed's locations (v32/v33) | `mkchecks.py`, from **your** ROM |
 | `discover-cache.json` | paths and hashes | your emulator |
 | `icons/*` | images you drop in yourself | you |
 

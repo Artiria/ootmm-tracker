@@ -185,6 +185,7 @@ def plan_jobs(args, label):
     # bash needs LF; a checkout with autocrlf would have turned them into CRLF
     script = (HERE / "build-one.sh").read_bytes().replace(b"\r\n", b"\n")
     (jdir / "build-one.sh").write_bytes(script)
+    (jdir / "collect-data.cjs").write_bytes((HERE / "collect-data.cjs").read_bytes())
     return jobs
 
 
@@ -296,7 +297,7 @@ def cmd_make(args):
         bad += rc != 0
     if args.guard:
         print()
-        cmd_guard(argparse.Namespace(paths=[str(OUT / l) for l, _, _ in sorted(results)]))
+        bad += bool(cmd_guard(argparse.Namespace(paths=[str(OUT / l) for l, _, _ in sorted(results)])))
     return 1 if bad else 0
 
 

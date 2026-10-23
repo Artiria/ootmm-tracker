@@ -111,6 +111,19 @@ def user(*parts):
 DATA_ENV = "OOTMM_TRACKER_DATA"
 UPDATES_DIRNAME = "data-updates"
 ACTIVE_FILE = "active.json"
+_ROM_DATA_VERSION = None
+
+
+def select_rom_data(rom_bytes):
+    """Select bundled labels for this ROM, without changing an adopted override."""
+    global _ROM_DATA_VERSION
+    _ROM_DATA_VERSION = None
+    if DATA_ENV in os.environ or active_data_tag():
+        return
+    import xflags
+    if xflags.read(rom_bytes) is not None:
+        _ROM_DATA_VERSION = "v33.0"
+
 
 # What a data/ has to hold before it counts as one, in either layout: the CSV
 # pool of v32 and earlier, or the per-scene XML of gen 943 and later.
@@ -161,7 +174,7 @@ def data_dir():
                 "the bundled one: the caller asked to be judged against that tree.")
         return os.path.abspath(forced)
     tag = active_data_tag()
-    return updates_dir(tag) if tag else res("data")
+    return updates_dir(tag) if tag else res("data-v33" if _ROM_DATA_VERSION else "data")
 
 
 # What the copy that ships is: the version its names were taken from. Every
@@ -188,9 +201,11 @@ def data_version():
         # baseline explicitly, so this is the common case, not a corner).
         if os.path.normcase(os.path.abspath(forced)) == os.path.normcase(res("data")):
             return BUNDLED_VERSION
+        if os.path.normcase(os.path.abspath(forced)) == os.path.normcase(res("data-v33")):
+            return "v33.0"
         name = os.path.basename(os.path.normpath(forced))
         return name if re.fullmatch(r"v\d+(\.\d+)*", name) else f"{DATA_ENV}={forced}"
-    return active_data_tag() or BUNDLED_VERSION
+    return active_data_tag() or _ROM_DATA_VERSION or BUNDLED_VERSION
 
 
 def data_file(name, base=None):

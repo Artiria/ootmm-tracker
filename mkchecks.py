@@ -394,7 +394,7 @@ def apply_payload_layout(rom_bytes, verbose=True):
     same addresses at run time), or None when the ROM did not give a complete
     answer -- in which case nothing is touched and it says so.
     """
-    global CUSTOM_BASE, CUSTOM_OOT, CUSTOM_MM_OFF, CUSTOM_MM, XFLAGS_COUNT
+    global CUSTOM_BASE, CUSTOM_OOT, CUSTOM_MM_OFF, CUSTOM_MM, XFLAGS_COUNT, COWS_OFF
     try:
         pl = payload.locate(rom_bytes)
     except Exception as ex:  # a scan bug must not take mkchecks down
@@ -427,11 +427,12 @@ def apply_payload_layout(rom_bytes, verbose=True):
         "XFLAGS_COUNT_OOT": (XFLAGS_COUNT["oot"], lay["oot"]["xflags_count"]),
         "XFLAGS_COUNT_MM": (XFLAGS_COUNT["mm"], lay["mm"]["xflags_count"]),
     }
+    COWS_OFF = lay.get("cows")
     CUSTOM_BASE = oot["custom"][0]
     LAYOUT["mm"]["base"] = oot["foreign_base"]
     ANCHOR_BASE["mm"] = LAYOUT["mm"]["base"]
     ANCHOR_BASE["custom"] = CUSTOM_BASE
-    CUSTOM_OOT = {"xflags": 0, "npc": lay["oot"]["npc"], "shops": lay["oot"]["shops"],
+    CUSTOM_OOT = {"xflags": lay["oot"]["xflags"], "npc": lay["oot"]["npc"], "shops": lay["oot"]["shops"],
                   "scrubs": lay["oot"]["scrubs"], "sr": lay["oot"]["sr"]}
     # caughtFishFlags is a field of the shared struct, not of the OoT half,
     # but the fish checks are OoT's and TYPE_TARGET files them under `custom`
@@ -565,6 +566,8 @@ def load_pool(path):
 # packed to the same key), and special.xml files its npc rows under the
 # scene NONE (the CSVs said GROTTOS; an npc key carries no scene either way).
 _MENDED = set()
+XFLAG_INDEX = None
+COWS_OFF = None
 
 
 def load_checks_xml(game):
@@ -601,36 +604,57 @@ def load_checks_xml(game):
                 print(f"checks xml: {path.name}: final closing tag mended ({ex})")
         if root.tag != "checks" or root.get("game") != game:
             continue
+        def enrich(context, attrs):
+            result = dict(context)
+            for key in ("scene", "setup", "room", "slice", "actor"):
+                if key in attrs:
+                    result[key] = attrs[key] if key == "scene" else int(attrs[key], 0)
+            return result
+
+        def row(el, context, matches=None):
+            try:
+                ctx = enrich(context, el.attrib)
+                identities = [enrich(ctx, m) for m in (matches or [{}])]
+                first = identities[0]
+                if el.tag == "xflag":
+                    packed = (first.get("slice", 0) << 16
+                              | first.get("setup", 0) << 14
+                              | first.get("room", 0) << 8 | first.get("actor", 0))
+                    tipo, ident = el.get("type", "xflag"), f"0x{packed:05x}"
+                elif el.tag == "npc":
+                    tipo, ident = "npc", el.get("npc") or ""
+                elif el.tag in TYPE_TARGET:
+                    tipo, ident = el.tag, el.get("flag") or ""
+                else:
+                    raise ValueError(f"unsupported element {el.tag}")
+            except (TypeError, ValueError) as ex:
+                raise SystemExit(f"checks xml: {path.name}: {el.get('location')!r}: {ex}")
+            result = _fix_scene(game, {
+                "location": el.get("location") or "", "type": tipo,
+                "hint": el.get("hint") or "NONE", "scene": ctx.get("scene", "NONE"),
+                "id": ident, "item": el.get("item") or "",
+            })
+            if el.tag == "xflag":
+                result["matches"] = identities
+            return result
+
         for scene_el in root:
             if scene_el.tag != "scene":
-                continue
-            scene = scene_el.get("id", "NONE")
+                raise SystemExit(f"checks xml: {path.name}: unexpected {scene_el.tag}")
+            context = {"scene": scene_el.get("id", "NONE")}
+            if scene_el.get("room") is not None:
+                context["room"] = int(scene_el.get("room"), 0)
             for el in scene_el:
-                try:
-                    if el.tag == "xflag":
-                        packed = ((int(el.get("slice"), 0) << 16)
-                                  | ((int(el.get("setup"), 0) & 3) << 14)
-                                  | (int(el.get("room"), 0) << 8)
-                                  | int(el.get("actor"), 0))
-                        tipo, ident = el.get("type", "xflag"), f"0x{packed:05x}"
-                    elif el.tag == "npc":
-                        tipo, ident = "npc", el.get("npc") or ""
-                    else:
-                        tipo, ident = el.tag, el.get("flag") or ""
-                except (TypeError, ValueError) as ex:
-                    # a refusal with a name beats a bare traceback in the
-                    # middle of an automatic regeneration
-                    raise SystemExit(
-                        f"checks xml: {path.name}: <{el.tag} "
-                        f"location={el.get('location')!r}>: bad attribute ({ex})")
-                yield _fix_scene(game, {
-                    "location": el.get("location") or "",
-                    "type": tipo,
-                    "hint": el.get("hint") or "NONE",
-                    "scene": scene,
-                    "id": ident,
-                    "item": el.get("item") or "",
-                })
+                if el.tag == "actor":
+                    actor = enrich(context, el.attrib)
+                    matches = [dict(m.attrib) for m in el if m.tag == "match"]
+                    if any(c.tag not in ("match", "xflag") for c in el):
+                        raise SystemExit(f"checks xml: {path.name}: unsupported actor child")
+                    for child in el:
+                        if child.tag == "xflag":
+                            yield row(child, actor, matches)
+                else:
+                    yield row(el, context)
 
 
 def load_rows(game):
@@ -731,6 +755,23 @@ def row_parts(game, row, scenes, npcs, unresolved=None):
     return scene_id, csv_id, xflag
 
 
+def row_key(game, row, scenes, scene_id, csv_id, xflag):
+    import placement
+    if XFLAG_INDEX is None or xflag is None:
+        return placement.override_key(row["type"], scene_id, csv_id, xflag)
+    matches = row.get("matches") or [dict(xflag, scene=row["scene"])]
+    ids = set()
+    for match in matches:
+        sid = scenes.get(f"{game.upper()}_{match['scene']}")
+        if sid is None:
+            continue
+        ident = XFLAG_INDEX.lookup(game, dict(match, scene=sid))
+        if ident is not None:
+            ids.add(ident)
+    # Aliases that disagree are stale labels, never a reason to pick a bit.
+    return 0x10000000 | ids.pop() if len(ids) == 1 else None
+
+
 def name_index(scenes, npcs):
     """{(game, ovkey): [row, ...]} keyed the way the ROM's table is keyed.
 
@@ -751,7 +792,7 @@ def name_index(scenes, npcs):
     for game in ("oot", "mm"):
         for row in load_rows(game):
             scene_id, csv_id, xflag = row_parts(game, row, scenes, npcs)
-            key = placement.override_key(row["type"], scene_id, csv_id, xflag)
+            key = row_key(game, row, scenes, scene_id, csv_id, xflag)
             if key is None:
                 saltadas += 1
                 continue
@@ -1103,7 +1144,20 @@ def check_from_key(game, key, etiquetas=None, tables=None, xflag_errors=None,
     et = etiquetas or {}
     ov = key >> 24
 
-    if ov >= placement.OV_XFLAG0:
+    indexed = XFLAG_INDEX is not None and ov == placement.OV_XFLAG0
+    if indexed:
+        csv_id = key & 0xffff
+        identities = XFLAG_INDEX.identities(game, csv_id)
+        identity = next((i for i in identities if i["scene"] == et.get("scene_id")),
+                        identities[0] if identities else None)
+        xflag = {k: identity[k] for k in ("slice", "setup", "room", "actor")} if identity else None
+        scene_id = identity["scene"] if identity else et.get("scene_id")
+        if xflag:
+            xflag["setups"] = sorted({i["setup"] for i in identities
+                                     if i["scene"] == scene_id and i["room"] == xflag["room"]})
+        tipo_ov = None
+        target, sub, field = "xflags", None, None
+    elif ov >= placement.OV_XFLAG0:
         room_byte = (key >> 8) & 0xFF
         xflag = {
             "slice": ov - placement.OV_XFLAG0,
@@ -1140,11 +1194,14 @@ def check_from_key(game, key, etiquetas=None, tables=None, xflag_errors=None,
 
     bit = csv_id
     addr = None
-    # MM stray fairies live in the scene's own flag table, split by id the way
-    # setStrayFairyMarkMm() in mark.c does it: 0x30 and up are collectible
-    # bits, 0x20..0x2F switch1, below that switch0 -- always bit `id & 0x1f`.
+    # MM stray fairies live in the scene's own flag table. v33 uses
+    # collectible bits below 0x20 and switch1 above; legacy builds split
+    # at 0x20/0x30. Both forms use bit `id & 0x1f`.
     if target == "mm_stray_fairy" and bit is not None and game == "mm":
-        field = "collect" if bit >= 0x30 else "switch1" if bit >= 0x20 else "switch0"
+        if XFLAG_INDEX is not None:
+            field = "collect" if bit < 0x20 else "switch1"
+        else:
+            field = "collect" if bit >= 0x30 else "switch1" if bit >= 0x20 else "switch0"
         bit = bit & 0x1F
     if (
         field
@@ -1176,10 +1233,14 @@ def check_from_key(game, key, etiquetas=None, tables=None, xflag_errors=None,
             kind = "u32be"
             bit = i & 0x1F
     elif target == "cow_flags" and bit is not None and bit < 32:
-        # Both games' cows share gCowFlags, and it lives in OoT's save
-        # whichever one is running -- see SAVE_EXTRA_RECORD above.
-        addr = LAYOUT["oot"]["base"] + EXTRA_RECORD_OFF + 9 * 0x1C
-        kind = "u32be"
+        # Both games share the cow flags. v33 moved them from OoT's
+        # extra save records into the shared custom save.
+        if XFLAG_INDEX is not None:
+            if LAYOUT_FROM_ROM and COWS_OFF is not None:
+                addr = CUSTOM_BASE + COWS_OFF
+        else:
+            addr = LAYOUT["oot"]["base"] + EXTRA_RECORD_OFF + 9 * 0x1C
+        kind = "u32be" if addr is not None else None
 
     # A key with no row still needs a name and a scene: the overlay files
     # everything by name and groups its regions by scene. Both are made up
@@ -1223,7 +1284,19 @@ def check_from_key(game, key, etiquetas=None, tables=None, xflag_errors=None,
         "mq": et.get("mq", False),
     }
 
-    if xflag is not None:
+    if indexed:
+        entry["xflag_id"] = csv_id
+        entry["xflag_matches"] = [
+            dict(scene_id=MQ_MERGE.get((game, i["scene"]), i["scene"]),
+                 **{k: i[k] for k in ("setup", "room", "actor", "slice")})
+            for i in identities
+        ]
+        if xflag:
+            entry["xflag"] = xflag
+        if LAYOUT_FROM_ROM and XFLAG_INDEX.identities(game, csv_id):
+            entry.update(bitpos=csv_id, addr=CUSTOM_BASE + custom["xflags"] + csv_id // 8,
+                         bit=csv_id % 8, kind="u8")
+    elif xflag is not None:
         entry["xflag"] = xflag
         # OoT's xflags start the block, so their anchor is the block itself
         # and the runtime relocates it; MM's sit behind CUSTOM_MM_OFF, which
@@ -1251,7 +1324,7 @@ def check_from_key(game, key, etiquetas=None, tables=None, xflag_errors=None,
     # locate_saves exists). We also store the anchor and the offset, which are
     # stable, so the overlay can relocate everything on every startup.
     if entry["addr"] is not None:
-        anchor = ANCHOR_OF.get(entry["target"])
+        anchor = "custom" if target == "cow_flags" and XFLAG_INDEX is not None else ANCHOR_OF.get(entry["target"])
         if anchor == "game":
             anchor = game
         if anchor:
@@ -1388,6 +1461,8 @@ def _payload_json(pl):
             if key in b:
                 out[game][key] = b[key]
     lay = pl.get("layout")
+    if "save_flag_items" in pl:
+        out["save_flag_items"] = pl["save_flag_items"]
     if lay:
         out["layout"] = {g: {k: v for k, v in lay[g].items() if not k.startswith("_")}
                          for g in ("oot", "mm")}
@@ -1500,19 +1575,28 @@ def main(argv=None):
     ap.add_argument("--rom", help="the seed's .z64 ROM; without it the xflags stay unresolved")
     ap.add_argument("--spoiler", help="spoiler log, to know which dungeons are Master Quest")
     args = ap.parse_args(argv)
-    global MQ_MERGE, MM_MERGE, GS_ID_BASE, LAYOUT_FROM_ROM
+    global MQ_MERGE, MM_MERGE, GS_ID_BASE, LAYOUT_FROM_ROM, DATA, XFLAG_INDEX, COWS_OFF
     LAYOUT_FROM_ROM = True
 
+    import provenance
+    import placement
+    import xflags
+    rom_bytes = pathlib.Path(args.rom).read_bytes() if args.rom else None
+    paths.select_rom_data(rom_bytes or b"")
+    DATA = pathlib.Path(paths.data_dir())
+    placement.DATA = DATA
+    XFLAG_INDEX = xflags.read(rom_bytes) if rom_bytes else None
+    COWS_OFF = None
+    input_data_digest = provenance.data_digest(DATA)
+    input_data_version = paths.data_version()
     scenes = load_scenes()
     npcs = load_npcs()
     print(f"scenes.yml: {len(scenes)} scenes, npc.yml: {len(npcs)} npcs")
 
     tables = {}
-    rom_bytes = None
     located = None
     if args.rom:
         # careful: do not call it `rom`, that shadows the module of that name
-        rom_bytes = pathlib.Path(args.rom).read_bytes()
         try:
             rom.extra_dma(rom_bytes)
         except ValueError as ex:
@@ -1526,8 +1610,8 @@ def main(argv=None):
                   " Its checks -- npc, shops, scrubs, silver rupees, fish, and MM's"
                   " xflags -- come out with NO address rather than v32.0's;"
                   " chests, collectibles, skulltulas and cows still resolve.")
-        vroms = locate_xflag_tables(rom_bytes, scenes) or {}
-        for g in XFLAG_TABLES:
+        vroms = (locate_xflag_tables(rom_bytes, scenes) or {}) if XFLAG_INDEX is None else {}
+        for g in XFLAG_TABLES if XFLAG_INDEX is None else ():
             tables[g] = XflagTables(rom_bytes, g, vroms.get(g))
             t = tables[g]
             print(f"xflags {g}: ROM tables read ({t.limit} bits of room)")
@@ -1575,7 +1659,7 @@ def main(argv=None):
             n += 1
             scene_id, csv_id, xflag = row_parts(game, row, scenes, npcs,
                                                 unresolved_scenes)
-            key = placement.override_key(row["type"], scene_id, csv_id, xflag)
+            key = row_key(game, row, scenes, scene_id, csv_id, xflag)
             etiquetas = {
                 "name": row["location"],
                 "hint": row["hint"],
@@ -1649,7 +1733,7 @@ def main(argv=None):
     # does not, so their rows land on top of other checks' bits. Two different
     # checks sharing a bit is only legitimate between a vanilla/MQ pair.
     choques = collisions(checks)
-    if tables and choques:
+    if (tables or XFLAG_INDEX is not None) and choques:
         print()
         print(f"ABORTED: {len(choques)} pairs of checks share a bit without being")
         print("a vanilla/MQ pair. The tables were found, so the addresses are right;")
@@ -1734,8 +1818,8 @@ def main(argv=None):
                 # so: this is not something the user can work out from looking.
                 print("  WARNING: this seed is from a different OoTMM version than")
                 print("           data/. Addresses come from the ROM and hold, but")
-                print("           the check names and regions come from the v32.0")
-                print("           CSVs and can be wrong for this seed.")
+                print(f"           the check names and regions come from {input_data_version}")
+                print("           and can be wrong for this seed.")
 
     # The shuffled entrances, read from the ROM like the placement (see
     # entrances.py). Null without a ROM; an empty list on a seed that does not
@@ -1744,6 +1828,7 @@ def main(argv=None):
     if rom_bytes is not None:
         try:
             import entrances as entrances_mod
+            entrances_mod.DATA = DATA
             entradas = entrances_mod.resolve(rom_bytes)
             reales = sum(1 for e in entradas if not e["link"])
             print(f"entrances: {reales} shuffled in this seed" if reales
@@ -1782,10 +1867,13 @@ def main(argv=None):
         # v32.0's, and an adopted download says its own tag (paths.data_dir).
         # The addresses and the bits do not come from here at all -- they are
         # read from the ROM -- so this dates the labels and nothing else.
-        "version": paths.data_version(),
+        "version": input_data_version,
+        "generator_revision": provenance.CHECKS_REVISION,
         "source": "OoTMM/OoTMM data/ (%s, defs/scenes.yml, defs/gi.yml)"
                   % ("checks/*.xml" if (DATA / "checks").is_dir() else "pool_*.csv"),
         "rom": args.rom,
+        "rom_sha256": provenance.rom_digest(rom_bytes) if rom_bytes is not None else None,
+        "data_sha256": input_data_digest,
         # where each row's item came from; null when generated without a ROM
         "placement": colocacion,
         "entrances": entradas,
@@ -1811,6 +1899,7 @@ def main(argv=None):
         # How the gold skulltula ids map to bits, and how many Master Quest
         # scenes were folded onto their vanilla twin: both gen-943 matters,
         # 8 and 0 on every seed before it.
+        "xflag_format": "indexed" if XFLAG_INDEX is not None else "legacy",
         "gs_id_base": GS_ID_BASE,
         "mq_merged_scenes": len(MQ_MERGE),
         # How many MM scenes read their flags from a twin's row of perm[]
@@ -1832,6 +1921,8 @@ def main(argv=None):
             # shared block, so MM's flags are readable from OoT too; running MM
             # the base is a different one, handled at runtime by the overlay.
             "base": CUSTOM_BASE,
+            "cows": COWS_OFF,
+            "xflag_bytes": XFLAGS_COUNT["oot"] if XFLAG_INDEX is not None else None,
             "valid_while": "oot",
             "oot": CUSTOM_OOT,
             "mm": CUSTOM_MM,
@@ -1856,6 +1947,8 @@ def main(argv=None):
         "souls": almas,
         "checks": checks,
     }
+    if provenance.data_digest(DATA) != input_data_digest:
+        raise RuntimeError("The data files changed during generation; retry with a stable data tree.")
     (OUT / "checks.json").write_text(json.dumps(out, indent=1), encoding="utf-8")
 
     print()

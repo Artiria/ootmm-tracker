@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<checks game="mm">
+  <scene id="LAIR_ODOLWA">
+    <collectible location="Woodfall Temple Boss Container" flag="0x1f" item="HEART_CONTAINER"/>
+    <npc location="Woodfall Temple Boss" npc="REMAINS_ODOLWA" item="REMAINS_ODOLWA"/>
+    <xflag type="grass" location="Woodfall Temple Boss Grass 01" setup="0" room="0x0" actor="0xa" item="RANDOM"/>
+    <xflag type="grass" location="Woodfall Temple Boss Grass 02" setup="0" room="0x0" actor="0xb" item="RANDOM"/>
+    <xflag type="grass" location="Woodfall Temple Boss Grass 03" setup="0" room="0x0" actor="0xc" item="RANDOM"/>
+    <xflag type="grass" location="Woodfall Temple Boss Grass 04" setup="0" room="0x0" actor="0xd" item="RANDOM"/>
+    <xflag type="grass" location="Woodfall Temple Boss Grass 05" setup="0" room="0x0" actor="0xe" item="RANDOM"/>
+    <xflag type="grass" location="Woodfall Temple Boss Grass 06" setup="0" room="0x0" actor="0xf" item="RANDOM"/>
+    <xflag type="grass" location="Woodfall Temple Boss Grass 07" setup="0" room="0x0" actor="0x10" item="RANDOM"/>
+    <xflag type="grass" location="Woodfall Temple Boss Grass 08" setup="0" room="0x0" actor="0x11" item="RANDOM"/>
+    <xflag type="grass" location="Woodfall Temple Boss Grass 09" setup="0" room="0x0" actor="0x12" item="RANDOM"/>
+    <xflag type="grass" location="Woodfall Temple Boss Grass 10" setup="0" room="0x0" actor="0x13" item="RANDOM"/>
+    <xflag type="grass" location="Woodfall Temple Boss Grass 11" setup="0" room="0x0" actor="0x14" item="RANDOM"/>
+    <xflag type="grass" location="Woodfall Temple Boss Grass 12" setup="0" room="0x0" actor="0x15" item="RANDOM"/>
+    <xflag type="grass" location="Woodfall Temple Boss Grass 13" setup="0" room="0x0" actor="0x16" item="RANDOM"/>
+    <xflag type="grass" location="Woodfall Temple Boss Grass 14" setup="0" room="0x0" actor="0x17" item="RANDOM"/>
+    <xflag type="grass" location="Woodfall Temple Boss Grass 15" setup="0" room="0x0" actor="0x18" item="RANDOM"/>
+    <xflag type="grass" location="Woodfall Temple Boss Grass 16" setup="0" room="0x0" actor="0x19" item="RANDOM"/>
+  </scene>
+</checks>

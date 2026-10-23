@@ -174,6 +174,8 @@ def annotate(checks, rom_bytes, verbose=True):
         return None
     twins = 0
     for c in checks:
+        if "xflag_id" in c:  # v33 aliases are already explicit in the ROM dictionary
+            continue
         xf = c.get("xflag")
         sid = c.get("scene_id")
         if c.get("game") != "oot" or xf is None or sid is None or sid >= MQ_SCENE_BASE:

@@ -49,6 +49,14 @@ from OoTMM's repository, under the same MIT license printed below — and the
 copies in `data/`, which are what this program ships, stay exactly as they
 are.
 
+### Additional v33 labels
+
+`data-v33/checks/**/*.xml` and `data-v33/defs/{gi,scenes,npc,entrances}.yml`
+are unmodified copies from [OoTMM v33.0](https://github.com/OoTMM/OoTMM/tree/961751062b35296ff27789214bd924206c9c8466/data),
+commit `961751062b35296ff27789214bd924206c9c8466` (13 October 2026).
+`data-v33/source.json` records that provenance. They ship alongside the legacy
+files, under the same OoTMM MIT license below, and are selected for v33 ROMs.
+
 ### OoTMM's license, in full
 
 ```

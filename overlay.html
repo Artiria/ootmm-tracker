@@ -586,6 +586,11 @@ body.chroma-green .card { background: var(--surface); }
             <span class="room" id="note-where"></span>
             <input id="note-text" placeholder="a note for here… Enter adds, Esc leaves" autocomplete="off" maxlength="400">
           </div>
+          <div id="note-error" role="status" style="color:var(--warning)" hidden></div>
+          <div id="note-legacy" class="hint" hidden>
+            Older notes are not linked to a seed. Import them only if they belong here.
+            <button class="act" id="import-notes">Use for this seed</button>
+          </div>
           <ul class="feed notes" id="notes"></ul>
           <div class="empty" id="notes-empty">no notes yet</div>
         </div>
@@ -1586,6 +1591,19 @@ function renderEntrances(en) {
    where it was. A /p/ panel just lists (the field is hidden there). */
 let lastNotesHTML = null;
 let notePromptSeen = null;
+let notePosting = false;
+
+function noteError(message) {
+  const e = $('note-error');
+  if (e) { e.textContent = message; e.hidden = !message; }
+}
+
+async function sendNote(body) {
+  const response = await fetch('/note', { method: 'POST', body: JSON.stringify(body) });
+  const result = await response.json();
+  if (!response.ok || !result.ok) throw new Error(result.error || 'The note could not be saved. Please try again.');
+  return result;
+}
 
 function notePlace(n) {
   if (!n || !n.scene) return '';
@@ -1608,14 +1626,22 @@ function focusNoteBox() {
    but the server still gets to hand the focus back if the key brought it here. */
 async function postNote(save) {
   const box = $('note-text');
-  if (!box) return;
+  if (!box || notePosting) return;
   const text = (box.value || '').trim();
   const body = save && text ? { text, ...currentPlace() } : { cancel: true };
-  box.value = '';
-  if (!(save && text)) box.blur();
+  notePosting = true;
+  box.disabled = true;
+  noteError('');
   try {
-    await fetch('/note', { method: 'POST', body: JSON.stringify(body) });
-  } catch {}
+    await sendNote(body);
+    box.value = '';
+    if (!(save && text)) box.blur();
+  } catch (ex) {
+    noteError(ex.message || 'The note could not be sent. Please try again.');
+  } finally {
+    box.disabled = false;
+    notePosting = false;
+  }
   await tick();
 }
 
@@ -2015,6 +2041,7 @@ function render(s) {
 
   // Notes: the memorandum, and the box the note key asks for (see notes below)
   if ($('notes')) {
+    if ($('note-legacy')) $('note-legacy').hidden = !!panel || !s.notes_legacy_n;
     const notes = (s.notes || []).filter(n => !n.game || keepGame(n.game));
     const nHTML = renderNotes(notes);
     if (nHTML !== lastNotesHTML) { setHTML('notes', nHTML); lastNotesHTML = nHTML; }
@@ -2133,6 +2160,14 @@ tick();
 // Esc empties it and leaves; the delete buttons of the list. Panels have
 // none of this.
 if (!panel && $('note-text')) {
+  $('import-notes').onclick = async () => {
+    const button = $('import-notes');
+    button.disabled = true;
+    noteError('');
+    try { await sendNote({ import_legacy: true }); await tick(); }
+    catch (ex) { noteError(ex.message); }
+    finally { button.disabled = false; }
+  };
   document.addEventListener('keydown', (ev) => {
     const key = (lastState && lastState.note_key) || 'F9';
     if (ev.key === key) { ev.preventDefault(); focusNoteBox(); }
@@ -2144,8 +2179,10 @@ if (!panel && $('note-text')) {
   document.addEventListener('click', async (ev) => {
     const b = ev.target.closest('button.del');
     if (!b) return;
-    await fetch('/note', { method: 'POST', body: JSON.stringify({ delete: b.dataset.del }) });
-    await tick();
+    b.disabled = true;
+    noteError('');
+    try { await sendNote({ delete: b.dataset.del }); await tick(); }
+    catch (ex) { noteError(ex.message); b.disabled = false; }
   });
 }
 setInterval(tick, 700);
