@@ -16,11 +16,16 @@ seed ROM itself.
 1. **[Download the latest release](../../releases/latest)** and unzip it.
 2. Double-click `ootmm-tracker.exe`. It finds your ROM, builds its tables and
    icons from it the first time, and opens the overlay.
-3. With the ROM loaded in your emulator, run the tracker's script. It waits
-   for whichever you open:
-   - **Project64-EM**: **File > Lua Scripts…**, and run `tracker.lua`. The
-     tracker has already put it in the emulator's `Scripts` folder for you (and
-     there is a copy in the `Scripts` folder next to the exe if it hasn't).
+3. Open the seed in your emulator. With **Project64** (any build) that is all:
+   the moment the ROM is running, the tracker reads the game straight out of
+   the emulator's process, with nothing to load. The scripts are still there
+   for the cases that need them, and the tracker waits for whichever answers
+   first:
+   - **Project64-EM, if the direct reading is refused** (the emulator runs as
+     administrator and the tracker does not, or an antivirus steps in):
+     **File > Lua Scripts…**, and run `tracker.lua`. The tracker has already
+     put it in the emulator's `Scripts` folder for you (and there is a copy in
+     the `Scripts` folder next to the exe if it hasn't).
    - **BizHawk**: **Tools > Lua Console > Script > Open Script…**, and pick
      `tracker-bizhawk.lua` from the `Scripts` folder next to the exe. It talks
      over shared memory: no restart, nothing to set up.
@@ -98,6 +103,7 @@ anyway. `?spoiler=full` reveals what is in the checks you have not done.
 | ✅ OBS overlay, one URL per panel | transparent background, a standalone panel each |
 | ⚠️ Multiworld | tracks your own world; see below |
 | ✅ Project64-EM and BizHawk | P64-EM over its Lua socket, BizHawk over shared memory; both tested live |
+| ✅ Project64 read directly, no script | new: the tracker finds the game's memory inside the emulator's process and reads it there; `tracker.lua` stays as the fallback. Tested live |
 | ❓ Other emulators (RetroArch, Ares) | not tried yet |
 | ❌ Logic and maps | not attempted — that is what The Last Tracker does |
 

@@ -45,6 +45,8 @@ a = Analysis(
         "souls",
         # imported lazily when waiting for BizHawk (shared-memory transport)
         "mmflink",
+        # imported lazily for --direct (Project64's memory read out of its process)
+        "proclink",
     ],
     hookspath=[],
     runtime_hooks=[],

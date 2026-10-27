@@ -62,6 +62,12 @@ FMT = {1: "B", 2: "H", 4: "I"}
 
 BIZHAWK_HELP = "force BizHawk (shared memory) instead of waiting for either"
 P64EM_HELP = "force Project64-EM (socket) instead of waiting for either"
+DIRECT_HELP = ("only read the game's memory straight out of Project64's process (no scripts); "
+               "the default already does this alongside waiting for the scripts")
+# Whether the default also watches for a Project64 process to read directly
+# (proclink). On: the exe has to do everything by itself, with nothing for the
+# user to load. Off is for trying the scripts alone.
+DIRECT_IN_AUTO = True
 
 # How often to look again for the ROM when it was not found at startup, so the
 # page recovers on its own once the seed is opened, without a restart.
@@ -70,6 +76,8 @@ RETRY_TABLES_SECONDS = 5.0
 
 def emu_of(args):
     """Which protocol to expect: an explicit override, else auto-detect."""
+    if getattr(args, "direct", False):
+        return "direct"
     if getattr(args, "bizhawk", False):
         return "bizhawk"
     if getattr(args, "p64em", False):
@@ -468,7 +476,11 @@ def wait_for_emulator(host, port, label, forced="auto", on_link=None):
     answers over shared memory (no socket, no relaunch -- the same two-step
     flow as Project64). In `auto` both are waited on at once and the first to
     answer wins; an explicit emulator waits on only its own. Whichever the user
-    opens, the tracker adapts -- and it opens nothing itself.
+    opens, the tracker adapts -- and it opens nothing itself. The third way,
+    reading Project64's memory straight out of its process (proclink), needs
+    no script at all and is part of `auto` (DIRECT_IN_AUTO): with the seed
+    running in Project64 it answers first, and the scripts are the fallback.
+    `direct` waits on it alone.
 
     With `on_link` the socket does not close after the first script: every one
     that connects afterwards is handed over too, and the first is handed over
@@ -484,7 +496,7 @@ def wait_for_emulator(host, port, label, forced="auto", on_link=None):
     ev = threading.Event()
     winner_lock = threading.Lock()
     errors = []
-    remaining = 2 if forced == "auto" else 1
+    remaining = 0   # the number of transports, set below before any of them starts
 
     def worker(target):
         nonlocal remaining
@@ -578,17 +590,70 @@ def wait_for_emulator(host, port, label, forced="auto", on_link=None):
             if not adopted:
                 link.close()
 
+    def via_process():
+        import proclink
+
+        # `mine` once a link of ours has been adopted: from then on this thread
+        # keeps watching it and hands over a fresh one when the emulator reloads
+        # the ROM (RDRAM is freed and allocated again) or is restarted -- what
+        # on_link is for, exactly as with the socket.
+        mine = False
+        link = None
+        told = set()
+        while mine or not ev.is_set():
+            if link is not None:
+                if link.alive():
+                    time.sleep(0.5)
+                    continue
+                print(f"[{label}] {link.describe()}: gone; looking for Project64 again")
+                link.close()
+                link = None
+            fresh = None
+            for pid, exe in proclink.emulator_processes():
+                try:
+                    fresh = proclink.ProcLink.attach(pid, exe)
+                    break
+                except proclink.ProcDenied as ex:
+                    if pid not in told:
+                        print(f"[{label}] {ex}")
+                        told.add(pid)
+                except proclink.ProcDown:
+                    continue        # running, but no ROM in it yet
+            if fresh is None:
+                time.sleep(1.0)
+                continue
+            with winner_lock:
+                if not ev.is_set():
+                    found["link"] = fresh
+                    mine = True
+                    ev.set()
+            if not mine:
+                fresh.close()       # another transport won while this one scanned
+                return
+            link = fresh
+            print(f"[{label}] {link.describe()} - memory reads OK\n")
+            if on_link is None:
+                return
+            on_link(link)
+
+    direct = forced == "direct" or (forced == "auto" and DIRECT_IN_AUTO)
     threads = []
     if forced in ("auto", "p64em"):
         threads.append(threading.Thread(target=worker, args=(via_socket,), daemon=True))
     if forced in ("auto", "bizhawk"):
         threads.append(threading.Thread(target=worker, args=(via_mmf,), daemon=True))
+    if direct:
+        threads.append(threading.Thread(target=worker, args=(via_process,), daemon=True))
+    remaining = len(threads)
     for t in threads:
         t.start()
 
     print(f"[{label}] waiting for an emulator, whichever you open:")
+    if direct:
+        print(f"[{label}]   Project64 (any build): just have the seed running in it; nothing to load")
     if forced in ("auto", "p64em"):
-        print(f"[{label}]   Project64-EM: File > Lua Scripts... > tracker.lua")
+        how = "if that is refused, " if direct else ""
+        print(f"[{label}]   Project64-EM: {how}File > Lua Scripts... > tracker.lua")
     if forced in ("auto", "bizhawk"):
         print(f"[{label}]   BizHawk: open EmuHawk with the seed, then Tools > Lua Console >")
         print(f"[{label}]            Open Script > {bizhawk_script_path()}")
@@ -672,8 +737,11 @@ def cmd_watch(args):
 
 def cmd_dump(args):
     addr, length = parse_region(args.region)
-    sock = listen_for_lua(args.host, args.port, "dump")
-    link = handshake(sock, "dump")
+    if emu_of(args) == "direct":
+        link = wait_for_emulator(args.host, args.port, "dump", "direct")
+    else:
+        sock = listen_for_lua(args.host, args.port, "dump")
+        link = handshake(sock, "dump")
 
     print(f"[dump] reading 0x{addr:08X}, {length} bytes ({length / 1024:.0f} KB)")
     t0 = time.time()
@@ -1913,6 +1981,7 @@ def main():
     d.add_argument("-o", "--out", default="dump.bin")
     d.add_argument("--host", default="127.0.0.1")
     d.add_argument("--port", type=int, default=13251)
+    d.add_argument("--direct", action="store_true", help=DIRECT_HELP)
     d.set_defaults(func=cmd_dump)
 
     it = sub.add_parser("items", help="read the inventory in a loop and call every change")
@@ -1961,6 +2030,7 @@ def main():
     o.add_argument("--port", type=int, default=13251, help="port tracker.lua connects to")
     o.add_argument("--bizhawk", action="store_true", help=BIZHAWK_HELP)
     o.add_argument("--p64em", action="store_true", help=P64EM_HELP)
+    o.add_argument("--direct", action="store_true", help=DIRECT_HELP)
     o.set_defaults(func=cmd_overlay)
 
     n = sub.add_parser("find", help="search a dump for a signature")

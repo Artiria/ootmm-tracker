@@ -104,6 +104,7 @@ read from the ROM.
 | `Scripts/tracker.lua` | the memory server that runs inside Project64-EM, over its Lua socket |
 | `Scripts/tracker-bizhawk.lua` | the same for BizHawk, over shared memory (`comm.mmf*`): no socket, no relaunch |
 | `mmflink.py` | the tracker's side of that shared memory, with the same `read`/`read_block` as the socket link |
+| `proclink.py` | the same `read`/`read_block` out of Project64's own process (RDRAM found by the boot globals at 0x300, word swap undone), no script; part of the default wait (`DIRECT_IN_AUTO` in `ootmm.py`), `--direct` waits on it alone |
 | `inventory.py` | both games' inventory map and the id table |
 | `mkchecks.py` | generates `checks.json` from `data/` and the ROM |
 | `placement.py` | what item is in each location and what it is called, read from the ROM |

@@ -57,8 +57,8 @@ CACHE = paths.user("discover-cache.json")
 EMULATOR_EXES = ("project64",)
 
 
-def running_emulators():
-    """Folders of the Project64 builds running right now, newest first.
+def running_emulator_processes():
+    """`(pid, exe path, start time)` of the Project64 builds running right now, newest first.
 
     Where the emulator is installed is not the tracker's to guess: the second
     person to try it had it outside every folder `find_emulator` looks in, and
@@ -147,13 +147,19 @@ def running_emulators():
                 started = (times[0].dwHighDateTime << 32) | times[0].dwLowDateTime
         finally:
             k32.CloseHandle(handle)
-        folder = os.path.dirname(buf.value)
-        if os.path.isfile(os.path.join(folder, "Config", "Project64.cfg")):
-            found.append((started, folder))
+        found.append((started, pid, buf.value))
     found.sort(reverse=True)
+    return [(pid, exe, started) for started, pid, exe in found]
+
+
+def running_emulators():
+    """Folders of the Project64 builds running right now, newest first: the ones
+    holding a `Config/Project64.cfg`, which names the open ROM and sits next to
+    the `Scripts` folder the Lua goes in. See running_emulator_processes."""
     out = []
-    for _, folder in found:
-        if folder not in out:
+    for _, exe, _ in running_emulator_processes():
+        folder = os.path.dirname(exe)
+        if os.path.isfile(os.path.join(folder, "Config", "Project64.cfg")) and folder not in out:
             out.append(folder)
     return out
 
